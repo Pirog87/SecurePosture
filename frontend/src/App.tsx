@@ -8,6 +8,9 @@ import CisAssessPage from "./pages/CisAssessPage";
 import OrgStructurePage from "./pages/OrgStructurePage";
 import CatalogsPage from "./pages/CatalogsPage";
 import DictionariesPage from "./pages/DictionariesPage";
+import AssetRegistryPage from "./pages/AssetRegistryPage";
+import AssetGraphPage from "./pages/AssetGraphPage";
+import ActionsPage from "./pages/ActionsPage";
 import AuditPage from "./pages/AuditPage";
 
 export default function App() {
@@ -16,6 +19,8 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<DashboardPage />} />
+          <Route path="assets" element={<AssetRegistryPage />} />
+          <Route path="assets/graph" element={<AssetGraphPage />} />
           <Route path="risks" element={<RisksPage />} />
           <Route path="reviews" element={<ReviewsPage />} />
           <Route path="cis" element={<CisListPage />} />
@@ -23,6 +28,7 @@ export default function App() {
           <Route path="org-structure" element={<OrgStructurePage />} />
           <Route path="catalogs" element={<CatalogsPage />} />
           <Route path="dictionaries" element={<DictionariesPage />} />
+          <Route path="actions" element={<ActionsPage />} />
           <Route path="audit" element={<AuditPage />} />
         </Route>
       </Routes>

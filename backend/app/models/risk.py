@@ -12,6 +12,7 @@ class Risk(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     org_unit_id: Mapped[int] = mapped_column(ForeignKey("org_units.id"), nullable=False)
+    asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"))
     asset_category_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     asset_name: Mapped[str] = mapped_column(String(400), nullable=False)
     sensitivity_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
@@ -33,6 +34,9 @@ class Risk(Base):
     owner: Mapped[str | None] = mapped_column(String(200))
     planned_actions: Mapped[str | None] = mapped_column(Text)
     residual_risk: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    target_impact: Mapped[int | None] = mapped_column(Integer)
+    target_probability: Mapped[int | None] = mapped_column(Integer)
+    target_safeguard: Mapped[Decimal | None] = mapped_column(Numeric(4, 2))
 
     identified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     last_review_at: Mapped[datetime | None] = mapped_column(DateTime)

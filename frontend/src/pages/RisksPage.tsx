@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
-import type { Risk, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries } from "../types";
+import type { Risk, Asset, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries } from "../types";
+import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
 
 function riskColor(R: number) { return R >= 221 ? "var(--red)" : R >= 31 ? "var(--orange)" : "var(--green)"; }
@@ -14,20 +15,12 @@ interface FormLookups {
   threats: Threat[];
   vulns: Vulnerability[];
   safeguards: Safeguard[];
+  assets: Asset[];
   categories: { id: number; label: string }[];
   sensitivities: { id: number; label: string }[];
   criticalities: { id: number; label: string }[];
   statuses: { id: number; label: string }[];
   strategies: { id: number; label: string }[];
-}
-
-function flattenTree(nodes: OrgUnitTreeNode[], depth = 0): { id: number; name: string; depth: number }[] {
-  const result: { id: number; name: string; depth: number }[] = [];
-  for (const n of nodes) {
-    result.push({ id: n.id, name: n.name, depth });
-    result.push(...flattenTree(n.children, depth + 1));
-  }
-  return result;
 }
 
 export default function RisksPage() {
@@ -45,10 +38,11 @@ export default function RisksPage() {
   const [filterStatus, setFilterStatus] = useState(searchParams.get("status") ?? "");
   const [filterLevel, setFilterLevel] = useState(searchParams.get("level") ?? "");
 
+  const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
+
   const loadRisks = () => {
     api.get<Risk[]>("/api/v1/risks").then(data => {
       setRisks(data);
-      // Auto-select risk from ?highlight param
       const highlightId = searchParams.get("highlight");
       if (highlightId) {
         const found = data.find(r => r.id === Number(highlightId));
@@ -57,16 +51,22 @@ export default function RisksPage() {
     }).catch(() => {}).finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadRisks(); }, []);
+  useEffect(() => {
+    loadRisks();
+    api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(setOrgTree).catch(() => {});
+  }, []);
+
+  const orgPathMap = useMemo(() => buildPathMap(orgTree), [orgTree]);
 
   const loadLookups = async (): Promise<FormLookups> => {
     if (lookups) return lookups;
-    const [orgUnits, areas, threats, vulns, safeguards] = await Promise.all([
+    const [orgUnits, areas, threats, vulns, safeguards, assets] = await Promise.all([
       api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").catch(() => [] as OrgUnitTreeNode[]),
       api.get<SecurityArea[]>("/api/v1/security-areas").catch(() => [] as SecurityArea[]),
       api.get<Threat[]>("/api/v1/threats").catch(() => [] as Threat[]),
       api.get<Vulnerability[]>("/api/v1/vulnerabilities").catch(() => [] as Vulnerability[]),
       api.get<Safeguard[]>("/api/v1/safeguards").catch(() => [] as Safeguard[]),
+      api.get<Asset[]>("/api/v1/assets").catch(() => [] as Asset[]),
     ]);
     const dictEntries = async (code: string) => {
       try {
@@ -78,7 +78,7 @@ export default function RisksPage() {
       dictEntries("asset_category"), dictEntries("sensitivity"), dictEntries("criticality"),
       dictEntries("risk_status"), dictEntries("risk_strategy"),
     ]);
-    const result = { orgUnits, areas, threats, vulns, safeguards, categories, sensitivities, criticalities, statuses, strategies };
+    const result = { orgUnits, areas, threats, vulns, safeguards, assets, categories, sensitivities, criticalities, statuses, strategies };
     setLookups(result);
     return result;
   };
@@ -101,6 +101,7 @@ export default function RisksPage() {
     const fd = new FormData(e.currentTarget);
     const body: Record<string, unknown> = {
       org_unit_id: Number(fd.get("org_unit_id")),
+      asset_id: fd.get("asset_id") ? Number(fd.get("asset_id")) : null,
       asset_name: fd.get("asset_name") as string,
       asset_category_id: fd.get("asset_category_id") ? Number(fd.get("asset_category_id")) : null,
       sensitivity_id: fd.get("sensitivity_id") ? Number(fd.get("sensitivity_id")) : null,
@@ -116,6 +117,9 @@ export default function RisksPage() {
       owner: (fd.get("owner") as string) || null,
       planned_actions: (fd.get("planned_actions") as string) || null,
       residual_risk: fd.get("residual_risk") ? Number(fd.get("residual_risk")) : null,
+      target_impact: fd.get("target_impact") ? Number(fd.get("target_impact")) : null,
+      target_probability: fd.get("target_probability") ? Number(fd.get("target_probability")) : null,
+      target_safeguard: fd.get("target_safeguard") ? Number(fd.get("target_safeguard")) : null,
       safeguard_ids: Array.from(fd.getAll("safeguard_ids")).map(Number).filter(Boolean),
     };
     try {
@@ -150,15 +154,21 @@ export default function RisksPage() {
 
   const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
 
-  // Apply filters
+  // Apply filters — hierarchical org filtering
+  const filterOrgIds = useMemo(() => {
+    if (!filterOrg) return null;
+    return new Set(collectDescendantIds(orgTree, Number(filterOrg)));
+  }, [filterOrg, orgTree]);
+
   const filtered = risks.filter(r => {
-    if (filterOrg && String(r.org_unit_id) !== filterOrg) return false;
+    if (filterOrgIds && !filterOrgIds.has(r.org_unit_id)) return false;
     if (filterLevel && r.risk_level !== filterLevel) return false;
     if (filterStatus && r.status_name !== filterStatus) return false;
     return true;
   }).sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0));
 
-  const uniqueOrgs = [...new Map(risks.map(r => [r.org_unit_id, { id: r.org_unit_id, name: r.org_unit_name }])).values()];
+  const flatFilterUnits = flattenTree(orgTree);
+  const uniqueOrgs = flatFilterUnits.map(u => ({ id: u.id, name: u.name, depth: u.depth }));
   const uniqueStatuses = [...new Set(risks.map(r => r.status_name).filter(Boolean))] as string[];
 
   const clearFilters = () => {
@@ -171,9 +181,9 @@ export default function RisksPage() {
     <div>
       <div className="toolbar">
         <div className="toolbar-left">
-          <select className="form-control" style={{ width: 160 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
+          <select className="form-control" style={{ width: 220 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
             <option value="">Wszystkie piony</option>
-            {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+            {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{"  ".repeat(o.depth)}{o.name}</option>)}
           </select>
           <select className="form-control" style={{ width: 160 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
             <option value="">Wszystkie statusy</option>
@@ -214,7 +224,7 @@ export default function RisksPage() {
                   >
                     <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{r.code || r.id}</td>
                     <td style={{ fontWeight: 500 }}>{r.asset_name}</td>
-                    <td>{r.org_unit_name}</td>
+                    <td style={{ fontSize: 11 }}>{orgPathMap.get(r.org_unit_id) ?? r.org_unit_name}</td>
                     <td>{r.security_area_name}</td>
                     <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>{r.impact_level}</td>
                     <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>{r.probability_level}</td>
@@ -262,9 +272,15 @@ export default function RisksPage() {
                 <span style={{ color: "var(--text-muted)" }}>Aktywo</span>
                 <span style={{ fontWeight: 500 }}>{selected.asset_name}</span>
               </div>
+              {selected.asset_id_name && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "var(--text-muted)" }}>Z rejestru</span>
+                  <span style={{ color: "var(--cyan)" }}>{selected.asset_id_name}</span>
+                </div>
+              )}
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "var(--text-muted)" }}>Pion</span>
-                <span>{selected.org_unit_name}</span>
+                <span style={{ fontSize: 11 }}>{orgPathMap.get(selected.org_unit_id) ?? selected.org_unit_name}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "var(--text-muted)" }}>Obszar</span>
@@ -291,9 +307,21 @@ export default function RisksPage() {
                 <span>{selected.owner ?? "—"}</span>
               </div>
               {selected.residual_risk != null && (
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Ryzyko rezydualne</span>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", color: riskColor(selected.residual_risk) }}>{selected.residual_risk.toFixed(1)}</span>
+                <div style={{ marginTop: 4, padding: 8, background: riskBg(selected.residual_risk), borderRadius: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                    <span style={{ color: "var(--text-muted)", fontSize: 11 }}>Ryzyko rezydualne</span>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: riskColor(selected.residual_risk) }}>{selected.residual_risk.toFixed(1)}</span>
+                  </div>
+                  {selected.target_impact != null && (
+                    <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                      Docelowe: W={selected.target_impact} P={selected.target_probability} Z={selected.target_safeguard}
+                      {selected.risk_score > 0 && (
+                        <span style={{ marginLeft: 6, color: "var(--green)" }}>
+                          (-{((1 - selected.residual_risk / selected.risk_score) * 100).toFixed(0)}%)
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
               <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -357,11 +385,22 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
   const [P, setP] = useState(editRisk?.probability_level ?? 2);
   const [Z, setZ] = useState(editRisk?.safeguard_rating ?? 0.25);
 
+  // Target (residual) components
+  const [tW, setTW] = useState(editRisk?.target_impact ?? editRisk?.impact_level ?? 1);
+  const [tP, setTP] = useState(editRisk?.target_probability ?? editRisk?.probability_level ?? 1);
+  const [tZ, setTZ] = useState(editRisk?.target_safeguard ?? 0.95);
+
   const liveScore = Math.exp(W) * P / Z;
-  const liveLevel = liveScore >= 221 ? "high" : liveScore >= 31 ? "medium" : "low";
   const liveLabel = liveScore >= 221 ? "Wysokie" : liveScore >= 31 ? "Średnie" : "Niskie";
   const lvColor = liveScore >= 221 ? "var(--red)" : liveScore >= 31 ? "var(--orange)" : "var(--green)";
   const lvBg = liveScore >= 221 ? "var(--red-dim)" : liveScore >= 31 ? "var(--orange-dim)" : "var(--green-dim)";
+
+  // Residual risk from target components
+  const residualScore = Math.exp(tW) * tP / tZ;
+  const resLabel = residualScore >= 221 ? "Wysokie" : residualScore >= 31 ? "Średnie" : "Niskie";
+  const resColor = residualScore >= 221 ? "var(--red)" : residualScore >= 31 ? "var(--orange)" : "var(--green)";
+  const resBg = residualScore >= 221 ? "var(--red-dim)" : residualScore >= 31 ? "var(--orange-dim)" : "var(--green-dim)";
+  const reduction = liveScore > 0 ? ((1 - residualScore / liveScore) * 100) : 0;
 
   return (
     <form onSubmit={onSubmit}>
@@ -385,6 +424,13 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
           <select name="org_unit_id" className="form-control" required defaultValue={editRisk?.org_unit_id ?? ""}>
             <option value="">Wybierz...</option>
             {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Powiązany aktyw (z rejestru)</label>
+          <select name="asset_id" className="form-control" defaultValue={editRisk?.asset_id ?? ""}>
+            <option value="">Brak powiązania</option>
+            {lookups.assets.map(a => <option key={a.id} value={a.id}>{a.name}{a.org_unit_name ? ` (${a.org_unit_name})` : ""}</option>)}
           </select>
         </div>
         <div className="form-group">
@@ -438,9 +484,6 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
               <div className="form-group"><label>Status</label>
                 <select name="status_id" className="form-control" defaultValue={editRisk?.status_id ?? ""}><option value="">Wybierz...</option>{lookups.statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
               </div>
-              <div className="form-group"><label>Ryzyko rezydualne</label>
-                <input name="residual_risk" className="form-control" type="number" step="0.1" min="0" defaultValue={editRisk?.residual_risk ?? ""} placeholder="Wyliczone po mitygacji" />
-              </div>
               <div className="form-group">
                 <label>Zabezpieczenia</label>
                 <select name="safeguard_ids" className="form-control" multiple style={{ height: 80 }}
@@ -450,7 +493,47 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
                 <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Ctrl+klik aby wybrać wiele</span>
               </div>
             </div>
-            <div className="form-group"><label>Planowane działania</label><textarea name="planned_actions" className="form-control" defaultValue={editRisk?.planned_actions ?? ""} placeholder="Opisz planowane kroki mitygacyjne..." /></div>
+            {/* Residual Risk — Target Components */}
+            <div style={{ background: resBg, border: `1px solid ${resColor}`, borderRadius: 10, padding: "12px 20px", marginTop: 8, marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: resColor, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Ryzyko rezydualne (docelowe)</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    R<sub>res</sub> = EXP({tW}) &times; {tP} / {tZ} = <strong style={{ color: resColor }}>{residualScore.toFixed(1)}</strong>
+                    {reduction > 0 && <span style={{ marginLeft: 8, color: "var(--green)" }}>(-{reduction.toFixed(0)}%)</span>}
+                  </div>
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: resColor }}>{residualScore.toFixed(1)}</div>
+                  <span className="score-badge" style={{ background: `${resColor}30`, color: resColor, fontSize: 11 }}>{resLabel}</span>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: 11 }}>Docelowy W</label>
+                  <select name="target_impact" className="form-control" value={tW} onChange={e => setTW(Number(e.target.value))}>
+                    <option value="1">1 — Niski</option><option value="2">2 — Sredni</option><option value="3">3 — Wysoki</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: 11 }}>Docelowe P</label>
+                  <select name="target_probability" className="form-control" value={tP} onChange={e => setTP(Number(e.target.value))}>
+                    <option value="1">1 — Niskie</option><option value="2">2 — Srednie</option><option value="3">3 — Wysokie</option>
+                  </select>
+                </div>
+                <div className="form-group" style={{ marginBottom: 0 }}>
+                  <label style={{ fontSize: 11 }}>Docelowe Z</label>
+                  <select name="target_safeguard" className="form-control" value={tZ} onChange={e => setTZ(Number(e.target.value))}>
+                    <option value="0.10">0,10 — Brak</option>
+                    <option value="0.25">0,25 — Czesciowe</option>
+                    <option value="0.70">0,70 — Dobre</option>
+                    <option value="0.95">0,95 — Skuteczne</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <input type="hidden" name="residual_risk" value={residualScore.toFixed(2)} />
+            <div className="form-group"><label>Planowane dzialania</label><textarea name="planned_actions" className="form-control" defaultValue={editRisk?.planned_actions ?? ""} placeholder="Opisz planowane kroki mitygacyjne..." /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
               <button type="button" className="btn" onClick={onCancel}>Anuluj</button>
               <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Zapisywanie..." : editRisk ? "Zapisz zmiany" : "Zapisz ryzyko"}</button>

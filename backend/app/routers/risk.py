@@ -3,13 +3,17 @@ Risk analysis module — /api/v1/risks
 
 R = EXP(W) × (P / Z)   — computed by DB (GENERATED column)
 risk_level:  high ≥221, medium 31–220, low <31
+Residual R = EXP(target_W) × target_P / target_Z
 """
+import math
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.database import get_session
+from app.models.asset import Asset
 from app.models.catalog import Safeguard, Threat, Vulnerability
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
@@ -32,6 +36,7 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         return e.label if e else None
 
     org = await s.get(OrgUnit, risk.org_unit_id)
+    asset = await s.get(Asset, risk.asset_id) if risk.asset_id else None
     area = await s.get(SecurityArea, risk.security_area_id) if risk.security_area_id else None
     threat = await s.get(Threat, risk.threat_id) if risk.threat_id else None
     vuln = await s.get(Vulnerability, risk.vulnerability_id) if risk.vulnerability_id else None
@@ -48,6 +53,8 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         id=risk.id,
         org_unit_id=risk.org_unit_id,
         org_unit_name=org.name if org else None,
+        asset_id=risk.asset_id,
+        asset_id_name=asset.name if asset else None,
         asset_category_id=risk.asset_category_id,
         asset_category_name=await _de_label(risk.asset_category_id),
         asset_name=risk.asset_name,
@@ -73,12 +80,22 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         owner=risk.owner,
         planned_actions=risk.planned_actions,
         residual_risk=float(risk.residual_risk) if risk.residual_risk is not None else None,
+        target_impact=risk.target_impact,
+        target_probability=risk.target_probability,
+        target_safeguard=float(risk.target_safeguard) if risk.target_safeguard is not None else None,
         identified_at=risk.identified_at,
         last_review_at=risk.last_review_at,
         created_at=risk.created_at,
         updated_at=risk.updated_at,
         safeguards=[RiskSafeguardRef(safeguard_id=sid, safeguard_name=sn) for sid, sn in sg_rows],
     )
+
+
+def _calc_residual(tw: int | None, tp: int | None, tz: float | None) -> float | None:
+    """Calculate residual risk from target components: R_res = EXP(W_t) * P_t / Z_t"""
+    if tw is not None and tp is not None and tz is not None and tz > 0:
+        return math.exp(tw) * tp / tz
+    return None
 
 
 async def _sync_safeguards(s: AsyncSession, risk_id: int, safeguard_ids: list[int]):
@@ -126,6 +143,10 @@ async def get_risk(risk_id: int, s: AsyncSession = Depends(get_session)):
 @router.post("", response_model=RiskOut, status_code=201, summary="Utwórz ryzyko")
 async def create_risk(body: RiskCreate, s: AsyncSession = Depends(get_session)):
     data = body.model_dump(exclude={"safeguard_ids"})
+    # Auto-calculate residual risk from target components
+    calc = _calc_residual(data.get("target_impact"), data.get("target_probability"), data.get("target_safeguard"))
+    if calc is not None:
+        data["residual_risk"] = round(calc, 2)
     risk = Risk(**data)
     s.add(risk)
     await s.flush()  # get id
@@ -150,6 +171,14 @@ async def update_risk(risk_id: int, body: RiskUpdate, s: AsyncSession = Depends(
     data = body.model_dump(exclude_unset=True, exclude={"safeguard_ids"})
     for k, v in data.items():
         setattr(risk, k, v)
+
+    # Recalculate residual risk if target components changed
+    tw = risk.target_impact
+    tp = risk.target_probability
+    tz = float(risk.target_safeguard) if risk.target_safeguard is not None else None
+    calc = _calc_residual(tw, tp, tz)
+    if calc is not None:
+        risk.residual_risk = round(calc, 2)
 
     if body.safeguard_ids is not None:
         await _sync_safeguards(s, risk_id, body.safeguard_ids)

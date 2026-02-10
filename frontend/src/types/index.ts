@@ -12,8 +12,10 @@ export interface DictionaryType {
 
 export interface DictionaryEntry {
   id: number;
-  dictionary_type_id: number;
+  dict_type_id: number;
+  code: string | null;
   label: string;
+  description: string | null;
   numeric_value: number | null;
   color: string | null;
   sort_order: number;
@@ -90,12 +92,73 @@ export interface Safeguard {
   is_active: boolean;
 }
 
+// Asset
+export interface Asset {
+  id: number;
+  name: string;
+  asset_type_id: number | null;
+  asset_type_name: string | null;
+  category_id: number | null;
+  category_name: string | null;
+  org_unit_id: number | null;
+  org_unit_name: string | null;
+  parent_id: number | null;
+  parent_name: string | null;
+  owner: string | null;
+  description: string | null;
+  location: string | null;
+  sensitivity_id: number | null;
+  sensitivity_name: string | null;
+  criticality_id: number | null;
+  criticality_name: string | null;
+  is_active: boolean;
+  risk_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Asset Relationships
+export interface AssetRelationship {
+  id: number;
+  source_asset_id: number;
+  source_asset_name: string | null;
+  target_asset_id: number;
+  target_asset_name: string | null;
+  relationship_type: string;
+  description: string | null;
+  created_at: string;
+}
+
+export interface AssetGraphNode {
+  id: number;
+  name: string;
+  asset_type_name: string | null;
+  criticality_name: string | null;
+  org_unit_name: string | null;
+  risk_count: number;
+}
+
+export interface AssetGraphEdge {
+  id: number;
+  source: number;
+  target: number;
+  type: string;
+  description: string | null;
+}
+
+export interface AssetGraph {
+  nodes: AssetGraphNode[];
+  edges: AssetGraphEdge[];
+}
+
 // Risk
 export interface Risk {
   id: number;
   code: string;
   org_unit_id: number;
   org_unit_name: string;
+  asset_id: number | null;
+  asset_id_name: string | null;
   security_area_id: number;
   security_area_name: string;
   asset_name: string;
@@ -121,6 +184,9 @@ export interface Risk {
   owner: string | null;
   planned_actions: string | null;
   residual_risk: number | null;
+  target_impact: number | null;
+  target_probability: number | null;
+  target_safeguard: number | null;
   identified_at: string | null;
   last_review_at: string | null;
   is_active: boolean;
@@ -220,6 +286,50 @@ export interface AuditLogPage {
   total: number;
   page: number;
   per_page: number;
+}
+
+// Action
+export interface ActionLink {
+  id: number;
+  entity_type: string;
+  entity_id: number;
+  entity_name: string | null;
+  created_at: string;
+}
+
+export interface ActionHistory {
+  id: number;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_by: string | null;
+  created_at: string;
+}
+
+export interface Action {
+  id: number;
+  title: string;
+  description: string | null;
+  org_unit_id: number | null;
+  org_unit_name: string | null;
+  owner: string | null;
+  responsible: string | null;
+  priority_id: number | null;
+  priority_name: string | null;
+  status_id: number | null;
+  status_name: string | null;
+  source_id: number | null;
+  source_name: string | null;
+  due_date: string | null;
+  completed_at: string | null;
+  effectiveness_rating: number | null;
+  effectiveness_notes: string | null;
+  is_active: boolean;
+  is_overdue: boolean;
+  links: ActionLink[];
+  history: ActionHistory[];
+  created_at: string;
+  updated_at: string;
 }
 
 // ═══ Dashboard: Executive Summary ═══

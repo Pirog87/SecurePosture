@@ -13,6 +13,7 @@ from app.routers.dictionary import router as dictionary_router
 from app.routers.org_unit import router as org_unit_router
 from app.routers.risk import router as risk_router
 from app.routers.risk_review import router as risk_review_router
+from app.routers.domain import router as domain_router
 from app.routers.security_area import router as security_area_router
 
 app = FastAPI(
@@ -33,6 +34,7 @@ app.add_middleware(
 app.include_router(dashboard_router)
 app.include_router(dictionary_router)
 app.include_router(org_unit_router)
+app.include_router(domain_router)
 app.include_router(security_area_router)
 app.include_router(catalog_router)
 app.include_router(asset_router)

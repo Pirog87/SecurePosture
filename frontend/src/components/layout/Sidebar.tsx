@@ -10,7 +10,10 @@ interface NavItem {
 const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "Dashboardy",
-    items: [{ to: "/", icon: "📊", label: "Executive Summary" }],
+    items: [
+      { to: "/", icon: "📊", label: "Executive Summary" },
+      { to: "/domains", icon: "🛡", label: "Domeny Bezpieczenstwa" },
+    ],
   },
   {
     title: "Zarządzanie Ryzykiem",

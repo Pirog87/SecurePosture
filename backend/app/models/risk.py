@@ -23,7 +23,7 @@ class Risk(Base):
     asset_name: Mapped[str] = mapped_column(String(400), nullable=False)
     sensitivity_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     criticality_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
-    security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_areas.id"))
+    security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_domains.id"))
     threat_id: Mapped[int | None] = mapped_column(ForeignKey("threats.id"))
     vulnerability_id: Mapped[int | None] = mapped_column(ForeignKey("vulnerabilities.id"))
     existing_controls: Mapped[str | None] = mapped_column(Text)
@@ -66,12 +66,12 @@ class Risk(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     org_unit: Mapped["OrgUnit"] = relationship(foreign_keys=[org_unit_id])
-    security_area: Mapped["SecurityArea | None"] = relationship(foreign_keys=[security_area_id])
+    security_area: Mapped["SecurityDomain | None"] = relationship(foreign_keys=[security_area_id])
     status: Mapped["DictionaryEntry | None"] = relationship(foreign_keys=[status_id])
 
     # Import here to avoid circular
     from .org_unit import OrgUnit
-    from .security_area import SecurityArea
+    from .security_area import SecurityDomain
     from .dictionary import DictionaryEntry
 
 

@@ -2,7 +2,7 @@ from .base import Base
 from .user import User
 from .dictionary import DictionaryType, DictionaryEntry
 from .org_unit import OrgLevel, OrgUnit
-from .security_area import SecurityArea
+from .security_area import SecurityDomain, DomainCisControl, SecurityArea
 from .catalog import Threat, Vulnerability, Safeguard
 from .asset import Asset, AssetRelationship
 from .risk import Risk, RiskSafeguard, RiskReview, RiskReviewConfig
@@ -15,7 +15,7 @@ __all__ = [
     "User",
     "DictionaryType", "DictionaryEntry",
     "OrgLevel", "OrgUnit",
-    "SecurityArea",
+    "SecurityDomain", "DomainCisControl", "SecurityArea",
     "Threat", "Vulnerability", "Safeguard",
     "Asset", "AssetRelationship",
     "Risk", "RiskSafeguard", "RiskReview", "RiskReviewConfig",

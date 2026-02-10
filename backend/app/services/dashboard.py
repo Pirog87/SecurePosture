@@ -23,7 +23,7 @@ from app.models.cis import (
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk, RiskReviewConfig
-from app.models.security_area import SecurityArea
+from app.models.security_area import SecurityDomain as SecurityArea
 from app.schemas.dashboard import (
     AttackCapability,
     CisComparisonUnit,

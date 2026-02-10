@@ -56,12 +56,28 @@ export interface OrgUnitTreeNode extends OrgUnit {
   children: OrgUnitTreeNode[];
 }
 
-// Security Area
+// Security Area (legacy alias)
 export interface SecurityArea {
   id: number;
   name: string;
   sort_order: number;
   is_active: boolean;
+}
+
+// Security Domain (replaces SecurityArea)
+export interface SecurityDomain {
+  id: number;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  color: string | null;
+  owner: string | null;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  cis_controls: { cis_control_id: number; control_number: number | null; name_pl: string | null }[];
+  risk_count: number;
 }
 
 // Catalog
@@ -151,17 +167,27 @@ export interface AssetGraph {
   edges: AssetGraphEdge[];
 }
 
-// Risk (ISO 27005 / ISO 31000)
+// Linked Action (shown in risk detail)
+export interface LinkedActionRef {
+  action_id: number;
+  title: string;
+  status_name: string | null;
+  owner: string | null;
+  due_date: string | null;
+  is_overdue: boolean;
+}
+
+// Risk
 export interface Risk {
   id: number;
   code: string;
-  // Kontekst (ISO 31000 §5.3)
+  // Kontekst
   org_unit_id: number;
   org_unit_name: string;
   risk_category_id: number | null;
   risk_category_name: string | null;
   risk_source: string | null;
-  // Identyfikacja (ISO 27005 §8.2)
+  // Identyfikacja aktywa
   asset_id: number | null;
   asset_id_name: string | null;
   asset_name: string;
@@ -181,13 +207,13 @@ export interface Risk {
   control_effectiveness_id: number | null;
   control_effectiveness_name: string | null;
   consequence_description: string | null;
-  // Analiza (ISO 27005 §8.3)
+  // Analiza ryzyka
   impact_level: number;
   probability_level: number;
   safeguard_rating: number;
   risk_score: number;
   risk_level: string;
-  // Postepowanie (ISO 27005 §8.5)
+  // Postepowanie z ryzykiem
   status_id: number | null;
   status_name: string | null;
   strategy_id: number | null;
@@ -201,17 +227,18 @@ export interface Risk {
   target_impact: number | null;
   target_probability: number | null;
   target_safeguard: number | null;
-  // Akceptacja (ISO 27005 §8.6)
+  // Akceptacja
   accepted_by: string | null;
   accepted_at: string | null;
   acceptance_justification: string | null;
-  // Monitorowanie (ISO 27005 §9)
+  // Monitorowanie
   next_review_date: string | null;
   identified_at: string | null;
   last_review_at: string | null;
   is_active: boolean;
   safeguard_ids: number[];
   safeguards: { safeguard_id: number; safeguard_name: string }[];
+  linked_actions: LinkedActionRef[];
   created_at: string;
   updated_at: string;
 }
@@ -552,4 +579,39 @@ export interface CisTrendPoint {
 export interface CisTrend {
   org_unit: OrgUnitRef | null;
   points: CisTrendPoint[];
+}
+
+// ═══ Domain Dashboard ═══
+export interface DomainTopRisk {
+  id: number;
+  asset_name: string;
+  risk_score: number;
+  risk_level: string;
+  org_unit_name: string | null;
+}
+
+export interface DomainScoreCard {
+  domain_id: number;
+  domain_name: string;
+  icon: string | null;
+  color: string | null;
+  owner: string | null;
+  score: number;
+  grade: "A" | "B" | "C" | "D" | "F";
+  risk_count: number;
+  risk_high: number;
+  risk_medium: number;
+  risk_low: number;
+  avg_risk_score: number | null;
+  cis_pct: number | null;
+  cis_control_count: number;
+  top_risks: DomainTopRisk[];
+}
+
+export interface DomainDashboard {
+  org_unit_id: number | null;
+  org_unit_name: string | null;
+  domains: DomainScoreCard[];
+  overall_score: number;
+  overall_grade: "A" | "B" | "C" | "D" | "F";
 }

@@ -6,13 +6,13 @@ export default function Layout() {
   return (
     <>
       <Sidebar />
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+      <div className="main-wrapper">
         <Topbar />
-        <main className="flex-1 overflow-y-auto p-6 pb-12">
-          <div className="animate-fade-in">
+        <div className="content">
+          <div className="view-enter">
             <Outlet />
           </div>
-        </main>
+        </div>
       </div>
     </>
   );

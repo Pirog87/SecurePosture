@@ -143,6 +143,26 @@ async def create_entry(
     return DictionaryEntryOut.model_validate(entry)
 
 
+# ── REORDER entries (defined before {entry_id} to avoid path collision) ──
+
+@router.put(
+    "/entries/reorder",
+    summary="Zmień kolejność pozycji (sort_order)",
+)
+async def reorder_entries(
+    body: ReorderRequest,
+    s: AsyncSession = Depends(get_session),
+):
+    for item in body.items:
+        await s.execute(
+            update(DictionaryEntry)
+            .where(DictionaryEntry.id == item.id)
+            .values(sort_order=item.sort_order)
+        )
+    await s.commit()
+    return {"status": "ok", "updated": len(body.items)}
+
+
 # ── UPDATE entry ──
 
 @router.put(
@@ -182,23 +202,3 @@ async def archive_entry(
     await s.commit()
     await s.refresh(entry)
     return DictionaryEntryOut.model_validate(entry)
-
-
-# ── REORDER entries ──
-
-@router.put(
-    "/entries/reorder",
-    summary="Zmień kolejność pozycji (sort_order)",
-)
-async def reorder_entries(
-    body: ReorderRequest,
-    s: AsyncSession = Depends(get_session),
-):
-    for item in body.items:
-        await s.execute(
-            update(DictionaryEntry)
-            .where(DictionaryEntry.id == item.id)
-            .values(sort_order=item.sort_order)
-        )
-    await s.commit()
-    return {"status": "ok", "updated": len(body.items)}

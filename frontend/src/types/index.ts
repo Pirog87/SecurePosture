@@ -3,7 +3,11 @@ export interface DictionaryType {
   id: number;
   code: string;
   name: string;
+  description: string | null;
   is_system: boolean;
+  entry_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DictionaryEntry {
@@ -16,7 +20,12 @@ export interface DictionaryEntry {
   is_active: boolean;
 }
 
-export interface DictionaryTypeWithEntries extends DictionaryType {
+export interface DictionaryTypeWithEntries {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  is_system: boolean;
   entries: DictionaryEntry[];
 }
 
@@ -142,21 +151,22 @@ export interface OverdueRisk {
 // CIS
 export interface CisControl {
   id: number;
-  number: number;
+  control_number: number;
   name_pl: string;
   name_en: string;
+  sub_control_count: number;
   sub_controls: CisSubControl[];
 }
 
 export interface CisSubControl {
   id: number;
   control_id: number;
-  number: string;
-  name_pl: string | null;
-  name_en: string | null;
-  ig1: boolean;
-  ig2: boolean;
-  ig3: boolean;
+  sub_id: string;
+  detail_en: string;
+  detail_pl: string | null;
+  nist_csf: string | null;
+  implementation_groups: string | null;
+  sensor_baseline: string | null;
 }
 
 export interface CisAssessment {

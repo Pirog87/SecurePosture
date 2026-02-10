@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
 import { api } from "../services/api";
-import type { DictionaryTypeWithEntries, DictionaryEntry } from "../types";
+import type { DictionaryType, DictionaryTypeWithEntries, DictionaryEntry } from "../types";
 import Modal from "../components/Modal";
 
 export default function DictionariesPage() {
-  const [dicts, setDicts] = useState<DictionaryTypeWithEntries[]>([]);
+  const [dicts, setDicts] = useState<DictionaryType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openDict, setOpenDict] = useState<DictionaryTypeWithEntries | null>(null);
+  const [loadingEntries, setLoadingEntries] = useState(false);
   const [showAddEntry, setShowAddEntry] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const loadDicts = async () => {
     try {
-      const types = await api.get<DictionaryTypeWithEntries[]>("/api/v1/dictionaries");
+      const types = await api.get<DictionaryType[]>("/api/v1/dictionaries");
       setDicts(types);
       setError(null);
     } catch (err) {
@@ -25,16 +26,24 @@ export default function DictionariesPage() {
 
   useEffect(() => { loadDicts(); }, []);
 
-  const openDictModal = (d: DictionaryTypeWithEntries) => {
-    setOpenDict(d);
+  const openDictModal = async (d: DictionaryType) => {
+    setLoadingEntries(true);
     setShowAddEntry(false);
+    try {
+      const full = await api.get<DictionaryTypeWithEntries>(`/api/v1/dictionaries/${d.code}/entries`);
+      setOpenDict(full);
+    } catch {
+      setOpenDict({ id: d.id, code: d.code, name: d.name, description: d.description, is_system: d.is_system, entries: [] });
+    } finally {
+      setLoadingEntries(false);
+    }
   };
 
   const refreshOpenDict = async (code: string) => {
     try {
       const updated = await api.get<DictionaryTypeWithEntries>(`/api/v1/dictionaries/${code}/entries`);
       setOpenDict(updated);
-      setDicts(prev => prev.map(d => d.code === code ? updated : d));
+      loadDicts();
     } catch { /* ignore */ }
   };
 
@@ -93,17 +102,13 @@ export default function DictionariesPage() {
     <div>
       <div className="grid-3">
         {dicts.map((d) => (
-          <div key={d.id} className="card" style={{ cursor: "pointer" }} onClick={() => openDictModal(d)}>
+          <div key={d.id} className="card clickable" onClick={() => openDictModal(d)}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <div className="card-title" style={{ margin: 0 }}>{d.name}</div>
-              <span className="badge-blue" style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8 }}>{d.entries.length}</span>
+              <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{d.entry_count}</span>
             </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {d.entries.filter(e => e.is_active).map((entry) => (
-                <span key={entry.id} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, background: "rgba(255,255,255,0.04)", color: "var(--text-secondary)" }}>
-                  {entry.label}
-                </span>
-              ))}
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              Kod: <code style={{ color: "var(--text-muted)" }}>{d.code}</code>
             </div>
             {d.is_system && <div style={{ marginTop: 8, fontSize: 10, color: "var(--text-muted)" }}>Słownik systemowy</div>}
           </div>
@@ -116,15 +121,19 @@ export default function DictionariesPage() {
       </div>
 
       <Modal open={!!openDict} onClose={() => setOpenDict(null)} title={openDict?.name ?? "Słownik"} wide>
-        {openDict && (
+        {loadingEntries ? (
+          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Ładowanie pozycji...</div>
+        ) : openDict && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
                 Kod: <code style={{ color: "var(--blue)" }}>{openDict.code}</code> · {openDict.entries.filter(e => e.is_active).length} aktywnych pozycji
               </span>
-              <button className="btn btn-primary btn-sm" onClick={() => setShowAddEntry(!showAddEntry)}>
-                {showAddEntry ? "Anuluj" : "+ Dodaj pozycję"}
-              </button>
+              {!openDict.is_system && (
+                <button className="btn btn-primary btn-sm" onClick={() => setShowAddEntry(!showAddEntry)}>
+                  {showAddEntry ? "Anuluj" : "+ Dodaj pozycję"}
+                </button>
+              )}
             </div>
 
             {showAddEntry && (
@@ -184,7 +193,7 @@ export default function DictionariesPage() {
                         </span>
                       </td>
                       <td>
-                        {entry.is_active && (
+                        {entry.is_active && !openDict.is_system && (
                           <button className="btn btn-sm" onClick={() => archiveEntry(entry)}>Archiwizuj</button>
                         )}
                       </td>

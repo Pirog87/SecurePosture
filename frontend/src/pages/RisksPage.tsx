@@ -336,26 +336,68 @@ export default function RisksPage() {
       {/* Add / Edit Form Modal */}
       <Modal open={showForm} onClose={() => { setShowForm(false); setEditRisk(null); }} title={editRisk ? `Edytuj ryzyko: ${editRisk.code || editRisk.id}` : "Dodaj ryzyko"} wide>
         {lookups ? (
-          <form onSubmit={handleSubmit}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <div className="form-group">
-                <label>Jednostka organizacyjna *</label>
-                <select name="org_unit_id" className="form-control" required defaultValue={editRisk?.org_unit_id ?? ""}>
-                  <option value="">Wybierz...</option>
-                  {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Kategoria aktywa</label>
-                <select name="asset_category_id" className="form-control" defaultValue={editRisk?.asset_category_id ?? ""}>
-                  <option value="">Wybierz...</option>
-                  {lookups.categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                </select>
-              </div>
-              <div className="form-group" style={{ gridColumn: "span 2" }}>
-                <label>Nazwa aktywa *</label>
-                <input name="asset_name" className="form-control" required defaultValue={editRisk?.asset_name ?? ""} placeholder="np. Laptopy konsultantów" />
-              </div>
+          <RiskForm editRisk={editRisk} lookups={lookups} flatUnits={flatUnits} saving={saving} onSubmit={handleSubmit} onCancel={() => { setShowForm(false); setEditRisk(null); }} />
+        ) : (
+          <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Ładowanie danych formularza...</div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/* Live Risk Score Calculator Form */
+function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: {
+  editRisk: Risk | null; lookups: FormLookups;
+  flatUnits: { id: number; name: string; depth: number }[];
+  saving: boolean;
+  onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
+  onCancel: () => void;
+}) {
+  const [W, setW] = useState(editRisk?.impact_level ?? 2);
+  const [P, setP] = useState(editRisk?.probability_level ?? 2);
+  const [Z, setZ] = useState(editRisk?.safeguard_rating ?? 0.25);
+
+  const liveScore = Math.exp(W) * P / Z;
+  const liveLevel = liveScore >= 221 ? "high" : liveScore >= 31 ? "medium" : "low";
+  const liveLabel = liveScore >= 221 ? "Wysokie" : liveScore >= 31 ? "Średnie" : "Niskie";
+  const lvColor = liveScore >= 221 ? "var(--red)" : liveScore >= 31 ? "var(--orange)" : "var(--green)";
+  const lvBg = liveScore >= 221 ? "var(--red-dim)" : liveScore >= 31 ? "var(--orange-dim)" : "var(--green-dim)";
+
+  return (
+    <form onSubmit={onSubmit}>
+      {/* Live Score Preview */}
+      <div style={{ background: lvBg, border: `1px solid ${lvColor}`, borderRadius: 10, padding: "12px 20px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: 11, color: lvColor, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Kalkulacja na bieżąco</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            R = EXP({W}) &times; {P} / {Z} = <strong style={{ color: lvColor }}>{liveScore.toFixed(1)}</strong>
+          </div>
+        </div>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: lvColor }}>{liveScore.toFixed(1)}</div>
+          <span className="score-badge" style={{ background: `${lvColor}30`, color: lvColor, fontSize: 12 }}>{liveLabel}</span>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="form-group">
+          <label>Jednostka organizacyjna *</label>
+          <select name="org_unit_id" className="form-control" required defaultValue={editRisk?.org_unit_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Kategoria aktywa</label>
+          <select name="asset_category_id" className="form-control" defaultValue={editRisk?.asset_category_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Nazwa aktywa *</label>
+          <input name="asset_name" className="form-control" required defaultValue={editRisk?.asset_name ?? ""} placeholder="np. Laptopy konsultantów" />
+        </div>
               <div className="form-group"><label>Wrażliwość</label>
                 <select name="sensitivity_id" className="form-control" defaultValue={editRisk?.sensitivity_id ?? ""}><option value="">Wybierz...</option>{lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
               </div>
@@ -372,17 +414,17 @@ export default function RisksPage() {
                 <select name="vulnerability_id" className="form-control" defaultValue={editRisk?.vulnerability_id ?? ""}><option value="">Wybierz...</option>{lookups.vulns.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select>
               </div>
               <div className="form-group"><label>Wpływ (W) *</label>
-                <select name="impact_level" className="form-control" required defaultValue={editRisk?.impact_level ?? 2}>
+                <select name="impact_level" className="form-control" required value={W} onChange={e => setW(Number(e.target.value))}>
                   <option value="1">1 — Niski</option><option value="2">2 — Średni</option><option value="3">3 — Wysoki</option>
                 </select>
               </div>
               <div className="form-group"><label>Prawdopodobieństwo (P) *</label>
-                <select name="probability_level" className="form-control" required defaultValue={editRisk?.probability_level ?? 2}>
+                <select name="probability_level" className="form-control" required value={P} onChange={e => setP(Number(e.target.value))}>
                   <option value="1">1 — Niskie</option><option value="2">2 — Średnie</option><option value="3">3 — Wysokie</option>
                 </select>
               </div>
               <div className="form-group"><label>Ocena zabezpieczeń (Z) *</label>
-                <select name="safeguard_rating" className="form-control" required defaultValue={editRisk?.safeguard_rating ?? 0.25}>
+                <select name="safeguard_rating" className="form-control" required value={Z} onChange={e => setZ(Number(e.target.value))}>
                   <option value="0.10">0,10 — Brak zabezpieczeń</option>
                   <option value="0.25">0,25 — Częściowe</option>
                   <option value="0.70">0,70 — Dobra jakość</option>
@@ -410,14 +452,9 @@ export default function RisksPage() {
             </div>
             <div className="form-group"><label>Planowane działania</label><textarea name="planned_actions" className="form-control" defaultValue={editRisk?.planned_actions ?? ""} placeholder="Opisz planowane kroki mitygacyjne..." /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" className="btn" onClick={() => { setShowForm(false); setEditRisk(null); }}>Anuluj</button>
+              <button type="button" className="btn" onClick={onCancel}>Anuluj</button>
               <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Zapisywanie..." : editRisk ? "Zapisz zmiany" : "Zapisz ryzyko"}</button>
             </div>
           </form>
-        ) : (
-          <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Ładowanie danych formularza...</div>
-        )}
-      </Modal>
-    </div>
-  );
+        );
 }

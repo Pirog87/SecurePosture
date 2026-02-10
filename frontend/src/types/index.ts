@@ -100,9 +100,9 @@ export interface Risk {
   threat_name: string | null;
   vulnerability_id: number | null;
   vulnerability_name: string | null;
-  impact_w: number;
-  probability_p: number;
-  safeguard_rating_z: number;
+  impact_level: number;
+  probability_level: number;
+  safeguard_rating: number;
   risk_score: number;
   risk_level: string;
   status_id: number | null;

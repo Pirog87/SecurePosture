@@ -12,6 +12,8 @@ class RiskOut(BaseModel):
     id: int
     org_unit_id: int
     org_unit_name: str | None = None
+    asset_id: int | None = None
+    asset_id_name: str | None = None
     asset_category_id: int | None = None
     asset_category_name: str | None = None
     asset_name: str
@@ -53,6 +55,7 @@ class RiskOut(BaseModel):
 
 class RiskCreate(BaseModel):
     org_unit_id: int
+    asset_id: int | None = None
     asset_category_id: int | None = None
     asset_name: str = Field(..., min_length=1, max_length=400)
     sensitivity_id: int | None = None
@@ -76,6 +79,7 @@ class RiskCreate(BaseModel):
 
 class RiskUpdate(BaseModel):
     org_unit_id: int | None = None
+    asset_id: int | None = None
     asset_category_id: int | None = None
     asset_name: str | None = Field(None, min_length=1, max_length=400)
     sensitivity_id: int | None = None

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import check_db_connection
+from app.routers.asset import router as asset_router
 from app.routers.audit import router as audit_router
 from app.routers.catalog import router as catalog_router
 from app.routers.cis import router as cis_router
@@ -33,6 +34,7 @@ app.include_router(dictionary_router)
 app.include_router(org_unit_router)
 app.include_router(security_area_router)
 app.include_router(catalog_router)
+app.include_router(asset_router)
 app.include_router(risk_router)
 app.include_router(risk_review_router)
 app.include_router(cis_router)

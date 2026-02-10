@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
-import type { Risk, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries } from "../types";
+import type { Risk, Asset, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries } from "../types";
 import Modal from "../components/Modal";
 
 function riskColor(R: number) { return R >= 221 ? "var(--red)" : R >= 31 ? "var(--orange)" : "var(--green)"; }
@@ -14,6 +14,7 @@ interface FormLookups {
   threats: Threat[];
   vulns: Vulnerability[];
   safeguards: Safeguard[];
+  assets: Asset[];
   categories: { id: number; label: string }[];
   sensitivities: { id: number; label: string }[];
   criticalities: { id: number; label: string }[];
@@ -61,12 +62,13 @@ export default function RisksPage() {
 
   const loadLookups = async (): Promise<FormLookups> => {
     if (lookups) return lookups;
-    const [orgUnits, areas, threats, vulns, safeguards] = await Promise.all([
+    const [orgUnits, areas, threats, vulns, safeguards, assets] = await Promise.all([
       api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").catch(() => [] as OrgUnitTreeNode[]),
       api.get<SecurityArea[]>("/api/v1/security-areas").catch(() => [] as SecurityArea[]),
       api.get<Threat[]>("/api/v1/threats").catch(() => [] as Threat[]),
       api.get<Vulnerability[]>("/api/v1/vulnerabilities").catch(() => [] as Vulnerability[]),
       api.get<Safeguard[]>("/api/v1/safeguards").catch(() => [] as Safeguard[]),
+      api.get<Asset[]>("/api/v1/assets").catch(() => [] as Asset[]),
     ]);
     const dictEntries = async (code: string) => {
       try {
@@ -78,7 +80,7 @@ export default function RisksPage() {
       dictEntries("asset_category"), dictEntries("sensitivity"), dictEntries("criticality"),
       dictEntries("risk_status"), dictEntries("risk_strategy"),
     ]);
-    const result = { orgUnits, areas, threats, vulns, safeguards, categories, sensitivities, criticalities, statuses, strategies };
+    const result = { orgUnits, areas, threats, vulns, safeguards, assets, categories, sensitivities, criticalities, statuses, strategies };
     setLookups(result);
     return result;
   };
@@ -101,6 +103,7 @@ export default function RisksPage() {
     const fd = new FormData(e.currentTarget);
     const body: Record<string, unknown> = {
       org_unit_id: Number(fd.get("org_unit_id")),
+      asset_id: fd.get("asset_id") ? Number(fd.get("asset_id")) : null,
       asset_name: fd.get("asset_name") as string,
       asset_category_id: fd.get("asset_category_id") ? Number(fd.get("asset_category_id")) : null,
       sensitivity_id: fd.get("sensitivity_id") ? Number(fd.get("sensitivity_id")) : null,
@@ -262,6 +265,12 @@ export default function RisksPage() {
                 <span style={{ color: "var(--text-muted)" }}>Aktywo</span>
                 <span style={{ fontWeight: 500 }}>{selected.asset_name}</span>
               </div>
+              {selected.asset_id_name && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "var(--text-muted)" }}>Z rejestru</span>
+                  <span style={{ color: "var(--cyan)" }}>{selected.asset_id_name}</span>
+                </div>
+              )}
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "var(--text-muted)" }}>Pion</span>
                 <span>{selected.org_unit_name}</span>
@@ -385,6 +394,13 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
           <select name="org_unit_id" className="form-control" required defaultValue={editRisk?.org_unit_id ?? ""}>
             <option value="">Wybierz...</option>
             {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Powiązany aktyw (z rejestru)</label>
+          <select name="asset_id" className="form-control" defaultValue={editRisk?.asset_id ?? ""}>
+            <option value="">Brak powiązania</option>
+            {lookups.assets.map(a => <option key={a.id} value={a.id}>{a.name}{a.org_unit_name ? ` (${a.org_unit_name})` : ""}</option>)}
           </select>
         </div>
         <div className="form-group">

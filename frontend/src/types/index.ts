@@ -90,12 +90,39 @@ export interface Safeguard {
   is_active: boolean;
 }
 
+// Asset
+export interface Asset {
+  id: number;
+  name: string;
+  asset_type_id: number | null;
+  asset_type_name: string | null;
+  category_id: number | null;
+  category_name: string | null;
+  org_unit_id: number | null;
+  org_unit_name: string | null;
+  parent_id: number | null;
+  parent_name: string | null;
+  owner: string | null;
+  description: string | null;
+  location: string | null;
+  sensitivity_id: number | null;
+  sensitivity_name: string | null;
+  criticality_id: number | null;
+  criticality_name: string | null;
+  is_active: boolean;
+  risk_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 // Risk
 export interface Risk {
   id: number;
   code: string;
   org_unit_id: number;
   org_unit_name: string;
+  asset_id: number | null;
+  asset_id_name: string | null;
   security_area_id: number;
   security_area_name: string;
   asset_name: string;

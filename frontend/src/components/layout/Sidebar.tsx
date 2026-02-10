@@ -15,6 +15,7 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "Zarządzanie Ryzykiem",
     items: [
+      { to: "/assets", icon: "🖥️", label: "Rejestr Aktywów" },
       { to: "/risks", icon: "⚠️", label: "Rejestr Ryzyk", badge: { count: 3, cls: "badge-red" } },
       { to: "/reviews", icon: "🔄", label: "Przeglądy", badge: { count: 5, cls: "badge-yellow" } },
     ],

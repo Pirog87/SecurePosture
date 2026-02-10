@@ -12,6 +12,7 @@ class Risk(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     org_unit_id: Mapped[int] = mapped_column(ForeignKey("org_units.id"), nullable=False)
+    asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"))
     asset_category_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     asset_name: Mapped[str] = mapped_column(String(400), nullable=False)
     sensitivity_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))

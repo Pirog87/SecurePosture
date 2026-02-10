@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.database import get_session
+from app.models.asset import Asset
 from app.models.catalog import Safeguard, Threat, Vulnerability
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
@@ -32,6 +33,7 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         return e.label if e else None
 
     org = await s.get(OrgUnit, risk.org_unit_id)
+    asset = await s.get(Asset, risk.asset_id) if risk.asset_id else None
     area = await s.get(SecurityArea, risk.security_area_id) if risk.security_area_id else None
     threat = await s.get(Threat, risk.threat_id) if risk.threat_id else None
     vuln = await s.get(Vulnerability, risk.vulnerability_id) if risk.vulnerability_id else None
@@ -48,6 +50,8 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         id=risk.id,
         org_unit_id=risk.org_unit_id,
         org_unit_name=org.name if org else None,
+        asset_id=risk.asset_id,
+        asset_id_name=asset.name if asset else None,
         asset_category_id=risk.asset_category_id,
         asset_category_name=await _de_label(risk.asset_category_id),
         asset_name=risk.asset_name,

@@ -3,8 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import check_db_connection
+from app.routers.audit import router as audit_router
+from app.routers.catalog import router as catalog_router
+from app.routers.cis import router as cis_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.dictionary import router as dictionary_router
+from app.routers.org_unit import router as org_unit_router
+from app.routers.risk import router as risk_router
+from app.routers.risk_review import router as risk_review_router
+from app.routers.security_area import router as security_area_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -23,6 +30,13 @@ app.add_middleware(
 
 app.include_router(dashboard_router)
 app.include_router(dictionary_router)
+app.include_router(org_unit_router)
+app.include_router(security_area_router)
+app.include_router(catalog_router)
+app.include_router(risk_router)
+app.include_router(risk_review_router)
+app.include_router(cis_router)
+app.include_router(audit_router)
 
 
 @app.get("/health")

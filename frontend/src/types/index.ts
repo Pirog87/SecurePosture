@@ -151,16 +151,19 @@ export interface AssetGraph {
   edges: AssetGraphEdge[];
 }
 
-// Risk
+// Risk (ISO 27005 / ISO 31000)
 export interface Risk {
   id: number;
   code: string;
+  // Kontekst (ISO 31000 §5.3)
   org_unit_id: number;
   org_unit_name: string;
+  risk_category_id: number | null;
+  risk_category_name: string | null;
+  risk_source: string | null;
+  // Identyfikacja (ISO 27005 §8.2)
   asset_id: number | null;
   asset_id_name: string | null;
-  security_area_id: number;
-  security_area_name: string;
   asset_name: string;
   asset_category_id: number | null;
   asset_category_name: string | null;
@@ -168,25 +171,42 @@ export interface Risk {
   sensitivity_name: string | null;
   criticality_id: number | null;
   criticality_name: string | null;
+  security_area_id: number;
+  security_area_name: string;
   threat_id: number | null;
   threat_name: string | null;
   vulnerability_id: number | null;
   vulnerability_name: string | null;
+  existing_controls: string | null;
+  control_effectiveness_id: number | null;
+  control_effectiveness_name: string | null;
+  consequence_description: string | null;
+  // Analiza (ISO 27005 §8.3)
   impact_level: number;
   probability_level: number;
   safeguard_rating: number;
   risk_score: number;
   risk_level: string;
+  // Postepowanie (ISO 27005 §8.5)
   status_id: number | null;
   status_name: string | null;
   strategy_id: number | null;
   strategy_name: string | null;
   owner: string | null;
   planned_actions: string | null;
+  treatment_plan: string | null;
+  treatment_deadline: string | null;
+  treatment_resources: string | null;
   residual_risk: number | null;
   target_impact: number | null;
   target_probability: number | null;
   target_safeguard: number | null;
+  // Akceptacja (ISO 27005 §8.6)
+  accepted_by: string | null;
+  accepted_at: string | null;
+  acceptance_justification: string | null;
+  // Monitorowanie (ISO 27005 §9)
+  next_review_date: string | null;
   identified_at: string | null;
   last_review_at: string | null;
   is_active: boolean;

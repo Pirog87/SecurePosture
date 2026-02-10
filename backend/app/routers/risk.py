@@ -1,11 +1,13 @@
 """
 Risk analysis module — /api/v1/risks
 
-R = EXP(W) × (P / Z)   — computed by DB (GENERATED column)
-risk_level:  high ≥221, medium 31–220, low <31
-Residual R = EXP(target_W) × target_P / target_Z
+ISO 27005 / ISO 31000 compliant risk management process.
+R = EXP(W) x (P / Z)   — computed by DB (GENERATED column)
+risk_level:  high >=221, medium 31-220, low <31
+Residual R = EXP(target_W) x target_P / target_Z
 """
 import math
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
@@ -19,16 +21,17 @@ from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk, RiskSafeguard
 from app.models.security_area import SecurityArea
-from app.schemas.risk import RiskCreate, RiskOut, RiskSafeguardRef, RiskUpdate
+from app.schemas.risk import (
+    RiskAcceptRequest, RiskCreate, RiskOut, RiskSafeguardRef, RiskUpdate,
+)
 
 router = APIRouter(prefix="/api/v1/risks", tags=["Analiza ryzyka"])
 
 
-# ── helper: build full RiskOut from row ──
+# -- helper: build full RiskOut from row --
 
 async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
     """Load all joined names for a single Risk entity."""
-    # dict entry names
     async def _de_label(entry_id: int | None) -> str | None:
         if entry_id is None:
             return None
@@ -51,8 +54,13 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
 
     return RiskOut(
         id=risk.id,
+        # Kontekst
         org_unit_id=risk.org_unit_id,
         org_unit_name=org.name if org else None,
+        risk_category_id=risk.risk_category_id,
+        risk_category_name=await _de_label(risk.risk_category_id),
+        risk_source=risk.risk_source,
+        # Identyfikacja
         asset_id=risk.asset_id,
         asset_id_name=asset.name if asset else None,
         asset_category_id=risk.asset_category_id,
@@ -68,23 +76,39 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         threat_name=threat.name if threat else None,
         vulnerability_id=risk.vulnerability_id,
         vulnerability_name=vuln.name if vuln else None,
+        existing_controls=risk.existing_controls,
+        control_effectiveness_id=risk.control_effectiveness_id,
+        control_effectiveness_name=await _de_label(risk.control_effectiveness_id),
+        consequence_description=risk.consequence_description,
+        # Analiza
         impact_level=risk.impact_level,
         probability_level=risk.probability_level,
         safeguard_rating=float(risk.safeguard_rating),
         risk_score=float(risk.risk_score) if risk.risk_score is not None else None,
         risk_level=risk.risk_level,
+        # Postepowanie
         status_id=risk.status_id,
         status_name=await _de_label(risk.status_id),
         strategy_id=risk.strategy_id,
         strategy_name=await _de_label(risk.strategy_id),
         owner=risk.owner,
         planned_actions=risk.planned_actions,
+        treatment_plan=risk.treatment_plan,
+        treatment_deadline=risk.treatment_deadline,
+        treatment_resources=risk.treatment_resources,
         residual_risk=float(risk.residual_risk) if risk.residual_risk is not None else None,
         target_impact=risk.target_impact,
         target_probability=risk.target_probability,
         target_safeguard=float(risk.target_safeguard) if risk.target_safeguard is not None else None,
+        # Akceptacja
+        accepted_by=risk.accepted_by,
+        accepted_at=risk.accepted_at,
+        acceptance_justification=risk.acceptance_justification,
+        # Monitorowanie
+        next_review_date=risk.next_review_date,
         identified_at=risk.identified_at,
         last_review_at=risk.last_review_at,
+        is_active=risk.is_active,
         created_at=risk.created_at,
         updated_at=risk.updated_at,
         safeguards=[RiskSafeguardRef(safeguard_id=sid, safeguard_name=sn) for sid, sn in sg_rows],
@@ -104,7 +128,7 @@ async def _sync_safeguards(s: AsyncSession, risk_id: int, safeguard_ids: list[in
         s.add(RiskSafeguard(risk_id=risk_id, safeguard_id=sid))
 
 
-# ═══════════════════ LIST ═══════════════════
+# =================== LIST ===================
 
 @router.get("", response_model=list[RiskOut], summary="Lista ryzyk z filtrami")
 async def list_risks(
@@ -112,9 +136,13 @@ async def list_risks(
     security_area_id: int | None = Query(None),
     status_id: int | None = Query(None),
     risk_level: str | None = Query(None, description="high / medium / low"),
+    risk_category_id: int | None = Query(None),
+    include_archived: bool = Query(False),
     s: AsyncSession = Depends(get_session),
 ):
     q = select(Risk)
+    if not include_archived:
+        q = q.where(Risk.is_active.is_(True))
     if org_unit_id is not None:
         q = q.where(Risk.org_unit_id == org_unit_id)
     if security_area_id is not None:
@@ -123,12 +151,14 @@ async def list_risks(
         q = q.where(Risk.status_id == status_id)
     if risk_level is not None:
         q = q.where(Risk.risk_level == risk_level)
+    if risk_category_id is not None:
+        q = q.where(Risk.risk_category_id == risk_category_id)
     q = q.order_by(Risk.risk_score.desc())
     risks = (await s.execute(q)).scalars().all()
     return [await _risk_out(s, r) for r in risks]
 
 
-# ═══════════════════ GET ═══════════════════
+# =================== GET ===================
 
 @router.get("/{risk_id}", response_model=RiskOut, summary="Pobierz ryzyko")
 async def get_risk(risk_id: int, s: AsyncSession = Depends(get_session)):
@@ -138,9 +168,9 @@ async def get_risk(risk_id: int, s: AsyncSession = Depends(get_session)):
     return await _risk_out(s, risk)
 
 
-# ═══════════════════ CREATE ═══════════════════
+# =================== CREATE ===================
 
-@router.post("", response_model=RiskOut, status_code=201, summary="Utwórz ryzyko")
+@router.post("", response_model=RiskOut, status_code=201, summary="Utworz ryzyko")
 async def create_risk(body: RiskCreate, s: AsyncSession = Depends(get_session)):
     data = body.model_dump(exclude={"safeguard_ids"})
     # Auto-calculate residual risk from target components
@@ -149,18 +179,17 @@ async def create_risk(body: RiskCreate, s: AsyncSession = Depends(get_session)):
         data["residual_risk"] = round(calc, 2)
     risk = Risk(**data)
     s.add(risk)
-    await s.flush()  # get id
+    await s.flush()
 
     if body.safeguard_ids:
         await _sync_safeguards(s, risk.id, body.safeguard_ids)
 
     await s.commit()
-    # Re-read to pick up GENERATED columns computed by DB
     await s.refresh(risk)
     return await _risk_out(s, risk)
 
 
-# ═══════════════════ UPDATE ═══════════════════
+# =================== UPDATE ===================
 
 @router.put("/{risk_id}", response_model=RiskOut, summary="Edytuj ryzyko")
 async def update_risk(risk_id: int, body: RiskUpdate, s: AsyncSession = Depends(get_session)):
@@ -188,15 +217,42 @@ async def update_risk(risk_id: int, body: RiskUpdate, s: AsyncSession = Depends(
     return await _risk_out(s, risk)
 
 
-# ═══════════════════ DELETE (soft) ═══════════════════
+# =================== ACCEPT (ISO 27005 8.6) ===================
 
-@router.delete("/{risk_id}", summary="Zamknij ryzyko (status → Zamknięte)")
+@router.post("/{risk_id}/accept", response_model=RiskOut, summary="Formalna akceptacja ryzyka (ISO 27005 8.6)")
+async def accept_risk(risk_id: int, body: RiskAcceptRequest, s: AsyncSession = Depends(get_session)):
+    risk = await s.get(Risk, risk_id)
+    if not risk:
+        raise HTTPException(404, "Ryzyko nie istnieje")
+    risk.accepted_by = body.accepted_by
+    risk.accepted_at = datetime.utcnow()
+    risk.acceptance_justification = body.acceptance_justification
+
+    # Set status to "accepted" if exists
+    from app.models.dictionary import DictionaryType
+    q = (
+        select(DictionaryEntry.id)
+        .join(DictionaryType, DictionaryEntry.dict_type_id == DictionaryType.id)
+        .where(DictionaryType.code == "risk_status")
+        .where(DictionaryEntry.code == "accepted")
+        .limit(1)
+    )
+    accepted_id = (await s.execute(q)).scalar()
+    if accepted_id:
+        risk.status_id = accepted_id
+
+    await s.commit()
+    await s.refresh(risk)
+    return await _risk_out(s, risk)
+
+
+# =================== CLOSE (soft) ===================
+
+@router.delete("/{risk_id}", summary="Zamknij ryzyko (status -> Zamkniete)")
 async def close_risk(risk_id: int, s: AsyncSession = Depends(get_session)):
     risk = await s.get(Risk, risk_id)
     if not risk:
         raise HTTPException(404, "Ryzyko nie istnieje")
-    # Find "Zamknięte" status entry
-    from sqlalchemy import and_
     from app.models.dictionary import DictionaryType
     q = (
         select(DictionaryEntry.id)
@@ -208,5 +264,6 @@ async def close_risk(risk_id: int, s: AsyncSession = Depends(get_session)):
     closed_id = (await s.execute(q)).scalar()
     if closed_id:
         risk.status_id = closed_id
+    risk.is_active = False
     await s.commit()
     return {"status": "closed", "id": risk_id}

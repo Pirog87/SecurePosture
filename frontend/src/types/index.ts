@@ -111,8 +111,14 @@ export interface Risk {
   strategy_name: string | null;
   owner: string | null;
   planned_actions: string | null;
+  residual_risk: number | null;
+  identified_at: string | null;
+  last_review_at: string | null;
   is_active: boolean;
   safeguard_ids: number[];
+  safeguards: { safeguard_id: number; safeguard_name: string }[];
+  created_at: string;
+  updated_at: string;
 }
 
 // Risk Review
@@ -157,12 +163,19 @@ export interface CisAssessment {
   id: number;
   org_unit_id: number | null;
   org_unit_name: string | null;
-  assessor: string | null;
+  assessor_id: number | null;
+  assessor_name: string | null;
+  status_id: number | null;
+  status_name: string | null;
   assessment_date: string;
-  status: string;
   maturity_rating: number | null;
   risk_addressed_pct: number | null;
+  ig1_score: number | null;
+  ig2_score: number | null;
+  ig3_score: number | null;
   notes: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CisAnswer {
@@ -199,13 +212,189 @@ export interface AuditLogPage {
   per_page: number;
 }
 
-// Dashboard
+// ═══ Dashboard: Executive Summary ═══
+export interface OrgUnitRef {
+  id: number;
+  name: string;
+  symbol: string;
+}
+
+export interface KpiItem {
+  label: string;
+  value: number | string;
+  unit: string | null;
+  trend: "up" | "down" | "stable" | null;
+  color: string | null;
+}
+
+export interface RiskCounts {
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+}
+
+export interface TopRisk {
+  id: number;
+  asset_name: string;
+  risk_score: number;
+  risk_level: string;
+  org_unit: string;
+  security_area: string | null;
+  status: string | null;
+}
+
 export interface ExecutiveSummary {
-  overall_score: number;
-  total_risks: number;
-  high_risks: number;
-  medium_risks: number;
-  low_risks: number;
-  cis_maturity_avg: number;
-  overdue_reviews: number;
+  org_unit: OrgUnitRef | null;
+  kpis: KpiItem[];
+  risk_counts: RiskCounts;
+  avg_risk_score: number | null;
+  cis_maturity_rating: number | null;
+  cis_risk_addressed_pct: number | null;
+  posture_score: number | null;
+  posture_grade: "A" | "B" | "C" | "D" | "F" | null;
+  overdue_reviews_count: number;
+  top_risks: TopRisk[];
+}
+
+// ═══ Dashboard: Risk Dashboard ═══
+export interface RiskByStatus {
+  status: string;
+  status_color: string | null;
+  count: number;
+}
+
+export interface RiskByArea {
+  area_id: number;
+  area_name: string;
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+  avg_score: number | null;
+}
+
+export interface RiskByOrgUnit {
+  org_unit_id: number;
+  org_unit_name: string;
+  symbol: string;
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+  avg_score: number | null;
+}
+
+export interface RiskMatrixCell {
+  impact: number;
+  probability: number;
+  count: number;
+  risk_ids: number[];
+}
+
+export interface RiskTrendPoint {
+  period: string;
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+  avg_score: number | null;
+}
+
+export interface OverdueReviewItem {
+  id: number;
+  asset_name: string;
+  org_unit: string;
+  risk_score: number;
+  risk_level: string;
+  days_since_review: number;
+  owner: string | null;
+}
+
+export interface RiskDashboard {
+  org_unit: OrgUnitRef | null;
+  risk_counts: RiskCounts;
+  avg_risk_score: number | null;
+  by_status: RiskByStatus[];
+  by_area: RiskByArea[];
+  by_org_unit: RiskByOrgUnit[];
+  matrix: RiskMatrixCell[];
+  trend: RiskTrendPoint[];
+  overdue_reviews: OverdueReviewItem[];
+}
+
+// ═══ Dashboard: CIS ═══
+export interface CisDimensions {
+  policy_pct: number | null;
+  implementation_pct: number | null;
+  automation_pct: number | null;
+  reporting_pct: number | null;
+}
+
+export interface CisIgScores {
+  ig1: number | null;
+  ig2: number | null;
+  ig3: number | null;
+}
+
+export interface CisControlScore {
+  control_number: number;
+  name_pl: string;
+  name_en: string;
+  applicable_subs: number;
+  na_subs: number;
+  risk_addressed_pct: number | null;
+  dimensions: CisDimensions;
+}
+
+export interface CisAttackCapability {
+  activity: string;
+  preventive_score: number | null;
+  detective_score: number | null;
+  preventive_level: "Low" | "Moderate" | "High";
+  detective_level: "Low" | "Moderate" | "High";
+}
+
+export interface CisDashboard {
+  org_unit: OrgUnitRef | null;
+  assessment_id: number | null;
+  assessment_date: string | null;
+  maturity_rating: number | null;
+  risk_addressed_pct: number | null;
+  overall_dimensions: CisDimensions;
+  ig_scores: CisIgScores;
+  controls: CisControlScore[];
+  attack_capabilities: CisAttackCapability[];
+}
+
+// ═══ Dashboard: Posture Score ═══
+export interface PostureDimension {
+  name: string;
+  score: number;
+  weight: number;
+  color: string | null;
+}
+
+export interface PostureScoreResponse {
+  org_unit: OrgUnitRef | null;
+  score: number;
+  grade: "A" | "B" | "C" | "D" | "F";
+  dimensions: PostureDimension[];
+  benchmark_avg: number | null;
+}
+
+// ═══ Dashboard: CIS Trend ═══
+export interface CisTrendPoint {
+  assessment_id: number;
+  assessment_date: string;
+  maturity_rating: number | null;
+  risk_addressed_pct: number | null;
+  ig1: number | null;
+  ig2: number | null;
+  ig3: number | null;
+}
+
+export interface CisTrend {
+  org_unit: OrgUnitRef | null;
+  points: CisTrendPoint[];
 }

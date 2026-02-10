@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import check_db_connection
+from app.routers.dashboard import router as dashboard_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -18,6 +19,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(dashboard_router)
 
 
 @app.get("/health")

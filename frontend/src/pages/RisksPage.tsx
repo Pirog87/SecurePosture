@@ -5,10 +5,35 @@ import type { Risk, Asset, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability,
 import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
 
+/* ─── Risk score helpers ─── */
 function riskColor(R: number) { return R >= 221 ? "var(--red)" : R >= 31 ? "var(--orange)" : "var(--green)"; }
 function riskBg(R: number) { return R >= 221 ? "var(--red-dim)" : R >= 31 ? "var(--orange-dim)" : "var(--green-dim)"; }
-function riskLabel(R: number) { return R >= 221 ? "Wysokie" : R >= 31 ? "Średnie" : "Niskie"; }
+function riskLabel(R: number) { return R >= 221 ? "Wysokie" : R >= 31 ? "Srednie" : "Niskie"; }
 
+/* ─── Section header component ─── */
+function SectionHeader({ number, label }: { number: string; label: string }) {
+  return (
+    <div style={{
+      fontSize: 12, fontWeight: 600, color: "var(--blue)", textTransform: "uppercase",
+      letterSpacing: "0.05em", marginTop: 16, marginBottom: 8, paddingBottom: 4,
+      borderBottom: "1px solid rgba(59,130,246,0.2)",
+    }}>
+      {number} {label}
+    </div>
+  );
+}
+
+/* ─── Detail panel row ─── */
+function DetailRow({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+      <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{label}</span>
+      <span style={{ textAlign: "right", color: color ?? undefined, fontWeight: color ? 500 : undefined }}>{value ?? "\u2014"}</span>
+    </div>
+  );
+}
+
+/* ─── Lookups interface ─── */
 interface FormLookups {
   orgUnits: OrgUnitTreeNode[];
   areas: SecurityArea[];
@@ -21,8 +46,13 @@ interface FormLookups {
   criticalities: { id: number; label: string }[];
   statuses: { id: number; label: string }[];
   strategies: { id: number; label: string }[];
+  risk_categories: { id: number; label: string }[];
+  control_effectivenesses: { id: number; label: string }[];
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   RisksPage — main page component
+   ═══════════════════════════════════════════════════════════════════ */
 export default function RisksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [risks, setRisks] = useState<Risk[]>([]);
@@ -32,6 +62,7 @@ export default function RisksPage() {
   const [saving, setSaving] = useState(false);
   const [lookups, setLookups] = useState<FormLookups | null>(null);
   const [selected, setSelected] = useState<Risk | null>(null);
+  const [accepting, setAccepting] = useState(false);
 
   // Filters from URL or local state
   const [filterOrg, setFilterOrg] = useState(searchParams.get("org") ?? "");
@@ -74,11 +105,20 @@ export default function RisksPage() {
         return d.entries.filter(e => e.is_active).map(e => ({ id: e.id, label: e.label }));
       } catch { return []; }
     };
-    const [categories, sensitivities, criticalities, statuses, strategies] = await Promise.all([
-      dictEntries("asset_category"), dictEntries("sensitivity"), dictEntries("criticality"),
-      dictEntries("risk_status"), dictEntries("risk_strategy"),
+    const [categories, sensitivities, criticalities, statuses, strategies, risk_categories, control_effectivenesses] = await Promise.all([
+      dictEntries("asset_category"),
+      dictEntries("sensitivity"),
+      dictEntries("criticality"),
+      dictEntries("risk_status"),
+      dictEntries("risk_strategy"),
+      dictEntries("risk_category"),
+      dictEntries("control_effectiveness"),
     ]);
-    const result = { orgUnits, areas, threats, vulns, safeguards, assets, categories, sensitivities, criticalities, statuses, strategies };
+    const result: FormLookups = {
+      orgUnits, areas, threats, vulns, safeguards, assets,
+      categories, sensitivities, criticalities, statuses, strategies,
+      risk_categories, control_effectivenesses,
+    };
     setLookups(result);
     return result;
   };
@@ -100,27 +140,44 @@ export default function RisksPage() {
     setSaving(true);
     const fd = new FormData(e.currentTarget);
     const body: Record<string, unknown> = {
+      // Sekcja 1: Kontekst
       org_unit_id: Number(fd.get("org_unit_id")),
+      risk_category_id: fd.get("risk_category_id") ? Number(fd.get("risk_category_id")) : null,
+      risk_source: (fd.get("risk_source") as string) || null,
+      // Sekcja 2: Identyfikacja aktywa
       asset_id: fd.get("asset_id") ? Number(fd.get("asset_id")) : null,
       asset_name: fd.get("asset_name") as string,
       asset_category_id: fd.get("asset_category_id") ? Number(fd.get("asset_category_id")) : null,
       sensitivity_id: fd.get("sensitivity_id") ? Number(fd.get("sensitivity_id")) : null,
       criticality_id: fd.get("criticality_id") ? Number(fd.get("criticality_id")) : null,
+      // Sekcja 3: Scenariusz ryzyka
       security_area_id: fd.get("security_area_id") ? Number(fd.get("security_area_id")) : null,
       threat_id: fd.get("threat_id") ? Number(fd.get("threat_id")) : null,
       vulnerability_id: fd.get("vulnerability_id") ? Number(fd.get("vulnerability_id")) : null,
+      existing_controls: (fd.get("existing_controls") as string) || null,
+      control_effectiveness_id: fd.get("control_effectiveness_id") ? Number(fd.get("control_effectiveness_id")) : null,
+      consequence_description: (fd.get("consequence_description") as string) || null,
+      // Sekcja 4: Analiza ryzyka
       impact_level: Number(fd.get("impact_level")),
       probability_level: Number(fd.get("probability_level")),
       safeguard_rating: Number(fd.get("safeguard_rating")),
-      status_id: fd.get("status_id") ? Number(fd.get("status_id")) : null,
+      // Sekcja 5: Postepowanie z ryzykiem
       strategy_id: fd.get("strategy_id") ? Number(fd.get("strategy_id")) : null,
-      owner: (fd.get("owner") as string) || null,
-      planned_actions: (fd.get("planned_actions") as string) || null,
-      residual_risk: fd.get("residual_risk") ? Number(fd.get("residual_risk")) : null,
+      treatment_plan: (fd.get("treatment_plan") as string) || null,
+      treatment_deadline: (fd.get("treatment_deadline") as string) || null,
+      treatment_resources: (fd.get("treatment_resources") as string) || null,
+      safeguard_ids: Array.from(fd.getAll("safeguard_ids")).map(Number).filter(Boolean),
       target_impact: fd.get("target_impact") ? Number(fd.get("target_impact")) : null,
       target_probability: fd.get("target_probability") ? Number(fd.get("target_probability")) : null,
       target_safeguard: fd.get("target_safeguard") ? Number(fd.get("target_safeguard")) : null,
-      safeguard_ids: Array.from(fd.getAll("safeguard_ids")).map(Number).filter(Boolean),
+      residual_risk: fd.get("residual_risk") ? Number(fd.get("residual_risk")) : null,
+      // Sekcja 6: Akceptacja i monitorowanie
+      status_id: fd.get("status_id") ? Number(fd.get("status_id")) : null,
+      owner: (fd.get("owner") as string) || null,
+      accepted_by: (fd.get("accepted_by") as string) || null,
+      acceptance_justification: (fd.get("acceptance_justification") as string) || null,
+      next_review_date: (fd.get("next_review_date") as string) || null,
+      planned_actions: (fd.get("planned_actions") as string) || null,
     };
     try {
       if (editRisk) {
@@ -134,27 +191,45 @@ export default function RisksPage() {
       setLoading(true);
       loadRisks();
     } catch (err) {
-      alert("Błąd zapisu: " + err);
+      alert("Blad zapisu: " + err);
     } finally {
       setSaving(false);
     }
   };
 
   const handleCloseRisk = async (risk: Risk) => {
-    if (!confirm(`Zamknąć ryzyko ${risk.code || risk.id}? Status zostanie zmieniony na "Zamknięte".`)) return;
+    if (!confirm(`Zamknac ryzyko ${risk.code || risk.id}? Status zostanie zmieniony na "Zamkniete".`)) return;
     try {
       await api.delete(`/api/v1/risks/${risk.id}`);
       setSelected(null);
       setLoading(true);
       loadRisks();
     } catch (err) {
-      alert("Błąd: " + err);
+      alert("Blad: " + err);
+    }
+  };
+
+  const handleAcceptRisk = async (risk: Risk) => {
+    const name = prompt("Kto akceptuje ryzyko? (imie i nazwisko)");
+    if (!name) return;
+    setAccepting(true);
+    try {
+      const updated = await api.post<Risk>(`/api/v1/risks/${risk.id}/accept`, {
+        accepted_by: name,
+      });
+      setSelected(updated);
+      setLoading(true);
+      loadRisks();
+    } catch (err) {
+      alert("Blad akceptacji: " + err);
+    } finally {
+      setAccepting(false);
     }
   };
 
   const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
 
-  // Apply filters — hierarchical org filtering
+  // Apply filters -- hierarchical org filtering
   const filterOrgIds = useMemo(() => {
     if (!filterOrg) return null;
     return new Set(collectDescendantIds(orgTree, Number(filterOrg)));
@@ -177,8 +252,15 @@ export default function RisksPage() {
   };
   const hasFilters = filterOrg || filterStatus || filterLevel;
 
+  // Helper: is a date overdue (past today)?
+  const isOverdue = (dateStr: string | null | undefined) => {
+    if (!dateStr) return false;
+    return new Date(dateStr) < new Date();
+  };
+
   return (
     <div>
+      {/* ─── Toolbar ─── */}
       <div className="toolbar">
         <div className="toolbar-left">
           <select className="form-control" style={{ width: 220 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
@@ -192,11 +274,11 @@ export default function RisksPage() {
           <select className="form-control" style={{ width: 140 }} value={filterLevel} onChange={e => setFilterLevel(e.target.value)}>
             <option value="">Poziom ryzyka</option>
             <option value="high">Wysokie</option>
-            <option value="medium">Średnie</option>
+            <option value="medium">Srednie</option>
             <option value="low">Niskie</option>
           </select>
           {hasFilters && (
-            <button className="btn btn-sm" onClick={clearFilters}>Wyczyść filtry</button>
+            <button className="btn btn-sm" onClick={clearFilters}>Wyczysc filtry</button>
           )}
         </div>
         <div className="toolbar-right">
@@ -205,26 +287,48 @@ export default function RisksPage() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 380px" : "1fr", gap: 14 }}>
+      {/* ─── Main grid: table + detail panel ─── */}
+      <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 14 }}>
+
+        {/* ─── Risk Table ─── */}
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>
           {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ładowanie ryzyk...</div>
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie ryzyk...</div>
           ) : filtered.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              {risks.length === 0 ? "Brak ryzyk w systemie." : "Brak ryzyk pasujących do filtrów."}
+              {risks.length === 0 ? "Brak ryzyk w systemie." : "Brak ryzyk pasujacych do filtrow."}
             </div>
           ) : (
             <table className="data-table">
-              <thead><tr><th>ID</th><th>Aktywo</th><th>Pion</th><th>Obszar</th><th>W</th><th>P</th><th>Z</th><th>Ocena (R)</th><th>Status</th><th>Właściciel</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Aktywo</th>
+                  <th>Pion</th>
+                  <th>Kategoria</th>
+                  <th>Obszar</th>
+                  <th>W</th>
+                  <th>P</th>
+                  <th>Z</th>
+                  <th>Ocena (R)</th>
+                  <th>Status</th>
+                  <th>Wlasciciel</th>
+                </tr>
+              </thead>
               <tbody>
                 {filtered.map((r) => (
                   <tr key={r.id}
-                    style={{ borderLeft: `3px solid ${riskColor(r.risk_score ?? 0)}`, cursor: "pointer", background: selected?.id === r.id ? "var(--bg-card-hover)" : undefined }}
+                    style={{
+                      borderLeft: `3px solid ${riskColor(r.risk_score ?? 0)}`,
+                      cursor: "pointer",
+                      background: selected?.id === r.id ? "var(--bg-card-hover)" : undefined,
+                    }}
                     onClick={() => setSelected(selected?.id === r.id ? null : r)}
                   >
                     <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{r.code || r.id}</td>
                     <td style={{ fontWeight: 500 }}>{r.asset_name}</td>
                     <td style={{ fontSize: 11 }}>{orgPathMap.get(r.org_unit_id) ?? r.org_unit_name}</td>
+                    <td style={{ fontSize: 11 }}>{r.risk_category_name ?? "\u2014"}</td>
                     <td>{r.security_area_name}</td>
                     <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>{r.impact_level}</td>
                     <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>{r.probability_level}</td>
@@ -234,8 +338,8 @@ export default function RisksPage() {
                         {(r.risk_score ?? 0).toFixed(1)} {riskLabel(r.risk_score ?? 0)}
                       </span>
                     </td>
-                    <td><span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{r.status_name ?? "—"}</span></td>
-                    <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.owner ?? "—"}</td>
+                    <td><span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{r.status_name ?? "\u2014"}</span></td>
+                    <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.owner ?? "\u2014"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -243,14 +347,15 @@ export default function RisksPage() {
           )}
         </div>
 
-        {/* Detail Panel */}
+        {/* ─── Detail Panel ─── */}
         {selected && (
-          <div className="card" style={{ position: "sticky", top: 0, alignSelf: "start" }}>
+          <div className="card" style={{ position: "sticky", top: 0, alignSelf: "start", maxHeight: "calc(100vh - 100px)", overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <div className="card-title" style={{ margin: 0 }}>Szczegóły Ryzyka</div>
-              <button className="btn btn-sm" onClick={() => setSelected(null)}>✕</button>
+              <div className="card-title" style={{ margin: 0 }}>Szczegoly Ryzyka</div>
+              <button className="btn btn-sm" onClick={() => setSelected(null)}>&#10005;</button>
             </div>
 
+            {/* Score display */}
             <div style={{ textAlign: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 36, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: riskColor(selected.risk_score ?? 0) }}>
                 {(selected.risk_score ?? 0).toFixed(1)}
@@ -264,53 +369,110 @@ export default function RisksPage() {
             </div>
 
             <div style={{ fontSize: 12, lineHeight: 2 }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>ID</span>
-                <span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{selected.code || `R-${selected.id}`}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Aktywo</span>
-                <span style={{ fontWeight: 500 }}>{selected.asset_name}</span>
-              </div>
+              {/* --- Sekcja 1: Kontekst --- */}
+              <SectionHeader number="\u2460" label="Kontekst (ISO 31000 \u00A75.3)" />
+              <DetailRow label="ID" value={<span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{selected.code || `R-${selected.id}`}</span>} />
+              <DetailRow label="Pion" value={<span style={{ fontSize: 11 }}>{orgPathMap.get(selected.org_unit_id) ?? selected.org_unit_name}</span>} />
+              <DetailRow label="Kategoria ryzyka" value={selected.risk_category_name} />
+              {selected.risk_source && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Zrodlo ryzyka</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                    {selected.risk_source}
+                  </div>
+                </div>
+              )}
+
+              {/* --- Sekcja 2: Identyfikacja aktywa --- */}
+              <SectionHeader number="\u2461" label="Identyfikacja aktywa (ISO 27005 \u00A78.2)" />
+              <DetailRow label="Aktywo" value={<span style={{ fontWeight: 500 }}>{selected.asset_name}</span>} />
               {selected.asset_id_name && (
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Z rejestru</span>
-                  <span style={{ color: "var(--cyan)" }}>{selected.asset_id_name}</span>
+                <DetailRow label="Z rejestru" value={<span style={{ color: "var(--cyan)" }}>{selected.asset_id_name}</span>} />
+              )}
+              <DetailRow label="Kategoria aktywa" value={selected.asset_category_name} />
+              <DetailRow label="Wrazliwosc" value={selected.sensitivity_name} />
+              <DetailRow label="Krytycznosc" value={selected.criticality_name} />
+
+              {/* --- Sekcja 3: Scenariusz ryzyka --- */}
+              <SectionHeader number="\u2462" label="Scenariusz ryzyka" />
+              <DetailRow label="Obszar" value={selected.security_area_name} />
+              <DetailRow label="Zagrozenie" value={selected.threat_name} />
+              <DetailRow label="Podatnosc" value={selected.vulnerability_name} />
+              {selected.existing_controls && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Istniejace zabezpieczenia</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                    {selected.existing_controls}
+                  </div>
                 </div>
               )}
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Pion</span>
-                <span style={{ fontSize: 11 }}>{orgPathMap.get(selected.org_unit_id) ?? selected.org_unit_name}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Obszar</span>
-                <span>{selected.security_area_name ?? "—"}</span>
-              </div>
-              {selected.threat_name && (
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Zagrożenie</span>
-                  <span>{selected.threat_name}</span>
+              <DetailRow label="Skutecznosc kontroli" value={selected.control_effectiveness_name} />
+              {selected.consequence_description && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Opis konsekwencji</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                    {selected.consequence_description}
+                  </div>
                 </div>
               )}
-              {selected.vulnerability_name && (
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Podatność</span>
-                  <span>{selected.vulnerability_name}</span>
+
+              {/* --- Sekcja 4: Analiza ryzyka --- */}
+              <SectionHeader number="\u2463" label="Analiza ryzyka (ISO 27005 \u00A78.3)" />
+              <DetailRow label="Wplyw (W)" value={selected.impact_level} />
+              <DetailRow label="Prawdopodobienstwo (P)" value={selected.probability_level} />
+              <DetailRow label="Zabezpieczenia (Z)" value={selected.safeguard_rating} />
+              <DetailRow label="Ocena (R)" value={
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: riskColor(selected.risk_score ?? 0) }}>
+                  {(selected.risk_score ?? 0).toFixed(1)}
+                </span>
+              } />
+
+              {/* --- Sekcja 5: Postepowanie z ryzykiem --- */}
+              <SectionHeader number="\u2464" label="Postepowanie z ryzykiem (ISO 27005 \u00A78.5)" />
+              <DetailRow label="Strategia" value={selected.strategy_name} />
+              {selected.treatment_plan && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Plan postepowania</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                    {selected.treatment_plan}
+                  </div>
                 </div>
               )}
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Strategia</span>
-                <span>{selected.strategy_name ?? "—"}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Właściciel</span>
-                <span>{selected.owner ?? "—"}</span>
-              </div>
+              <DetailRow label="Termin realizacji" value={
+                selected.treatment_deadline ? (
+                  <span style={{ color: isOverdue(selected.treatment_deadline) ? "var(--red)" : undefined }}>
+                    {selected.treatment_deadline.slice(0, 10)}
+                    {isOverdue(selected.treatment_deadline) && " (po terminie!)"}
+                  </span>
+                ) : "\u2014"
+              } />
+              {selected.treatment_resources && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Zasoby</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                    {selected.treatment_resources}
+                  </div>
+                </div>
+              )}
+              {selected.safeguards && selected.safeguards.length > 0 && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Zabezpieczenia</div>
+                  <div className="tag-list">
+                    {selected.safeguards.map(s => (
+                      <span key={s.safeguard_id} className="tag">{s.safeguard_name}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Residual risk block */}
               {selected.residual_risk != null && (
-                <div style={{ marginTop: 4, padding: 8, background: riskBg(selected.residual_risk), borderRadius: 6 }}>
+                <div style={{ marginTop: 8, padding: 8, background: riskBg(selected.residual_risk), borderRadius: 6 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
                     <span style={{ color: "var(--text-muted)", fontSize: 11 }}>Ryzyko rezydualne</span>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: riskColor(selected.residual_risk) }}>{selected.residual_risk.toFixed(1)}</span>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: riskColor(selected.residual_risk) }}>
+                      {selected.residual_risk.toFixed(1)}
+                    </span>
                   </div>
                   {selected.target_impact != null && (
                     <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
@@ -324,63 +486,100 @@ export default function RisksPage() {
                   )}
                 </div>
               )}
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Zidentyfikowano</span>
-                <span>{selected.identified_at?.slice(0, 10) ?? "—"}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Ostatni przegląd</span>
-                <span>{selected.last_review_at?.slice(0, 10) ?? "Nigdy"}</span>
-              </div>
+
+              {/* --- Sekcja 6: Akceptacja i monitorowanie --- */}
+              <SectionHeader number="\u2465" label="Akceptacja i monitorowanie (ISO 27005 \u00A78.6/\u00A79)" />
+              <DetailRow label="Status" value={
+                selected.status_name ? (
+                  <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{selected.status_name}</span>
+                ) : "\u2014"
+              } />
+              <DetailRow label="Wlasciciel" value={selected.owner} />
+
+              {/* Acceptance display */}
+              {selected.accepted_by ? (
+                <div style={{ marginTop: 4, padding: 8, background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                    <span className="score-badge" style={{ background: "rgba(34,197,94,0.15)", color: "var(--green)", fontSize: 11 }}>Zaakceptowane</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                    Przez: <strong>{selected.accepted_by}</strong>
+                    {selected.accepted_at && <span> ({selected.accepted_at.slice(0, 10)})</span>}
+                  </div>
+                  {selected.acceptance_justification && (
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                      Uzasadnienie: {selected.acceptance_justification}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <DetailRow label="Akceptacja" value={<span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>Nie zaakceptowano</span>} />
+              )}
+
+              <DetailRow label="Nastepny przeglad" value={
+                selected.next_review_date ? (
+                  <span style={{ color: isOverdue(selected.next_review_date) ? "var(--red)" : undefined, fontWeight: isOverdue(selected.next_review_date) ? 600 : undefined }}>
+                    {selected.next_review_date.slice(0, 10)}
+                    {isOverdue(selected.next_review_date) && " (zalegly!)"}
+                  </span>
+                ) : "\u2014"
+              } />
+              <DetailRow label="Zidentyfikowano" value={selected.identified_at?.slice(0, 10)} />
+              <DetailRow label="Ostatni przeglad" value={selected.last_review_at?.slice(0, 10) ?? "Nigdy"} />
+
               {selected.planned_actions && (
                 <div style={{ marginTop: 8 }}>
-                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Planowane działania</div>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Planowane dzialania</div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
                     {selected.planned_actions}
-                  </div>
-                </div>
-              )}
-              {selected.safeguards && selected.safeguards.length > 0 && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Zabezpieczenia</div>
-                  <div className="tag-list">
-                    {selected.safeguards.map(s => (
-                      <span key={s.safeguard_id} className="tag">{s.safeguard_name}</span>
-                    ))}
                   </div>
                 </div>
               )}
             </div>
 
             {/* Actions */}
-            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12, flexWrap: "wrap" }}>
               <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => openEditForm(selected)}>Edytuj</button>
+              {!selected.accepted_by && (
+                <button
+                  className="btn btn-sm"
+                  style={{ flex: 1, color: "var(--green)", borderColor: "rgba(34,197,94,0.3)" }}
+                  onClick={() => handleAcceptRisk(selected)}
+                  disabled={accepting}
+                >
+                  {accepting ? "Akceptowanie..." : "Akceptuj"}
+                </button>
+              )}
               <button className="btn btn-sm" style={{ flex: 1, color: "var(--red)" }} onClick={() => handleCloseRisk(selected)}>Zamknij</button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Add / Edit Form Modal */}
+      {/* ─── Add / Edit Form Modal ─── */}
       <Modal open={showForm} onClose={() => { setShowForm(false); setEditRisk(null); }} title={editRisk ? `Edytuj ryzyko: ${editRisk.code || editRisk.id}` : "Dodaj ryzyko"} wide>
         {lookups ? (
           <RiskForm editRisk={editRisk} lookups={lookups} flatUnits={flatUnits} saving={saving} onSubmit={handleSubmit} onCancel={() => { setShowForm(false); setEditRisk(null); }} />
         ) : (
-          <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Ładowanie danych formularza...</div>
+          <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Ladowanie danych formularza...</div>
         )}
       </Modal>
     </div>
   );
 }
 
-/* Live Risk Score Calculator Form */
+/* ═══════════════════════════════════════════════════════════════════
+   RiskForm — ISO 27005/31000 structured form with live calculators
+   ═══════════════════════════════════════════════════════════════════ */
 function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: {
-  editRisk: Risk | null; lookups: FormLookups;
+  editRisk: Risk | null;
+  lookups: FormLookups;
   flatUnits: { id: number; name: string; depth: number }[];
   saving: boolean;
   onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
 }) {
+  // Live risk calculator state
   const [W, setW] = useState(editRisk?.impact_level ?? 2);
   const [P, setP] = useState(editRisk?.probability_level ?? 2);
   const [Z, setZ] = useState(editRisk?.safeguard_rating ?? 0.25);
@@ -390,24 +589,29 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
   const [tP, setTP] = useState(editRisk?.target_probability ?? editRisk?.probability_level ?? 1);
   const [tZ, setTZ] = useState(editRisk?.target_safeguard ?? 0.95);
 
+  // Live score calculations
   const liveScore = Math.exp(W) * P / Z;
-  const liveLabel = liveScore >= 221 ? "Wysokie" : liveScore >= 31 ? "Średnie" : "Niskie";
+  const liveLabel = liveScore >= 221 ? "Wysokie" : liveScore >= 31 ? "Srednie" : "Niskie";
   const lvColor = liveScore >= 221 ? "var(--red)" : liveScore >= 31 ? "var(--orange)" : "var(--green)";
   const lvBg = liveScore >= 221 ? "var(--red-dim)" : liveScore >= 31 ? "var(--orange-dim)" : "var(--green-dim)";
 
   // Residual risk from target components
   const residualScore = Math.exp(tW) * tP / tZ;
-  const resLabel = residualScore >= 221 ? "Wysokie" : residualScore >= 31 ? "Średnie" : "Niskie";
+  const resLabel = residualScore >= 221 ? "Wysokie" : residualScore >= 31 ? "Srednie" : "Niskie";
   const resColor = residualScore >= 221 ? "var(--red)" : residualScore >= 31 ? "var(--orange)" : "var(--green)";
   const resBg = residualScore >= 221 ? "var(--red-dim)" : residualScore >= 31 ? "var(--orange-dim)" : "var(--green-dim)";
   const reduction = liveScore > 0 ? ((1 - residualScore / liveScore) * 100) : 0;
 
   return (
     <form onSubmit={onSubmit}>
-      {/* Live Score Preview */}
-      <div style={{ background: lvBg, border: `1px solid ${lvColor}`, borderRadius: 10, padding: "12px 20px", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      {/* ─── Live Score Preview ─── */}
+      <div style={{
+        background: lvBg, border: `1px solid ${lvColor}`, borderRadius: 10,
+        padding: "12px 20px", marginBottom: 16,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+      }}>
         <div>
-          <div style={{ fontSize: 11, color: lvColor, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Kalkulacja na bieżąco</div>
+          <div style={{ fontSize: 11, color: lvColor, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Kalkulacja na biezaco</div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
             R = EXP({W}) &times; {P} / {Z} = <strong style={{ color: lvColor }}>{liveScore.toFixed(1)}</strong>
           </div>
@@ -418,6 +622,8 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
         </div>
       </div>
 
+      {/* ═══ Sekcja 1: Kontekst (ISO 31000 §5.3) ═══ */}
+      <SectionHeader number={"\u2460"} label="Kontekst (ISO 31000 \u00A75.3)" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div className="form-group">
           <label>Jednostka organizacyjna *</label>
@@ -427,9 +633,25 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
           </select>
         </div>
         <div className="form-group">
-          <label>Powiązany aktyw (z rejestru)</label>
+          <label>Kategoria ryzyka</label>
+          <select name="risk_category_id" className="form-control" defaultValue={editRisk?.risk_category_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.risk_categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Zrodlo ryzyka</label>
+          <textarea name="risk_source" className="form-control" rows={2} defaultValue={editRisk?.risk_source ?? ""} placeholder="Opisz zrodlo lub kontekst ryzyka..." />
+        </div>
+      </div>
+
+      {/* ═══ Sekcja 2: Identyfikacja aktywa (ISO 27005 §8.2) ═══ */}
+      <SectionHeader number={"\u2461"} label="Identyfikacja aktywa (ISO 27005 \u00A78.2)" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="form-group">
+          <label>Powiazany aktyw (z rejestru)</label>
           <select name="asset_id" className="form-control" defaultValue={editRisk?.asset_id ?? ""}>
-            <option value="">Brak powiązania</option>
+            <option value="">Brak powiazania</option>
             {lookups.assets.map(a => <option key={a.id} value={a.id}>{a.name}{a.org_unit_name ? ` (${a.org_unit_name})` : ""}</option>)}
           </select>
         </div>
@@ -442,102 +664,214 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
         </div>
         <div className="form-group" style={{ gridColumn: "span 2" }}>
           <label>Nazwa aktywa *</label>
-          <input name="asset_name" className="form-control" required defaultValue={editRisk?.asset_name ?? ""} placeholder="np. Laptopy konsultantów" />
+          <input name="asset_name" className="form-control" required defaultValue={editRisk?.asset_name ?? ""} placeholder="np. Laptopy konsultantow" />
         </div>
-              <div className="form-group"><label>Wrażliwość</label>
-                <select name="sensitivity_id" className="form-control" defaultValue={editRisk?.sensitivity_id ?? ""}><option value="">Wybierz...</option>{lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
-              </div>
-              <div className="form-group"><label>Krytyczność</label>
-                <select name="criticality_id" className="form-control" defaultValue={editRisk?.criticality_id ?? ""}><option value="">Wybierz...</option>{lookups.criticalities.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
-              </div>
-              <div className="form-group"><label>Obszar raportowania</label>
-                <select name="security_area_id" className="form-control" defaultValue={editRisk?.security_area_id ?? ""}><option value="">Wybierz...</option>{lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
-              </div>
-              <div className="form-group"><label>Zagrożenie</label>
-                <select name="threat_id" className="form-control" defaultValue={editRisk?.threat_id ?? ""}><option value="">Wybierz...</option>{lookups.threats.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
-              </div>
-              <div className="form-group"><label>Podatność</label>
-                <select name="vulnerability_id" className="form-control" defaultValue={editRisk?.vulnerability_id ?? ""}><option value="">Wybierz...</option>{lookups.vulns.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select>
-              </div>
-              <div className="form-group"><label>Wpływ (W) *</label>
-                <select name="impact_level" className="form-control" required value={W} onChange={e => setW(Number(e.target.value))}>
-                  <option value="1">1 — Niski</option><option value="2">2 — Średni</option><option value="3">3 — Wysoki</option>
-                </select>
-              </div>
-              <div className="form-group"><label>Prawdopodobieństwo (P) *</label>
-                <select name="probability_level" className="form-control" required value={P} onChange={e => setP(Number(e.target.value))}>
-                  <option value="1">1 — Niskie</option><option value="2">2 — Średnie</option><option value="3">3 — Wysokie</option>
-                </select>
-              </div>
-              <div className="form-group"><label>Ocena zabezpieczeń (Z) *</label>
-                <select name="safeguard_rating" className="form-control" required value={Z} onChange={e => setZ(Number(e.target.value))}>
-                  <option value="0.10">0,10 — Brak zabezpieczeń</option>
-                  <option value="0.25">0,25 — Częściowe</option>
-                  <option value="0.70">0,70 — Dobra jakość</option>
-                  <option value="0.95">0,95 — Skuteczne, testowane</option>
-                </select>
-              </div>
-              <div className="form-group"><label>Strategia</label>
-                <select name="strategy_id" className="form-control" defaultValue={editRisk?.strategy_id ?? ""}><option value="">Wybierz...</option>{lookups.strategies.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
-              </div>
-              <div className="form-group"><label>Właściciel ryzyka</label><input name="owner" className="form-control" defaultValue={editRisk?.owner ?? ""} placeholder="np. Jan Kowalski" /></div>
-              <div className="form-group"><label>Status</label>
-                <select name="status_id" className="form-control" defaultValue={editRisk?.status_id ?? ""}><option value="">Wybierz...</option>{lookups.statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
-              </div>
-              <div className="form-group">
-                <label>Zabezpieczenia</label>
-                <select name="safeguard_ids" className="form-control" multiple style={{ height: 80 }}
-                  defaultValue={editRisk?.safeguards?.map(s => String(s.safeguard_id)) ?? []}>
-                  {lookups.safeguards.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Ctrl+klik aby wybrać wiele</span>
-              </div>
+        <div className="form-group">
+          <label>Wrazliwosc</label>
+          <select name="sensitivity_id" className="form-control" defaultValue={editRisk?.sensitivity_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Krytycznosc</label>
+          <select name="criticality_id" className="form-control" defaultValue={editRisk?.criticality_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.criticalities.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      {/* ═══ Sekcja 3: Scenariusz ryzyka ═══ */}
+      <SectionHeader number={"\u2462"} label="Scenariusz ryzyka" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="form-group">
+          <label>Obszar raportowania</label>
+          <select name="security_area_id" className="form-control" defaultValue={editRisk?.security_area_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Zagrozenie</label>
+          <select name="threat_id" className="form-control" defaultValue={editRisk?.threat_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.threats.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Podatnosc</label>
+          <select name="vulnerability_id" className="form-control" defaultValue={editRisk?.vulnerability_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.vulns.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Skutecznosc istniejacych kontroli</label>
+          <select name="control_effectiveness_id" className="form-control" defaultValue={editRisk?.control_effectiveness_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.control_effectivenesses.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Istniejace zabezpieczenia / kontrole</label>
+          <textarea name="existing_controls" className="form-control" rows={2} defaultValue={editRisk?.existing_controls ?? ""} placeholder="Opisz istniejace kontrole i zabezpieczenia..." />
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Opis konsekwencji</label>
+          <textarea name="consequence_description" className="form-control" rows={2} defaultValue={editRisk?.consequence_description ?? ""} placeholder="Opisz potencjalne konsekwencje materializacji ryzyka..." />
+        </div>
+      </div>
+
+      {/* ═══ Sekcja 4: Analiza ryzyka (ISO 27005 §8.3) ═══ */}
+      <SectionHeader number={"\u2463"} label="Analiza ryzyka (ISO 27005 \u00A78.3)" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+        <div className="form-group">
+          <label>Wplyw (W) *</label>
+          <select name="impact_level" className="form-control" required value={W} onChange={e => setW(Number(e.target.value))}>
+            <option value="1">1 -- Niski</option>
+            <option value="2">2 -- Sredni</option>
+            <option value="3">3 -- Wysoki</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Prawdopodobienstwo (P) *</label>
+          <select name="probability_level" className="form-control" required value={P} onChange={e => setP(Number(e.target.value))}>
+            <option value="1">1 -- Niskie</option>
+            <option value="2">2 -- Srednie</option>
+            <option value="3">3 -- Wysokie</option>
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Ocena zabezpieczen (Z) *</label>
+          <select name="safeguard_rating" className="form-control" required value={Z} onChange={e => setZ(Number(e.target.value))}>
+            <option value="0.10">0,10 -- Brak zabezpieczen</option>
+            <option value="0.25">0,25 -- Czesciowe</option>
+            <option value="0.70">0,70 -- Dobra jakosc</option>
+            <option value="0.95">0,95 -- Skuteczne, testowane</option>
+          </select>
+        </div>
+      </div>
+
+      {/* ═══ Sekcja 5: Postepowanie z ryzykiem (ISO 27005 §8.5) ═══ */}
+      <SectionHeader number={"\u2464"} label="Postepowanie z ryzykiem (ISO 27005 \u00A78.5)" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="form-group">
+          <label>Strategia</label>
+          <select name="strategy_id" className="form-control" defaultValue={editRisk?.strategy_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.strategies.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Termin realizacji</label>
+          <input name="treatment_deadline" type="date" className="form-control" defaultValue={editRisk?.treatment_deadline?.slice(0, 10) ?? ""} />
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Plan postepowania z ryzykiem</label>
+          <textarea name="treatment_plan" className="form-control" rows={3} defaultValue={editRisk?.treatment_plan ?? ""} placeholder="Opisz plan postepowania z ryzykiem (redukcja, transfer, unikanie, akceptacja)..." />
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Zasoby wymagane</label>
+          <textarea name="treatment_resources" className="form-control" rows={2} defaultValue={editRisk?.treatment_resources ?? ""} placeholder="Opisz wymagane zasoby (budzet, ludzie, narzedzia)..." />
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Zabezpieczenia</label>
+          <select name="safeguard_ids" className="form-control" multiple style={{ height: 80 }}
+            defaultValue={editRisk?.safeguards?.map(s => String(s.safeguard_id)) ?? []}>
+            {lookups.safeguards.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Ctrl+klik aby wybrac wiele</span>
+        </div>
+      </div>
+
+      {/* Residual Risk -- Target Components */}
+      <div style={{
+        background: resBg, border: `1px solid ${resColor}`, borderRadius: 10,
+        padding: "12px 20px", marginTop: 8, marginBottom: 8,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div>
+            <div style={{ fontSize: 11, color: resColor, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Ryzyko rezydualne (docelowe)</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              R<sub>res</sub> = EXP({tW}) &times; {tP} / {tZ} = <strong style={{ color: resColor }}>{residualScore.toFixed(1)}</strong>
+              {reduction > 0 && <span style={{ marginLeft: 8, color: "var(--green)" }}>(-{reduction.toFixed(0)}%)</span>}
             </div>
-            {/* Residual Risk — Target Components */}
-            <div style={{ background: resBg, border: `1px solid ${resColor}`, borderRadius: 10, padding: "12px 20px", marginTop: 8, marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontSize: 11, color: resColor, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>Ryzyko rezydualne (docelowe)</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                    R<sub>res</sub> = EXP({tW}) &times; {tP} / {tZ} = <strong style={{ color: resColor }}>{residualScore.toFixed(1)}</strong>
-                    {reduction > 0 && <span style={{ marginLeft: 8, color: "var(--green)" }}>(-{reduction.toFixed(0)}%)</span>}
-                  </div>
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: resColor }}>{residualScore.toFixed(1)}</div>
-                  <span className="score-badge" style={{ background: `${resColor}30`, color: resColor, fontSize: 11 }}>{resLabel}</span>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label style={{ fontSize: 11 }}>Docelowy W</label>
-                  <select name="target_impact" className="form-control" value={tW} onChange={e => setTW(Number(e.target.value))}>
-                    <option value="1">1 — Niski</option><option value="2">2 — Sredni</option><option value="3">3 — Wysoki</option>
-                  </select>
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label style={{ fontSize: 11 }}>Docelowe P</label>
-                  <select name="target_probability" className="form-control" value={tP} onChange={e => setTP(Number(e.target.value))}>
-                    <option value="1">1 — Niskie</option><option value="2">2 — Srednie</option><option value="3">3 — Wysokie</option>
-                  </select>
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label style={{ fontSize: 11 }}>Docelowe Z</label>
-                  <select name="target_safeguard" className="form-control" value={tZ} onChange={e => setTZ(Number(e.target.value))}>
-                    <option value="0.10">0,10 — Brak</option>
-                    <option value="0.25">0,25 — Czesciowe</option>
-                    <option value="0.70">0,70 — Dobre</option>
-                    <option value="0.95">0,95 — Skuteczne</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-            <input type="hidden" name="residual_risk" value={residualScore.toFixed(2)} />
-            <div className="form-group"><label>Planowane dzialania</label><textarea name="planned_actions" className="form-control" defaultValue={editRisk?.planned_actions ?? ""} placeholder="Opisz planowane kroki mitygacyjne..." /></div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" className="btn" onClick={onCancel}>Anuluj</button>
-              <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Zapisywanie..." : editRisk ? "Zapisz zmiany" : "Zapisz ryzyko"}</button>
-            </div>
-          </form>
-        );
+          </div>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: resColor }}>{residualScore.toFixed(1)}</div>
+            <span className="score-badge" style={{ background: `${resColor}30`, color: resColor, fontSize: 11 }}>{resLabel}</span>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label style={{ fontSize: 11 }}>Docelowy W</label>
+            <select name="target_impact" className="form-control" value={tW} onChange={e => setTW(Number(e.target.value))}>
+              <option value="1">1 -- Niski</option>
+              <option value="2">2 -- Sredni</option>
+              <option value="3">3 -- Wysoki</option>
+            </select>
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label style={{ fontSize: 11 }}>Docelowe P</label>
+            <select name="target_probability" className="form-control" value={tP} onChange={e => setTP(Number(e.target.value))}>
+              <option value="1">1 -- Niskie</option>
+              <option value="2">2 -- Srednie</option>
+              <option value="3">3 -- Wysokie</option>
+            </select>
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label style={{ fontSize: 11 }}>Docelowe Z</label>
+            <select name="target_safeguard" className="form-control" value={tZ} onChange={e => setTZ(Number(e.target.value))}>
+              <option value="0.10">0,10 -- Brak</option>
+              <option value="0.25">0,25 -- Czesciowe</option>
+              <option value="0.70">0,70 -- Dobre</option>
+              <option value="0.95">0,95 -- Skuteczne</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <input type="hidden" name="residual_risk" value={residualScore.toFixed(2)} />
+
+      {/* ═══ Sekcja 6: Akceptacja i monitorowanie (ISO 27005 §8.6/§9) ═══ */}
+      <SectionHeader number={"\u2465"} label="Akceptacja i monitorowanie (ISO 27005 \u00A78.6/\u00A79)" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="form-group">
+          <label>Status</label>
+          <select name="status_id" className="form-control" defaultValue={editRisk?.status_id ?? ""}>
+            <option value="">Wybierz...</option>
+            {lookups.statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </select>
+        </div>
+        <div className="form-group">
+          <label>Wlasciciel ryzyka</label>
+          <input name="owner" className="form-control" defaultValue={editRisk?.owner ?? ""} placeholder="np. Jan Kowalski" />
+        </div>
+        <div className="form-group">
+          <label>Zaakceptowane przez</label>
+          <input name="accepted_by" className="form-control" defaultValue={editRisk?.accepted_by ?? ""} placeholder="Imie i nazwisko akceptujacego" />
+        </div>
+        <div className="form-group">
+          <label>Data nastepnego przegladu</label>
+          <input name="next_review_date" type="date" className="form-control" defaultValue={editRisk?.next_review_date?.slice(0, 10) ?? ""} />
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Uzasadnienie akceptacji</label>
+          <textarea name="acceptance_justification" className="form-control" rows={2} defaultValue={editRisk?.acceptance_justification ?? ""} placeholder="Uzasadnienie akceptacji poziomu ryzyka..." />
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Planowane dzialania</label>
+          <textarea name="planned_actions" className="form-control" rows={3} defaultValue={editRisk?.planned_actions ?? ""} placeholder="Opisz planowane kroki mitygacyjne i monitorujace..." />
+        </div>
+      </div>
+
+      {/* Submit buttons */}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+        <button type="button" className="btn" onClick={onCancel}>Anuluj</button>
+        <button type="submit" className="btn btn-primary" disabled={saving}>
+          {saving ? "Zapisywanie..." : editRisk ? "Zapisz zmiany" : "Zapisz ryzyko"}
+        </button>
+      </div>
+    </form>
+  );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
-import type { ExecutiveSummary, RiskDashboard, PostureScoreResponse, RiskMatrixCell } from "../types";
+import type { ExecutiveSummary, RiskDashboard, PostureScoreResponse, RiskMatrixCell, OrgUnitTreeNode } from "../types";
 
 function gradeColor(g: string | null) {
   if (!g) return "var(--text-muted)";
@@ -21,23 +22,47 @@ function matrixCount(matrix: RiskMatrixCell[], impact: number, prob: number): nu
   return matrix.find(c => c.impact === impact && c.probability === prob)?.count ?? 0;
 }
 
+function flattenTree(nodes: OrgUnitTreeNode[], depth = 0): { id: number; name: string; depth: number }[] {
+  const result: { id: number; name: string; depth: number }[] = [];
+  for (const n of nodes) {
+    result.push({ id: n.id, name: n.name, depth });
+    result.push(...flattenTree(n.children, depth + 1));
+  }
+  return result;
+}
+
 export default function DashboardPage() {
   const [exec, setExec] = useState<ExecutiveSummary | null>(null);
   const [riskDash, setRiskDash] = useState<RiskDashboard | null>(null);
   const [posture, setPosture] = useState<PostureScoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [orgUnits, setOrgUnits] = useState<{ id: number; name: string; depth: number }[]>([]);
+  const [orgFilter, setOrgFilter] = useState("");
+  const navigate = useNavigate();
 
-  useEffect(() => {
+  const loadData = (orgUnitId?: string) => {
+    setLoading(true);
+    const qs = orgUnitId ? `?org_unit_id=${orgUnitId}` : "";
     Promise.all([
-      api.get<ExecutiveSummary>("/api/v1/dashboard/executive-summary").catch(() => null),
-      api.get<RiskDashboard>("/api/v1/dashboard/risks").catch(() => null),
-      api.get<PostureScoreResponse>("/api/v1/dashboard/posture-score").catch(() => null),
+      api.get<ExecutiveSummary>(`/api/v1/dashboard/executive-summary${qs}`).catch(() => null),
+      api.get<RiskDashboard>(`/api/v1/dashboard/risks${qs}`).catch(() => null),
+      api.get<PostureScoreResponse>(`/api/v1/dashboard/posture-score${qs}`).catch(() => null),
     ]).then(([e, r, p]) => {
       setExec(e); setRiskDash(r); setPosture(p);
     }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(t => setOrgUnits(flattenTree(t))).catch(() => {});
+    loadData();
   }, []);
 
-  if (loading) {
+  const handleOrgChange = (val: string) => {
+    setOrgFilter(val);
+    loadData(val || undefined);
+  };
+
+  if (loading && !exec) {
     return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 300 }}>
       <span style={{ fontSize: 13, color: "var(--text-muted)" }}>Ładowanie dashboardu...</span>
     </div>;
@@ -51,26 +76,44 @@ export default function DashboardPage() {
 
   return (
     <div>
+      {/* Org Unit Filter */}
+      <div className="toolbar">
+        <div className="toolbar-left">
+          <select className="form-control" style={{ width: 220 }} value={orgFilter} onChange={e => handleOrgChange(e.target.value)}>
+            <option value="">Cała organizacja</option>
+            {orgUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
+          </select>
+          {loading && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Odświeżanie...</span>}
+        </div>
+        <div className="toolbar-right">
+          {posture?.benchmark_avg != null && (
+            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              Benchmark avg: <strong style={{ color: pctColor(posture.benchmark_avg) }}>{Math.round(posture.benchmark_avg)}%</strong>
+            </span>
+          )}
+        </div>
+      </div>
+
       {/* KPI ROW */}
       <div className="grid-4">
-        <div className="card kpi">
+        <div className="card kpi clickable" onClick={() => {}}>
           <div className="value" style={{ color: gradeColor(grade) }}>{score ? Math.round(score) : "—"}</div>
           <div className="label">Security Posture Score</div>
           {grade && <div className="trend" style={{ background: `${gradeColor(grade)}20`, color: gradeColor(grade) }}>Ocena: {grade}</div>}
         </div>
-        <div className="card kpi">
+        <div className="card kpi clickable" onClick={() => navigate("/risks?level=high")}>
           <div className="value" style={{ color: "var(--red)" }}>{rc.high || "—"}</div>
           <div className="label">Ryzyka Wysokie</div>
           <div className="trend" style={{ background: "var(--red-dim)", color: "var(--red)" }}>z {rc.total} wszystkich</div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi clickable" onClick={() => navigate("/cis")}>
           <div className="value" style={{ color: "var(--yellow)" }}>
             {exec?.cis_maturity_rating != null ? exec.cis_maturity_rating.toFixed(2) : "—"}
           </div>
           <div className="label">CIS Maturity</div>
           <div className="trend" style={{ background: "var(--yellow-dim)", color: "var(--yellow)" }}>Skala 0–5</div>
         </div>
-        <div className="card kpi">
+        <div className="card kpi clickable" onClick={() => navigate("/reviews")}>
           <div className="value" style={{ color: exec?.overdue_reviews_count ? "var(--orange)" : "var(--green)" }}>
             {exec?.overdue_reviews_count ?? "—"}
           </div>
@@ -97,12 +140,16 @@ export default function DashboardPage() {
                   {[1, 2, 3].map(impact => {
                     const cnt = riskDash ? matrixCount(riskDash.matrix, impact, prob) : 0;
                     return (
-                      <div key={`${impact}-${prob}`} className="heatmap-cell" style={{
-                        background: cnt > 0 ? matrixBg(impact, prob) : "rgba(255,255,255,0.03)",
-                        color: cnt > 0 ? "#fff" : "var(--text-muted)",
-                        height: 40,
-                        opacity: cnt > 0 ? 1 : 0.5,
-                      }}>
+                      <div key={`${impact}-${prob}`} className="heatmap-cell"
+                        style={{
+                          background: cnt > 0 ? matrixBg(impact, prob) : "rgba(255,255,255,0.03)",
+                          color: cnt > 0 ? "#fff" : "var(--text-muted)",
+                          height: 40,
+                          opacity: cnt > 0 ? 1 : 0.5,
+                          cursor: cnt > 0 ? "pointer" : "default",
+                        }}
+                        onClick={() => cnt > 0 && navigate(`/risks?impact=${impact}&prob=${prob}`)}
+                      >
                         {cnt > 0 ? cnt : "—"}
                       </div>
                     );
@@ -164,7 +211,10 @@ export default function DashboardPage() {
                 <div key={d.name} style={{ marginBottom: 10 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
                     <span style={{ color: "var(--text-secondary)" }}>{d.name}</span>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(d.score) }}>{Math.round(d.score)}%</span>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(d.score) }}>
+                      {Math.round(d.score)}%
+                      <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 4 }}>({Math.round(d.weight * 100)}%)</span>
+                    </span>
                   </div>
                   <div className="bar-track" style={{ height: 8 }}>
                     <div className="bar-fill" style={{ width: `${d.score}%`, background: d.color ?? pctColor(d.score), height: 8 }} />
@@ -209,7 +259,7 @@ export default function DashboardPage() {
               <thead><tr><th>Aktywo</th><th>Pion</th><th>Ocena</th><th>Status</th></tr></thead>
               <tbody>
                 {exec.top_risks.slice(0, 5).map(r => (
-                  <tr key={r.id}>
+                  <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/risks?highlight=${r.id}`)}>
                     <td style={{ fontWeight: 500 }}>{r.asset_name}</td>
                     <td style={{ fontSize: 12 }}>{r.org_unit}</td>
                     <td><span className="score-badge" style={{ background: riskBg(r.risk_level), color: riskColor(r.risk_level) }}>{r.risk_score.toFixed(1)}</span></td>
@@ -227,11 +277,12 @@ export default function DashboardPage() {
           <div className="card-title">Rozkład Ryzyk</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
             {[
-              { label: "Wysokie", count: rc.high, color: "var(--red)", bg: "var(--red-dim)" },
-              { label: "Średnie", count: rc.medium, color: "var(--orange)", bg: "var(--orange-dim)" },
-              { label: "Niskie", count: rc.low, color: "var(--green)", bg: "var(--green-dim)" },
+              { label: "Wysokie", count: rc.high, color: "var(--red)", bg: "var(--red-dim)", level: "high" },
+              { label: "Średnie", count: rc.medium, color: "var(--orange)", bg: "var(--orange-dim)", level: "medium" },
+              { label: "Niskie", count: rc.low, color: "var(--green)", bg: "var(--green-dim)", level: "low" },
             ].map(r => (
-              <div key={r.label} style={{ flex: 1, textAlign: "center", background: r.bg, borderRadius: 8, padding: "12px 8px" }}>
+              <div key={r.label} style={{ flex: 1, textAlign: "center", background: r.bg, borderRadius: 8, padding: "12px 8px", cursor: "pointer" }}
+                onClick={() => navigate(`/risks?level=${r.level}`)}>
                 <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: r.color }}>{r.count}</div>
                 <div style={{ fontSize: 11, color: r.color }}>{r.label}</div>
               </div>
@@ -255,10 +306,29 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* RISK BY STATUS */}
+      {riskDash && riskDash.by_status.length > 0 && (
+        <div className="card">
+          <div className="card-title">Status Ryzyk</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {riskDash.by_status.map(s => (
+              <div key={s.status} style={{
+                background: s.status_color ? `${s.status_color}20` : "var(--bg-card)",
+                border: `1px solid ${s.status_color ?? "var(--border)"}`,
+                borderRadius: 8, padding: "10px 16px", textAlign: "center", minWidth: 100,
+              }}>
+                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: s.status_color ?? "var(--text)" }}>{s.count}</div>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)" }}>{s.status}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* RISK TREND */}
       {riskDash && riskDash.trend.length > 1 && (
         <div className="card">
-          <div className="card-title">Trend Ryzyk</div>
+          <div className="card-title">Trend Ryzyk (12 mies.)</div>
           <div style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 120 }}>
             {riskDash.trend.map(t => {
               const maxTotal = Math.max(...riskDash.trend.map(p => p.total), 1);
@@ -267,6 +337,7 @@ export default function DashboardPage() {
               const medPct = (t.medium / Math.max(t.total, 1)) * 100;
               return (
                 <div key={t.period} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <div style={{ fontSize: 9, fontFamily: "'JetBrains Mono',monospace", color: "var(--text-muted)" }}>{t.total}</div>
                   <div style={{ width: "100%", maxWidth: 40, height: `${h}%`, minHeight: 2, borderRadius: "4px 4px 0 0", position: "relative", overflow: "hidden" }}>
                     <div style={{ position: "absolute", bottom: 0, width: "100%", height: "100%", background: "var(--green)" }} />
                     <div style={{ position: "absolute", bottom: 0, width: "100%", height: `${highPct + medPct}%`, background: "var(--orange)" }} />
@@ -284,6 +355,30 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* OVERDUE REVIEWS */}
+      {riskDash && riskDash.overdue_reviews.length > 0 && (
+        <div className="card">
+          <div className="card-title">
+            Przeterminowane Przeglądy
+            <span style={{ fontSize: 11, color: "var(--red)", marginLeft: 8 }}>({riskDash.overdue_reviews.length})</span>
+          </div>
+          <table className="data-table">
+            <thead><tr><th>Aktywo</th><th>Pion</th><th>Ocena</th><th>Dni od przeglądu</th><th>Właściciel</th></tr></thead>
+            <tbody>
+              {riskDash.overdue_reviews.slice(0, 10).map(r => (
+                <tr key={r.id}>
+                  <td style={{ fontWeight: 500 }}>{r.asset_name}</td>
+                  <td style={{ fontSize: 12 }}>{r.org_unit}</td>
+                  <td><span className="score-badge" style={{ background: riskBg(r.risk_level), color: riskColor(r.risk_level) }}>{r.risk_score.toFixed(1)}</span></td>
+                  <td><span className="score-badge" style={{ background: "var(--red-dim)", color: "var(--red)" }}>{r.days_since_review} dni</span></td>
+                  <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.owner ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

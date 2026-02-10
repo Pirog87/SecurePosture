@@ -383,6 +383,21 @@ export interface PostureScoreResponse {
   benchmark_avg: number | null;
 }
 
+// ═══ Dashboard: CIS Comparison ═══
+export interface CisComparisonUnit {
+  org_unit: OrgUnitRef | null;
+  assessment_id: number | null;
+  assessment_date: string | null;
+  maturity_rating: number | null;
+  risk_addressed_pct: number | null;
+  ig_scores: CisIgScores;
+  controls: CisControlScore[];
+}
+
+export interface CisComparison {
+  units: CisComparisonUnit[];
+}
+
 // ═══ Dashboard: CIS Trend ═══
 export interface CisTrendPoint {
   assessment_id: number;

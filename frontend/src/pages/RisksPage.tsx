@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
 import type { Risk, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries } from "../types";
 import Modal from "../components/Modal";
@@ -30,45 +31,67 @@ function flattenTree(nodes: OrgUnitTreeNode[], depth = 0): { id: number; name: s
 }
 
 export default function RisksPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [risks, setRisks] = useState<Risk[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [editRisk, setEditRisk] = useState<Risk | null>(null);
   const [saving, setSaving] = useState(false);
   const [lookups, setLookups] = useState<FormLookups | null>(null);
   const [selected, setSelected] = useState<Risk | null>(null);
 
-  // Filters
-  const [filterOrg, setFilterOrg] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterLevel, setFilterLevel] = useState("");
+  // Filters from URL or local state
+  const [filterOrg, setFilterOrg] = useState(searchParams.get("org") ?? "");
+  const [filterStatus, setFilterStatus] = useState(searchParams.get("status") ?? "");
+  const [filterLevel, setFilterLevel] = useState(searchParams.get("level") ?? "");
 
   const loadRisks = () => {
-    api.get<Risk[]>("/api/v1/risks").then(setRisks).catch(() => {}).finally(() => setLoading(false));
+    api.get<Risk[]>("/api/v1/risks").then(data => {
+      setRisks(data);
+      // Auto-select risk from ?highlight param
+      const highlightId = searchParams.get("highlight");
+      if (highlightId) {
+        const found = data.find(r => r.id === Number(highlightId));
+        if (found) setSelected(found);
+      }
+    }).catch(() => {}).finally(() => setLoading(false));
   };
 
   useEffect(() => { loadRisks(); }, []);
 
-  const openForm = async () => {
-    if (!lookups) {
-      const [orgUnits, areas, threats, vulns, safeguards] = await Promise.all([
-        api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").catch(() => [] as OrgUnitTreeNode[]),
-        api.get<SecurityArea[]>("/api/v1/security-areas").catch(() => [] as SecurityArea[]),
-        api.get<Threat[]>("/api/v1/threats").catch(() => [] as Threat[]),
-        api.get<Vulnerability[]>("/api/v1/vulnerabilities").catch(() => [] as Vulnerability[]),
-        api.get<Safeguard[]>("/api/v1/safeguards").catch(() => [] as Safeguard[]),
-      ]);
-      const dictEntries = async (code: string) => {
-        try {
-          const d = await api.get<DictionaryTypeWithEntries>(`/api/v1/dictionaries/${code}/entries`);
-          return d.entries.filter(e => e.is_active).map(e => ({ id: e.id, label: e.label }));
-        } catch { return []; }
-      };
-      const [categories, sensitivities, criticalities, statuses, strategies] = await Promise.all([
-        dictEntries("asset_category"), dictEntries("sensitivity"), dictEntries("criticality"),
-        dictEntries("risk_status"), dictEntries("risk_strategy"),
-      ]);
-      setLookups({ orgUnits, areas, threats, vulns, safeguards, categories, sensitivities, criticalities, statuses, strategies });
-    }
+  const loadLookups = async (): Promise<FormLookups> => {
+    if (lookups) return lookups;
+    const [orgUnits, areas, threats, vulns, safeguards] = await Promise.all([
+      api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").catch(() => [] as OrgUnitTreeNode[]),
+      api.get<SecurityArea[]>("/api/v1/security-areas").catch(() => [] as SecurityArea[]),
+      api.get<Threat[]>("/api/v1/threats").catch(() => [] as Threat[]),
+      api.get<Vulnerability[]>("/api/v1/vulnerabilities").catch(() => [] as Vulnerability[]),
+      api.get<Safeguard[]>("/api/v1/safeguards").catch(() => [] as Safeguard[]),
+    ]);
+    const dictEntries = async (code: string) => {
+      try {
+        const d = await api.get<DictionaryTypeWithEntries>(`/api/v1/dictionaries/${code}/entries`);
+        return d.entries.filter(e => e.is_active).map(e => ({ id: e.id, label: e.label }));
+      } catch { return []; }
+    };
+    const [categories, sensitivities, criticalities, statuses, strategies] = await Promise.all([
+      dictEntries("asset_category"), dictEntries("sensitivity"), dictEntries("criticality"),
+      dictEntries("risk_status"), dictEntries("risk_strategy"),
+    ]);
+    const result = { orgUnits, areas, threats, vulns, safeguards, categories, sensitivities, criticalities, statuses, strategies };
+    setLookups(result);
+    return result;
+  };
+
+  const openAddForm = async () => {
+    await loadLookups();
+    setEditRisk(null);
+    setShowForm(true);
+  };
+
+  const openEditForm = async (risk: Risk) => {
+    await loadLookups();
+    setEditRisk(risk);
     setShowForm(true);
   };
 
@@ -76,7 +99,7 @@ export default function RisksPage() {
     e.preventDefault();
     setSaving(true);
     const fd = new FormData(e.currentTarget);
-    const body = {
+    const body: Record<string, unknown> = {
       org_unit_id: Number(fd.get("org_unit_id")),
       asset_name: fd.get("asset_name") as string,
       asset_category_id: fd.get("asset_category_id") ? Number(fd.get("asset_category_id")) : null,
@@ -92,17 +115,36 @@ export default function RisksPage() {
       strategy_id: fd.get("strategy_id") ? Number(fd.get("strategy_id")) : null,
       owner: (fd.get("owner") as string) || null,
       planned_actions: (fd.get("planned_actions") as string) || null,
-      safeguard_ids: [],
+      residual_risk: fd.get("residual_risk") ? Number(fd.get("residual_risk")) : null,
+      safeguard_ids: Array.from(fd.getAll("safeguard_ids")).map(Number).filter(Boolean),
     };
     try {
-      await api.post("/api/v1/risks", body);
+      if (editRisk) {
+        const updated = await api.put<Risk>(`/api/v1/risks/${editRisk.id}`, body);
+        setSelected(updated);
+      } else {
+        await api.post("/api/v1/risks", body);
+      }
       setShowForm(false);
+      setEditRisk(null);
       setLoading(true);
       loadRisks();
     } catch (err) {
       alert("Błąd zapisu: " + err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCloseRisk = async (risk: Risk) => {
+    if (!confirm(`Zamknąć ryzyko ${risk.code || risk.id}? Status zostanie zmieniony na "Zamknięte".`)) return;
+    try {
+      await api.delete(`/api/v1/risks/${risk.id}`);
+      setSelected(null);
+      setLoading(true);
+      loadRisks();
+    } catch (err) {
+      alert("Błąd: " + err);
     }
   };
 
@@ -118,6 +160,12 @@ export default function RisksPage() {
 
   const uniqueOrgs = [...new Map(risks.map(r => [r.org_unit_id, { id: r.org_unit_id, name: r.org_unit_name }])).values()];
   const uniqueStatuses = [...new Set(risks.map(r => r.status_name).filter(Boolean))] as string[];
+
+  const clearFilters = () => {
+    setFilterOrg(""); setFilterStatus(""); setFilterLevel("");
+    setSearchParams({});
+  };
+  const hasFilters = filterOrg || filterStatus || filterLevel;
 
   return (
     <div>
@@ -137,13 +185,13 @@ export default function RisksPage() {
             <option value="medium">Średnie</option>
             <option value="low">Niskie</option>
           </select>
-          {(filterOrg || filterStatus || filterLevel) && (
-            <button className="btn btn-sm" onClick={() => { setFilterOrg(""); setFilterStatus(""); setFilterLevel(""); }}>Wyczyść filtry</button>
+          {hasFilters && (
+            <button className="btn btn-sm" onClick={clearFilters}>Wyczyść filtry</button>
           )}
         </div>
         <div className="toolbar-right">
           <span style={{ fontSize: 12, color: "var(--text-muted)", alignSelf: "center" }}>{filtered.length} / {risks.length}</span>
-          <button className="btn btn-primary btn-sm" onClick={openForm}>+ Dodaj ryzyko</button>
+          <button className="btn btn-primary btn-sm" onClick={openAddForm}>+ Dodaj ryzyko</button>
         </div>
       </div>
 
@@ -242,6 +290,20 @@ export default function RisksPage() {
                 <span style={{ color: "var(--text-muted)" }}>Właściciel</span>
                 <span>{selected.owner ?? "—"}</span>
               </div>
+              {selected.residual_risk != null && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: "var(--text-muted)" }}>Ryzyko rezydualne</span>
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", color: riskColor(selected.residual_risk) }}>{selected.residual_risk.toFixed(1)}</span>
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "var(--text-muted)" }}>Zidentyfikowano</span>
+                <span>{selected.identified_at?.slice(0, 10) ?? "—"}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "var(--text-muted)" }}>Ostatni przegląd</span>
+                <span>{selected.last_review_at?.slice(0, 10) ?? "Nigdy"}</span>
+              </div>
               {selected.planned_actions && (
                 <div style={{ marginTop: 8 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Planowane działania</div>
@@ -261,59 +323,66 @@ export default function RisksPage() {
                 </div>
               )}
             </div>
+
+            {/* Actions */}
+            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
+              <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => openEditForm(selected)}>Edytuj</button>
+              <button className="btn btn-sm" style={{ flex: 1, color: "var(--red)" }} onClick={() => handleCloseRisk(selected)}>Zamknij</button>
+            </div>
           </div>
         )}
       </div>
 
-      <Modal open={showForm} onClose={() => setShowForm(false)} title="Dodaj ryzyko" wide>
+      {/* Add / Edit Form Modal */}
+      <Modal open={showForm} onClose={() => { setShowForm(false); setEditRisk(null); }} title={editRisk ? `Edytuj ryzyko: ${editRisk.code || editRisk.id}` : "Dodaj ryzyko"} wide>
         {lookups ? (
           <form onSubmit={handleSubmit}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <div className="form-group">
                 <label>Jednostka organizacyjna *</label>
-                <select name="org_unit_id" className="form-control" required>
+                <select name="org_unit_id" className="form-control" required defaultValue={editRisk?.org_unit_id ?? ""}>
                   <option value="">Wybierz...</option>
                   {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
                 </select>
               </div>
               <div className="form-group">
                 <label>Kategoria aktywa</label>
-                <select name="asset_category_id" className="form-control">
+                <select name="asset_category_id" className="form-control" defaultValue={editRisk?.asset_category_id ?? ""}>
                   <option value="">Wybierz...</option>
                   {lookups.categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                 </select>
               </div>
               <div className="form-group" style={{ gridColumn: "span 2" }}>
                 <label>Nazwa aktywa *</label>
-                <input name="asset_name" className="form-control" required placeholder="np. Laptopy konsultantów" />
+                <input name="asset_name" className="form-control" required defaultValue={editRisk?.asset_name ?? ""} placeholder="np. Laptopy konsultantów" />
               </div>
               <div className="form-group"><label>Wrażliwość</label>
-                <select name="sensitivity_id" className="form-control"><option value="">Wybierz...</option>{lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
+                <select name="sensitivity_id" className="form-control" defaultValue={editRisk?.sensitivity_id ?? ""}><option value="">Wybierz...</option>{lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
               </div>
               <div className="form-group"><label>Krytyczność</label>
-                <select name="criticality_id" className="form-control"><option value="">Wybierz...</option>{lookups.criticalities.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
+                <select name="criticality_id" className="form-control" defaultValue={editRisk?.criticality_id ?? ""}><option value="">Wybierz...</option>{lookups.criticalities.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
               </div>
               <div className="form-group"><label>Obszar raportowania</label>
-                <select name="security_area_id" className="form-control"><option value="">Wybierz...</option>{lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+                <select name="security_area_id" className="form-control" defaultValue={editRisk?.security_area_id ?? ""}><option value="">Wybierz...</option>{lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
               </div>
               <div className="form-group"><label>Zagrożenie</label>
-                <select name="threat_id" className="form-control"><option value="">Wybierz...</option>{lookups.threats.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+                <select name="threat_id" className="form-control" defaultValue={editRisk?.threat_id ?? ""}><option value="">Wybierz...</option>{lookups.threats.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
               </div>
               <div className="form-group"><label>Podatność</label>
-                <select name="vulnerability_id" className="form-control"><option value="">Wybierz...</option>{lookups.vulns.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select>
+                <select name="vulnerability_id" className="form-control" defaultValue={editRisk?.vulnerability_id ?? ""}><option value="">Wybierz...</option>{lookups.vulns.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}</select>
               </div>
               <div className="form-group"><label>Wpływ (W) *</label>
-                <select name="impact_level" className="form-control" required defaultValue="2">
+                <select name="impact_level" className="form-control" required defaultValue={editRisk?.impact_level ?? 2}>
                   <option value="1">1 — Niski</option><option value="2">2 — Średni</option><option value="3">3 — Wysoki</option>
                 </select>
               </div>
               <div className="form-group"><label>Prawdopodobieństwo (P) *</label>
-                <select name="probability_level" className="form-control" required defaultValue="2">
+                <select name="probability_level" className="form-control" required defaultValue={editRisk?.probability_level ?? 2}>
                   <option value="1">1 — Niskie</option><option value="2">2 — Średnie</option><option value="3">3 — Wysokie</option>
                 </select>
               </div>
               <div className="form-group"><label>Ocena zabezpieczeń (Z) *</label>
-                <select name="safeguard_rating" className="form-control" required defaultValue="0.25">
+                <select name="safeguard_rating" className="form-control" required defaultValue={editRisk?.safeguard_rating ?? 0.25}>
                   <option value="0.10">0,10 — Brak zabezpieczeń</option>
                   <option value="0.25">0,25 — Częściowe</option>
                   <option value="0.70">0,70 — Dobra jakość</option>
@@ -321,17 +390,28 @@ export default function RisksPage() {
                 </select>
               </div>
               <div className="form-group"><label>Strategia</label>
-                <select name="strategy_id" className="form-control"><option value="">Wybierz...</option>{lookups.strategies.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
+                <select name="strategy_id" className="form-control" defaultValue={editRisk?.strategy_id ?? ""}><option value="">Wybierz...</option>{lookups.strategies.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
               </div>
-              <div className="form-group"><label>Właściciel ryzyka</label><input name="owner" className="form-control" placeholder="np. Jan Kowalski" /></div>
+              <div className="form-group"><label>Właściciel ryzyka</label><input name="owner" className="form-control" defaultValue={editRisk?.owner ?? ""} placeholder="np. Jan Kowalski" /></div>
               <div className="form-group"><label>Status</label>
-                <select name="status_id" className="form-control"><option value="">Wybierz...</option>{lookups.statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
+                <select name="status_id" className="form-control" defaultValue={editRisk?.status_id ?? ""}><option value="">Wybierz...</option>{lookups.statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}</select>
+              </div>
+              <div className="form-group"><label>Ryzyko rezydualne</label>
+                <input name="residual_risk" className="form-control" type="number" step="0.1" min="0" defaultValue={editRisk?.residual_risk ?? ""} placeholder="Wyliczone po mitygacji" />
+              </div>
+              <div className="form-group">
+                <label>Zabezpieczenia</label>
+                <select name="safeguard_ids" className="form-control" multiple style={{ height: 80 }}
+                  defaultValue={editRisk?.safeguards?.map(s => String(s.safeguard_id)) ?? []}>
+                  {lookups.safeguards.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Ctrl+klik aby wybrać wiele</span>
               </div>
             </div>
-            <div className="form-group"><label>Planowane działania</label><textarea name="planned_actions" className="form-control" placeholder="Opisz planowane kroki mitygacyjne..." /></div>
+            <div className="form-group"><label>Planowane działania</label><textarea name="planned_actions" className="form-control" defaultValue={editRisk?.planned_actions ?? ""} placeholder="Opisz planowane kroki mitygacyjne..." /></div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" className="btn" onClick={() => setShowForm(false)}>Anuluj</button>
-              <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Zapisywanie..." : "Zapisz ryzyko"}</button>
+              <button type="button" className="btn" onClick={() => { setShowForm(false); setEditRisk(null); }}>Anuluj</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Zapisywanie..." : editRisk ? "Zapisz zmiany" : "Zapisz ryzyko"}</button>
             </div>
           </form>
         ) : (

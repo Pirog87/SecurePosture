@@ -7,11 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.database import get_session
-from app.models.asset import Asset
+from app.models.asset import Asset, AssetRelationship
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk
-from app.schemas.asset import AssetCreate, AssetOut, AssetUpdate
+from app.schemas.asset import (
+    AssetCreate, AssetGraph, AssetGraphEdge, AssetGraphNode,
+    AssetOut, AssetRelationshipCreate, AssetRelationshipOut, AssetUpdate,
+)
 
 router = APIRouter(prefix="/api/v1/assets", tags=["Rejestr aktywów"])
 
@@ -127,3 +130,138 @@ async def archive_asset(asset_id: int, s: AsyncSession = Depends(get_session)):
     asset.is_active = False
     await s.commit()
     return {"status": "archived", "id": asset_id}
+
+
+# ═══════════════════ RELATIONSHIPS ═══════════════════
+
+@router.get("/relationships/all", response_model=list[AssetRelationshipOut], summary="Wszystkie relacje")
+async def list_all_relationships(s: AsyncSession = Depends(get_session)):
+    q = select(AssetRelationship).order_by(AssetRelationship.created_at.desc())
+    rels = (await s.execute(q)).scalars().all()
+    result = []
+    for r in rels:
+        src = await s.get(Asset, r.source_asset_id)
+        tgt = await s.get(Asset, r.target_asset_id)
+        result.append(AssetRelationshipOut(
+            id=r.id, source_asset_id=r.source_asset_id,
+            source_asset_name=src.name if src else None,
+            target_asset_id=r.target_asset_id,
+            target_asset_name=tgt.name if tgt else None,
+            relationship_type=r.relationship_type,
+            description=r.description, created_at=r.created_at,
+        ))
+    return result
+
+
+@router.get("/{asset_id}/relationships", response_model=list[AssetRelationshipOut], summary="Relacje aktywa")
+async def list_asset_relationships(asset_id: int, s: AsyncSession = Depends(get_session)):
+    q = select(AssetRelationship).where(
+        (AssetRelationship.source_asset_id == asset_id) | (AssetRelationship.target_asset_id == asset_id)
+    )
+    rels = (await s.execute(q)).scalars().all()
+    result = []
+    for r in rels:
+        src = await s.get(Asset, r.source_asset_id)
+        tgt = await s.get(Asset, r.target_asset_id)
+        result.append(AssetRelationshipOut(
+            id=r.id, source_asset_id=r.source_asset_id,
+            source_asset_name=src.name if src else None,
+            target_asset_id=r.target_asset_id,
+            target_asset_name=tgt.name if tgt else None,
+            relationship_type=r.relationship_type,
+            description=r.description, created_at=r.created_at,
+        ))
+    return result
+
+
+@router.post("/relationships", response_model=AssetRelationshipOut, status_code=201, summary="Dodaj relacje")
+async def create_relationship(body: AssetRelationshipCreate, s: AsyncSession = Depends(get_session)):
+    src = await s.get(Asset, body.source_asset_id)
+    tgt = await s.get(Asset, body.target_asset_id)
+    if not src or not tgt:
+        raise HTTPException(404, "Aktyw nie istnieje")
+    if body.source_asset_id == body.target_asset_id:
+        raise HTTPException(400, "Nie mozna powiazac aktywa z samym soba")
+    rel = AssetRelationship(**body.model_dump())
+    s.add(rel)
+    await s.commit()
+    await s.refresh(rel)
+    return AssetRelationshipOut(
+        id=rel.id, source_asset_id=rel.source_asset_id,
+        source_asset_name=src.name, target_asset_id=rel.target_asset_id,
+        target_asset_name=tgt.name, relationship_type=rel.relationship_type,
+        description=rel.description, created_at=rel.created_at,
+    )
+
+
+@router.delete("/relationships/{rel_id}", summary="Usun relacje")
+async def delete_relationship(rel_id: int, s: AsyncSession = Depends(get_session)):
+    rel = await s.get(AssetRelationship, rel_id)
+    if not rel:
+        raise HTTPException(404, "Relacja nie istnieje")
+    await s.delete(rel)
+    await s.commit()
+    return {"status": "deleted", "id": rel_id}
+
+
+@router.get("/graph/data", response_model=AssetGraph, summary="Graf relacji aktywow")
+async def get_asset_graph(s: AsyncSession = Depends(get_session)):
+    # All active assets
+    assets_q = select(Asset).where(Asset.is_active.is_(True))
+    assets = (await s.execute(assets_q)).scalars().all()
+    asset_map = {a.id: a for a in assets}
+
+    # All relationships
+    rels_q = select(AssetRelationship)
+    rels = (await s.execute(rels_q)).scalars().all()
+
+    # Find connected asset IDs
+    connected_ids = set()
+    valid_edges = []
+    for r in rels:
+        if r.source_asset_id in asset_map and r.target_asset_id in asset_map:
+            connected_ids.add(r.source_asset_id)
+            connected_ids.add(r.target_asset_id)
+            valid_edges.append(r)
+
+    # Also add parent-child relationships
+    for a in assets:
+        if a.parent_id and a.parent_id in asset_map:
+            connected_ids.add(a.id)
+            connected_ids.add(a.parent_id)
+
+    # Build nodes for connected assets only
+    nodes = []
+    for aid in connected_ids:
+        a = asset_map[aid]
+        risk_count_q = select(func.count()).select_from(Risk).where(Risk.asset_id == a.id)
+        risk_count = (await s.execute(risk_count_q)).scalar() or 0
+        org = await s.get(OrgUnit, a.org_unit_id) if a.org_unit_id else None
+        async def _dl(eid):
+            if not eid: return None
+            e = await s.get(DictionaryEntry, eid)
+            return e.label if e else None
+        nodes.append(AssetGraphNode(
+            id=a.id, name=a.name,
+            asset_type_name=await _dl(a.asset_type_id),
+            criticality_name=await _dl(a.criticality_id),
+            org_unit_name=org.name if org else None,
+            risk_count=risk_count,
+        ))
+
+    # Build edges
+    edges = []
+    for r in valid_edges:
+        edges.append(AssetGraphEdge(
+            id=r.id, source=r.source_asset_id, target=r.target_asset_id,
+            type=r.relationship_type, description=r.description,
+        ))
+    # Parent-child edges
+    for a in assets:
+        if a.parent_id and a.parent_id in asset_map and a.id in connected_ids:
+            edges.append(AssetGraphEdge(
+                id=-a.id, source=a.parent_id, target=a.id,
+                type="contains", description="Relacja nadrzedny-podrzedny",
+            ))
+
+    return AssetGraph(nodes=nodes, edges=edges)

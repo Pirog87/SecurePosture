@@ -42,6 +42,9 @@ class RiskOut(BaseModel):
     owner: str | None = None
     planned_actions: str | None = None
     residual_risk: float | None = None
+    target_impact: int | None = None
+    target_probability: int | None = None
+    target_safeguard: float | None = None
 
     identified_at: datetime
     last_review_at: datetime | None = None
@@ -73,6 +76,9 @@ class RiskCreate(BaseModel):
     owner: str | None = Field(None, max_length=200)
     planned_actions: str | None = None
     residual_risk: float | None = None
+    target_impact: int | None = Field(None, ge=1, le=3)
+    target_probability: int | None = Field(None, ge=1, le=3)
+    target_safeguard: float | None = None
 
     safeguard_ids: list[int] = []
 
@@ -97,6 +103,9 @@ class RiskUpdate(BaseModel):
     owner: str | None = Field(None, max_length=200)
     planned_actions: str | None = None
     residual_risk: float | None = None
+    target_impact: int | None = Field(None, ge=1, le=3)
+    target_probability: int | None = Field(None, ge=1, le=3)
+    target_safeguard: float | None = None
 
     safeguard_ids: list[int] | None = None
 

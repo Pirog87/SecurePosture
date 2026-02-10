@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 const titles: Record<string, string> = {
   "/": "Executive Summary",
   "/assets": "Rejestr Aktywów",
+  "/assets/graph": "Graf Relacji Aktywów",
   "/risks": "Rejestr Ryzyk",
   "/reviews": "Przeglądy Ryzyk",
   "/cis": "CIS Benchmark — Historia Ocen",
@@ -10,6 +11,7 @@ const titles: Record<string, string> = {
   "/org-structure": "Struktura Organizacyjna",
   "/catalogs": "Katalogi",
   "/dictionaries": "Słowniki",
+  "/actions": "Działania",
   "/audit": "Audit Trail",
 };
 

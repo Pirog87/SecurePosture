@@ -1,17 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import type { Asset, OrgUnitTreeNode, DictionaryTypeWithEntries } from "../types";
+import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
-
-function flattenTree(nodes: OrgUnitTreeNode[], depth = 0): { id: number; name: string; depth: number }[] {
-  const result: { id: number; name: string; depth: number }[] = [];
-  for (const n of nodes) {
-    result.push({ id: n.id, name: n.name, depth });
-    result.push(...flattenTree(n.children, depth + 1));
-  }
-  return result;
-}
 
 function critColor(name: string | null): string {
   if (!name) return "var(--text-muted)";
@@ -44,13 +36,20 @@ export default function AssetRegistryPage() {
   const [filterType, setFilterType] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
 
+  const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
+
   const loadAssets = () => {
     api.get<Asset[]>("/api/v1/assets").then(data => {
       setAssets(data);
     }).catch(() => {}).finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadAssets(); }, []);
+  useEffect(() => {
+    loadAssets();
+    api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(setOrgTree).catch(() => {});
+  }, []);
+
+  const orgPathMap = useMemo(() => buildPathMap(orgTree), [orgTree]);
 
   const loadLookups = async (): Promise<FormLookups> => {
     if (lookups) return lookups;
@@ -134,14 +133,21 @@ export default function AssetRegistryPage() {
 
   const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
 
+  // Hierarchical org filtering
+  const filterOrgIds = useMemo(() => {
+    if (!filterOrg) return null;
+    return new Set(collectDescendantIds(orgTree, Number(filterOrg)));
+  }, [filterOrg, orgTree]);
+
   const filtered = assets.filter(a => {
-    if (filterOrg && String(a.org_unit_id) !== filterOrg) return false;
+    if (filterOrgIds && a.org_unit_id && !filterOrgIds.has(a.org_unit_id)) return false;
     if (filterType && String(a.asset_type_id) !== filterType) return false;
     if (filterSearch && !a.name.toLowerCase().includes(filterSearch.toLowerCase())) return false;
     return true;
   });
 
-  const uniqueOrgs = [...new Map(assets.filter(a => a.org_unit_id).map(a => [a.org_unit_id, { id: a.org_unit_id!, name: a.org_unit_name! }])).values()];
+  const flatFilterUnits = flattenTree(orgTree);
+  const uniqueOrgs = flatFilterUnits.map(u => ({ id: u.id, name: u.name, depth: u.depth }));
   const uniqueTypes = [...new Map(assets.filter(a => a.asset_type_id).map(a => [a.asset_type_id, { id: a.asset_type_id!, name: a.asset_type_name! }])).values()];
 
   const hasFilters = filterOrg || filterType || filterSearch;
@@ -181,9 +187,9 @@ export default function AssetRegistryPage() {
             value={filterSearch}
             onChange={e => setFilterSearch(e.target.value)}
           />
-          <select className="form-control" style={{ width: 160 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
+          <select className="form-control" style={{ width: 220 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
             <option value="">Wszystkie piony</option>
-            {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+            {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{"  ".repeat(o.depth)}{o.name}</option>)}
           </select>
           <select className="form-control" style={{ width: 160 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
             <option value="">Wszystkie typy</option>
@@ -240,7 +246,7 @@ export default function AssetRegistryPage() {
                         <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{a.category_name}</span>
                       ) : "—"}
                     </td>
-                    <td style={{ fontSize: 12 }}>{a.org_unit_name ?? "—"}</td>
+                    <td style={{ fontSize: 11 }}>{(a.org_unit_id ? orgPathMap.get(a.org_unit_id) : null) ?? a.org_unit_name ?? "—"}</td>
                     <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{a.owner ?? "—"}</td>
                     <td>
                       {a.criticality_name ? (
@@ -289,7 +295,7 @@ export default function AssetRegistryPage() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "var(--text-muted)" }}>Jednostka org.</span>
-                <span>{selected.org_unit_name ?? "—"}</span>
+                <span style={{ fontSize: 11 }}>{(selected.org_unit_id ? orgPathMap.get(selected.org_unit_id) : null) ?? selected.org_unit_name ?? "—"}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "var(--text-muted)" }}>Właściciel</span>

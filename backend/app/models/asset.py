@@ -32,3 +32,14 @@ class Asset(Base):
     org_unit: Mapped["OrgUnit | None"] = relationship(foreign_keys=[org_unit_id])
 
     from .org_unit import OrgUnit
+
+
+class AssetRelationship(Base):
+    __tablename__ = "asset_relationships"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    target_asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String(100), nullable=False)  # depends_on, supports, connects_to, contains
+    description: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

@@ -4,9 +4,10 @@ from .dictionary import DictionaryType, DictionaryEntry
 from .org_unit import OrgLevel, OrgUnit
 from .security_area import SecurityArea
 from .catalog import Threat, Vulnerability, Safeguard
-from .asset import Asset
+from .asset import Asset, AssetRelationship
 from .risk import Risk, RiskSafeguard, RiskReview, RiskReviewConfig
 from .cis import CisControl, CisSubControl, CisAttackMapping, CisAssessment, CisAssessmentAnswer
+from .action import Action, ActionLink, ActionHistory
 from .audit import AuditLog
 
 __all__ = [
@@ -16,8 +17,9 @@ __all__ = [
     "OrgLevel", "OrgUnit",
     "SecurityArea",
     "Threat", "Vulnerability", "Safeguard",
-    "Asset",
+    "Asset", "AssetRelationship",
     "Risk", "RiskSafeguard", "RiskReview", "RiskReviewConfig",
+    "Action", "ActionLink", "ActionHistory",
     "CisControl", "CisSubControl", "CisAttackMapping", "CisAssessment", "CisAssessmentAnswer",
     "AuditLog",
 ]

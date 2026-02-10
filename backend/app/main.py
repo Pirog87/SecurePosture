@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import check_db_connection
 from app.routers.dashboard import router as dashboard_router
+from app.routers.dictionary import router as dictionary_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -21,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(dashboard_router)
+app.include_router(dictionary_router)
 
 
 @app.get("/health")

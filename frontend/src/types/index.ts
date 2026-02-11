@@ -738,6 +738,75 @@ export interface AssessmentScore {
   ig_scores: Record<string, number | null>;
 }
 
+// ═══ Vulnerability Registry ═══
+export interface VulnerabilityRecord {
+  id: number;
+  ref_id: string | null;
+  title: string;
+  description: string | null;
+  source_id: number | null;
+  source_name: string | null;
+  org_unit_id: number;
+  org_unit_name: string | null;
+  asset_id: number | null;
+  asset_name: string | null;
+  category_id: number | null;
+  category_name: string | null;
+  severity_id: number | null;
+  severity_name: string | null;
+  cvss_score: number | null;
+  cvss_vector: string | null;
+  cve_id: string | null;
+  status_id: number | null;
+  status_name: string | null;
+  remediation_priority_id: number | null;
+  remediation_priority_name: string | null;
+  owner: string;
+  detected_at: string;
+  closed_at: string | null;
+  sla_deadline: string | null;
+  remediation_notes: string | null;
+  risk_id: number | null;
+  created_by: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// ═══ Incident Registry ═══
+export interface IncidentRecord {
+  id: number;
+  ref_id: string | null;
+  title: string;
+  description: string;
+  category_id: number | null;
+  category_name: string | null;
+  severity_id: number | null;
+  severity_name: string | null;
+  org_unit_id: number;
+  org_unit_name: string | null;
+  asset_id: number | null;
+  asset_name: string | null;
+  reported_by: string;
+  assigned_to: string;
+  status_id: number | null;
+  status_name: string | null;
+  reported_at: string;
+  detected_at: string | null;
+  closed_at: string | null;
+  ttr_minutes: number | null;
+  impact_id: number | null;
+  impact_name: string | null;
+  personal_data_breach: boolean;
+  authority_notification: boolean;
+  actions_taken: string | null;
+  root_cause: string | null;
+  lessons_learned: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // ═══ Domain Dashboard ═══
 export interface DomainTopRisk {
   id: number;

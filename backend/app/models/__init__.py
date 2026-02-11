@@ -7,6 +7,8 @@ from .catalog import Threat, Vulnerability, Safeguard
 from .asset import Asset, AssetRelationship
 from .risk import Risk, RiskSafeguard, RiskReview, RiskReviewConfig
 from .cis import CisControl, CisSubControl, CisAttackMapping, CisAssessment, CisAssessmentAnswer
+from .vulnerability import VulnerabilityRecord
+from .incident import Incident, IncidentRisk, IncidentVulnerability
 from .action import Action, ActionLink, ActionHistory
 from .audit import AuditLog
 from .framework import (
@@ -30,6 +32,8 @@ __all__ = [
     "Risk", "RiskSafeguard", "RiskReview", "RiskReviewConfig",
     "Action", "ActionLink", "ActionHistory",
     "CisControl", "CisSubControl", "CisAttackMapping", "CisAssessment", "CisAssessmentAnswer",
+    "VulnerabilityRecord",
+    "Incident", "IncidentRisk", "IncidentVulnerability",
     "AuditLog",
     "Framework", "FrameworkNode", "FrameworkNodeSecurityArea",
     "AssessmentDimension", "DimensionLevel",

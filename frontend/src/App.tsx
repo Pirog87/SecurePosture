@@ -17,6 +17,8 @@ import FrameworksPage from "./pages/FrameworksPage";
 import FrameworkDetailPage from "./pages/FrameworkDetailPage";
 import AssessmentsPage from "./pages/AssessmentsPage";
 import AssessmentFormPage from "./pages/AssessmentFormPage";
+import VulnerabilitiesPage from "./pages/VulnerabilitiesPage";
+import IncidentsPage from "./pages/IncidentsPage";
 
 export default function App() {
   return (
@@ -34,6 +36,8 @@ export default function App() {
           <Route path="assessments" element={<AssessmentsPage />} />
           <Route path="assessments/new" element={<AssessmentsPage />} />
           <Route path="assessments/:assessmentId" element={<AssessmentFormPage />} />
+          <Route path="vulnerabilities" element={<VulnerabilitiesPage />} />
+          <Route path="incidents" element={<IncidentsPage />} />
           <Route path="cis" element={<CisListPage />} />
           <Route path="cis/assess" element={<CisAssessPage />} />
           <Route path="org-structure" element={<OrgStructurePage />} />

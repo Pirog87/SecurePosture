@@ -26,6 +26,13 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Operacje Bezpieczeństwa",
+    items: [
+      { to: "/vulnerabilities", icon: "🔓", label: "Podatności" },
+      { to: "/incidents", icon: "🚨", label: "Incydenty" },
+    ],
+  },
+  {
     title: "Framework Engine",
     items: [
       { to: "/frameworks", icon: "📐", label: "Frameworki" },

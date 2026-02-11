@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -10,6 +10,7 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ref_id: Mapped[str | None] = mapped_column(String(20))
     name: Mapped[str] = mapped_column(String(400), nullable=False)
     asset_type_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     category_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
@@ -22,6 +23,19 @@ class Asset(Base):
 
     sensitivity_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     criticality_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
+
+    # ── CMDB extension (Phase 1) ──
+    asset_subtype: Mapped[str | None] = mapped_column(String(100))
+    technical_owner: Mapped[str | None] = mapped_column(String(200))
+    environment_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
+    ip_address: Mapped[str | None] = mapped_column(String(45))
+    hostname: Mapped[str | None] = mapped_column(String(255))
+    os_version: Mapped[str | None] = mapped_column(String(100))
+    vendor: Mapped[str | None] = mapped_column(String(100))
+    support_end_date: Mapped[date | None] = mapped_column(Date)
+    status_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
+    last_scan_date: Mapped[date | None] = mapped_column(Date)
+    notes: Mapped[str | None] = mapped_column(Text)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

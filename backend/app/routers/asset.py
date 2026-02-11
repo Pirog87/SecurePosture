@@ -38,6 +38,7 @@ async def _asset_out(s: AsyncSession, asset: Asset) -> AssetOut:
 
     return AssetOut(
         id=asset.id,
+        ref_id=asset.ref_id,
         name=asset.name,
         asset_type_id=asset.asset_type_id,
         asset_type_name=await _de_label(asset.asset_type_id),
@@ -54,6 +55,20 @@ async def _asset_out(s: AsyncSession, asset: Asset) -> AssetOut:
         sensitivity_name=await _de_label(asset.sensitivity_id),
         criticality_id=asset.criticality_id,
         criticality_name=await _de_label(asset.criticality_id),
+        # CMDB extension
+        asset_subtype=asset.asset_subtype,
+        technical_owner=asset.technical_owner,
+        environment_id=asset.environment_id,
+        environment_name=await _de_label(asset.environment_id),
+        ip_address=asset.ip_address,
+        hostname=asset.hostname,
+        os_version=asset.os_version,
+        vendor=asset.vendor,
+        support_end_date=asset.support_end_date,
+        status_id=asset.status_id,
+        status_name=await _de_label(asset.status_id),
+        last_scan_date=asset.last_scan_date,
+        notes=asset.notes,
         is_active=asset.is_active,
         risk_count=risk_count,
         created_at=asset.created_at,
@@ -101,6 +116,8 @@ async def get_asset(asset_id: int, s: AsyncSession = Depends(get_session)):
 async def create_asset(body: AssetCreate, s: AsyncSession = Depends(get_session)):
     asset = Asset(**body.model_dump())
     s.add(asset)
+    await s.flush()
+    asset.ref_id = f"AST-{asset.id:04d}"
     await s.commit()
     await s.refresh(asset)
     return await _asset_out(s, asset)

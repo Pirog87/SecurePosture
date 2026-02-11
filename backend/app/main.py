@@ -24,6 +24,7 @@ from app.routers.audit_register import router as audit_register_router
 from app.routers.security_area import router as security_area_router
 from app.routers.vendor import router as vendor_router
 from app.routers.awareness import router as awareness_router
+from app.routers.security_score import router as score_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -59,6 +60,7 @@ app.include_router(exception_router)
 app.include_router(audit_register_router)
 app.include_router(vendor_router)
 app.include_router(awareness_router)
+app.include_router(score_router)
 app.include_router(domain_router)
 app.include_router(audit_router)
 

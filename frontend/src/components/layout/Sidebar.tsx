@@ -12,6 +12,7 @@ const sections: { title: string; items: NavItem[] }[] = [
     title: "Dashboardy",
     items: [
       { to: "/", icon: "📊", label: "Executive Summary" },
+      { to: "/security-score", icon: "🎯", label: "Security Score" },
       { to: "/domains", icon: "🛡", label: "Domeny Bezpieczenstwa" },
     ],
   },

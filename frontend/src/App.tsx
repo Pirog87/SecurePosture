@@ -24,6 +24,7 @@ import ExceptionsPage from "./pages/ExceptionsPage";
 import AuditsPage from "./pages/AuditsPage";
 import VendorsPage from "./pages/VendorsPage";
 import AwarenessPage from "./pages/AwarenessPage";
+import SecurityScorePage from "./pages/SecurityScorePage";
 
 export default function App() {
   return (
@@ -31,6 +32,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<DashboardPage />} />
+          <Route path="security-score" element={<SecurityScorePage />} />
           <Route path="domains" element={<DomainDashboardPage />} />
           <Route path="assets" element={<AssetRegistryPage />} />
           <Route path="assets/graph" element={<AssetGraphPage />} />

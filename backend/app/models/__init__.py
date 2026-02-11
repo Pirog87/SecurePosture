@@ -14,6 +14,7 @@ from .policy_exception import PolicyException
 from .audit_register import Audit, AuditFinding
 from .vendor import Vendor, VendorAssessment, VendorAssessmentAnswer
 from .awareness import AwarenessCampaign, AwarenessResult, AwarenessEmployeeReport
+from .security_score import SecurityScoreConfig, SecurityScoreSnapshot
 from .action import Action, ActionLink, ActionHistory
 from .audit import AuditLog
 from .framework import (
@@ -44,6 +45,7 @@ __all__ = [
     "Audit", "AuditFinding",
     "Vendor", "VendorAssessment", "VendorAssessmentAnswer",
     "AwarenessCampaign", "AwarenessResult", "AwarenessEmployeeReport",
+    "SecurityScoreConfig", "SecurityScoreSnapshot",
     "AuditLog",
     "Framework", "FrameworkNode", "FrameworkNodeSecurityArea",
     "AssessmentDimension", "DimensionLevel",

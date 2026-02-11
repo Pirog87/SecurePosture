@@ -16,6 +16,8 @@ from app.routers.dictionary import router as dictionary_router
 from app.routers.org_unit import router as org_unit_router
 from app.routers.risk import router as risk_router
 from app.routers.risk_review import router as risk_review_router
+from app.routers.vulnerability import router as vulnerability_router
+from app.routers.incident import router as incident_router
 from app.routers.security_area import router as security_area_router
 
 app = FastAPI(
@@ -45,6 +47,8 @@ app.include_router(action_router)
 app.include_router(cis_router)
 app.include_router(framework_router)
 app.include_router(assessment_router)
+app.include_router(vulnerability_router)
+app.include_router(incident_router)
 app.include_router(domain_router)
 app.include_router(audit_router)
 

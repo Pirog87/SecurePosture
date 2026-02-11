@@ -1,10 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
 
 class AssetOut(BaseModel):
     id: int
+    ref_id: str | None = None
     name: str
     asset_type_id: int | None = None
     asset_type_name: str | None = None
@@ -21,6 +22,20 @@ class AssetOut(BaseModel):
     sensitivity_name: str | None = None
     criticality_id: int | None = None
     criticality_name: str | None = None
+    # CMDB extension
+    asset_subtype: str | None = None
+    technical_owner: str | None = None
+    environment_id: int | None = None
+    environment_name: str | None = None
+    ip_address: str | None = None
+    hostname: str | None = None
+    os_version: str | None = None
+    vendor: str | None = None
+    support_end_date: date | None = None
+    status_id: int | None = None
+    status_name: str | None = None
+    last_scan_date: date | None = None
+    notes: str | None = None
     is_active: bool = True
     risk_count: int = 0
     created_at: datetime
@@ -39,6 +54,18 @@ class AssetCreate(BaseModel):
     location: str | None = Field(None, max_length=300)
     sensitivity_id: int | None = None
     criticality_id: int | None = None
+    # CMDB extension
+    asset_subtype: str | None = Field(None, max_length=100)
+    technical_owner: str | None = Field(None, max_length=200)
+    environment_id: int | None = None
+    ip_address: str | None = Field(None, max_length=45)
+    hostname: str | None = Field(None, max_length=255)
+    os_version: str | None = Field(None, max_length=100)
+    vendor: str | None = Field(None, max_length=100)
+    support_end_date: date | None = None
+    status_id: int | None = None
+    last_scan_date: date | None = None
+    notes: str | None = None
 
 
 class AssetRelationshipOut(BaseModel):
@@ -93,4 +120,16 @@ class AssetUpdate(BaseModel):
     location: str | None = Field(None, max_length=300)
     sensitivity_id: int | None = None
     criticality_id: int | None = None
+    # CMDB extension
+    asset_subtype: str | None = Field(None, max_length=100)
+    technical_owner: str | None = Field(None, max_length=200)
+    environment_id: int | None = None
+    ip_address: str | None = Field(None, max_length=45)
+    hostname: str | None = Field(None, max_length=255)
+    os_version: str | None = Field(None, max_length=100)
+    vendor: str | None = Field(None, max_length=100)
+    support_end_date: date | None = None
+    status_id: int | None = None
+    last_scan_date: date | None = None
+    notes: str | None = None
     is_active: bool | None = None

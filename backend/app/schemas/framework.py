@@ -276,3 +276,59 @@ class AssessmentCompareOut(BaseModel):
     """Side-by-side comparison of two assessments."""
     assessments: list[AssessmentOut] = []
     scores: list[AssessmentScoreOut] = []
+
+
+# ─────────────────────────────────────────────
+# Dimensions edit
+# ─────────────────────────────────────────────
+
+class DimensionLevelUpsert(BaseModel):
+    level_order: int
+    value: float
+    label: str
+    label_pl: str | None = None
+    description: str | None = None
+    color: str | None = None
+
+
+class DimensionUpsert(BaseModel):
+    dimension_key: str
+    name: str
+    name_pl: str | None = None
+    description: str | None = None
+    order_id: int = 0
+    weight: float = 1.0
+    levels: list[DimensionLevelUpsert] = []
+
+
+class DimensionsUpdate(BaseModel):
+    dimensions: list[DimensionUpsert] = Field(..., min_length=1)
+
+
+# ─────────────────────────────────────────────
+# Auto-map areas
+# ─────────────────────────────────────────────
+
+class AutoMapResult(BaseModel):
+    framework_id: int
+    mappings_created: int
+
+
+# ─────────────────────────────────────────────
+# Control Maturity metrics (for Security Score)
+# ─────────────────────────────────────────────
+
+class FrameworkMetricUnit(BaseModel):
+    org_unit_id: int | None = None
+    org_unit_name: str | None = None
+    assessment_id: int | None = None
+    assessment_date: date | None = None
+    overall_score: float | None = None
+    completion_pct: float | None = None
+
+
+class FrameworkMetrics(BaseModel):
+    framework_id: int
+    framework_name: str
+    units: list[FrameworkMetricUnit] = []
+    organization_score: float | None = None

@@ -61,6 +61,12 @@ class Risk(Base):
     next_review_date: Mapped[datetime | None] = mapped_column(Date)
     identified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     last_review_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    # ── Phase 1 extensions ──
+    vendor_id: Mapped[int | None] = mapped_column(Integer)
+    source_type: Mapped[str | None] = mapped_column(String(50))
+    source_id: Mapped[int | None] = mapped_column(Integer)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

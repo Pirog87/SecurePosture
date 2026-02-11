@@ -30,8 +30,8 @@ class Framework(Base):
     __tablename__ = "frameworks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    urn: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
-    ref_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    urn: Mapped[str | None] = mapped_column(String(500), unique=True, nullable=True)
+    ref_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     name: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     version: Mapped[str | None] = mapped_column(String(50))

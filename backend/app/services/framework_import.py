@@ -228,6 +228,55 @@ def _read_excel_nodes(wb, tab_name: str | None) -> list[dict]:
 # YAML PARSER (CISO Assistant native format)
 # ═══════════════════════════════════════════════
 
+def _extract_framework_from_yaml(data: dict) -> tuple[dict, dict]:
+    """Extract the framework dict and the top-level library metadata from YAML.
+
+    Handles multiple CISO Assistant YAML layouts:
+      1. objects.framework  (dict — current format)
+      2. objects.frameworks (list)
+      3. objects as list of typed objects (legacy)
+      4. Direct framework at top level (no objects wrapper)
+
+    Returns (fw_data, library_meta) where library_meta is the top-level dict.
+    """
+    if "objects" not in data:
+        return data, data
+
+    objects = data["objects"]
+
+    # Current format: objects is a dict with key "framework" (singular)
+    if isinstance(objects, dict):
+        if "framework" in objects:
+            fw = objects["framework"]
+            if isinstance(fw, dict):
+                return fw, data
+        if "frameworks" in objects:
+            fws = objects["frameworks"]
+            if isinstance(fws, list) and fws:
+                return fws[0], data
+        # Fallback: first dict value that has requirement_nodes
+        for val in objects.values():
+            if isinstance(val, dict) and "requirement_nodes" in val:
+                return val, data
+            if isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict) and "requirement_nodes" in item:
+                        return item, data
+        return data, data
+
+    # Legacy format: objects is a list of typed objects
+    if isinstance(objects, list):
+        for obj in objects:
+            if isinstance(obj, dict) and obj.get("type") == "framework":
+                return obj, data
+        # Fallback: first item with requirement_nodes
+        for obj in objects:
+            if isinstance(obj, dict) and "requirement_nodes" in obj:
+                return obj, data
+
+    return data, data
+
+
 async def import_from_yaml(
     s: AsyncSession, file: BinaryIO, imported_by: str = "admin"
 ) -> Framework:
@@ -240,14 +289,7 @@ async def import_from_yaml(
     if not data:
         raise ValueError("Empty YAML file")
 
-    # Handle both library wrapper and direct framework format
-    fw_data = data
-    if "objects" in data:
-        # Library wrapper format
-        for obj in data["objects"]:
-            if obj.get("type") == "framework":
-                fw_data = obj
-                break
+    fw_data, lib_meta = _extract_framework_from_yaml(data)
 
     # Check for duplicate URN
     fw_urn = fw_data.get("urn")
@@ -258,18 +300,22 @@ async def import_from_yaml(
         if existing:
             raise ValueError(f"Framework with URN '{fw_urn}' already exists (id={existing.id})")
 
+    # version can be int in YAML — convert to str
+    version_raw = fw_data.get("version") or lib_meta.get("version")
+    version_str = str(version_raw) if version_raw is not None else None
+
     # Create Framework record
     fw = Framework(
         urn=fw_urn,
-        ref_id=fw_data.get("ref_id"),
-        name=fw_data.get("name", "Unnamed Framework"),
-        description=fw_data.get("description"),
-        version=fw_data.get("version") or data.get("version"),
-        provider=fw_data.get("provider") or data.get("provider"),
-        packager=fw_data.get("packager") or data.get("packager"),
-        copyright=fw_data.get("copyright") or data.get("copyright"),
+        ref_id=fw_data.get("ref_id") or lib_meta.get("ref_id"),
+        name=fw_data.get("name") or lib_meta.get("name", "Unnamed Framework"),
+        description=fw_data.get("description") or lib_meta.get("description"),
+        version=version_str,
+        provider=fw_data.get("provider") or lib_meta.get("provider"),
+        packager=fw_data.get("packager") or lib_meta.get("packager"),
+        copyright=fw_data.get("copyright") or lib_meta.get("copyright"),
         source_format="ciso_assistant_yaml",
-        locale=fw_data.get("locale") or data.get("locale", "en"),
+        locale=fw_data.get("locale") or lib_meta.get("locale", "en"),
         implementation_groups_definition=fw_data.get("implementation_groups_definition"),
         imported_at=datetime.utcnow(),
         imported_by=imported_by,
@@ -277,7 +323,7 @@ async def import_from_yaml(
     s.add(fw)
     await s.flush()
 
-    # Parse nodes
+    # Parse nodes — CISO Assistant uses flat list with parent_urn + depth
     req_nodes = fw_data.get("requirement_nodes", [])
     nodes_data = _flatten_yaml_nodes(req_nodes)
 
@@ -296,11 +342,17 @@ async def import_from_yaml(
 
 
 def _flatten_yaml_nodes(nodes: list[dict], depth: int = 1) -> list[dict]:
-    """Flatten hierarchical YAML nodes into a flat list with depth info."""
+    """Flatten YAML nodes into a flat list with depth and parent_urn info.
+
+    Handles both:
+      - Nested format (children key)
+      - Flat format with parent_urn and explicit depth (CISO Assistant current)
+    """
     result = []
     for node in nodes:
         flat = {
             "urn": node.get("urn"),
+            "parent_urn": node.get("parent_urn"),
             "ref_id": node.get("ref_id"),
             "name": node.get("name", ""),
             "description": node.get("description"),
@@ -314,6 +366,7 @@ def _flatten_yaml_nodes(nodes: list[dict], depth: int = 1) -> list[dict]:
         }
         result.append(flat)
 
+        # Support nested children format
         children = node.get("children", [])
         if children:
             result.extend(_flatten_yaml_nodes(children, depth + 1))
@@ -328,15 +381,25 @@ def _flatten_yaml_nodes(nodes: list[dict], depth: int = 1) -> list[dict]:
 async def _insert_nodes(
     s: AsyncSession, fw: Framework, nodes_data: list[dict]
 ) -> tuple[int, int]:
-    """Insert framework nodes. Returns (total, assessable) counts."""
+    """Insert framework nodes. Returns (total, assessable) counts.
+
+    Supports parent resolution via:
+      1. parent_urn (CISO Assistant current format)
+      2. Depth-based auto-parenting (fallback)
+    """
     if not nodes_data:
         return (0, 0)
 
     total = 0
     assessable = 0
 
-    # Track parent stack by depth for auto-parenting
+    # Track parent resolution
     parent_stack: dict[int, int] = {}  # depth → node_id
+    urn_to_id: dict[str, int] = {}  # urn → node_id (for parent_urn lookup)
+
+    # Two-pass if parent_urn is used: first insert all, then update parents
+    # But we can do single-pass since CISO Assistant YAML lists parents before children
+    has_parent_urns = any(nd.get("parent_urn") for nd in nodes_data)
 
     for idx, nd in enumerate(nodes_data):
         depth = int(nd.get("depth", 1))
@@ -344,8 +407,10 @@ async def _insert_nodes(
 
         # Determine parent
         parent_id = None
-        if depth > 1:
-            # Find parent at depth-1
+        parent_urn = nd.get("parent_urn")
+        if parent_urn and has_parent_urns:
+            parent_id = urn_to_id.get(parent_urn)
+        elif depth > 1:
             parent_id = parent_stack.get(depth - 1)
 
         ig = nd.get("implementation_groups")
@@ -360,12 +425,15 @@ async def _insert_nodes(
         if ref_controls and isinstance(ref_controls, str):
             ref_controls = None
 
+        # Ensure name is not empty — use ref_id or description as fallback
+        name = str(nd.get("name", "")) or str(nd.get("ref_id", "")) or str(nd.get("description", ""))[:200] or f"Node {idx + 1}"
+
         node = FrameworkNode(
             framework_id=fw.id,
             parent_id=parent_id,
             urn=nd.get("urn"),
             ref_id=str(nd["ref_id"]) if nd.get("ref_id") else None,
-            name=str(nd.get("name", "")),
+            name=name,
             name_pl=nd.get("name_pl"),
             description=nd.get("description"),
             description_pl=nd.get("description_pl"),
@@ -381,7 +449,12 @@ async def _insert_nodes(
         s.add(node)
         await s.flush()  # Get the ID
 
+        # Track for parent resolution
         parent_stack[depth] = node.id
+        node_urn = nd.get("urn")
+        if node_urn:
+            urn_to_id[node_urn] = node.id
+
         total += 1
         if is_assessable:
             assessable += 1

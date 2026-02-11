@@ -31,6 +31,8 @@ class PolicyExceptionOut(BaseModel):
     review_date: date | None = None
     closed_at: date | None = None
     risk_id: int | None = None
+    risk_score: float | None = None
+    risk_level: str | None = None
     vulnerability_id: int | None = None
     is_active: bool = True
     created_at: datetime
@@ -72,3 +74,35 @@ class PolicyExceptionUpdate(BaseModel):
 
 class PolicyExceptionStatusChange(BaseModel):
     status_id: int
+
+
+class ExceptionWithRiskCreate(BaseModel):
+    """Create exception + mandatory deviation risk in one request."""
+    # Exception fields
+    title: str = Field(..., min_length=1, max_length=255)
+    description: str = Field(..., min_length=1)
+    policy_id: int
+    category_id: int | None = None
+    org_unit_id: int
+    asset_id: int | None = None
+    requested_by: str = Field(..., min_length=1, max_length=100)
+    approved_by: str | None = Field(None, max_length=100)
+    compensating_controls: str | None = None
+    status_id: int | None = None
+    start_date: date
+    expiry_date: date
+    vulnerability_id: int | None = None
+
+    # Deviation risk assessment (mandatory)
+    risk_asset_name: str = Field(..., min_length=1, max_length=400)
+    risk_security_area_id: int | None = None
+    risk_threat_id: int | None = None
+    risk_vulnerability_id: int | None = None
+    risk_consequence: str | None = None
+    risk_existing_controls: str | None = None
+    risk_impact_level: int = Field(..., ge=1, le=3)
+    risk_probability_level: int = Field(..., ge=1, le=3)
+    risk_safeguard_rating: float = Field(..., description="0.10 / 0.25 / 0.70 / 0.95")
+    risk_owner: str | None = Field(None, max_length=200)
+    risk_strategy_id: int | None = None
+    risk_treatment_plan: str | None = None

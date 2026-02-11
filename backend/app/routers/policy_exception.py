@@ -13,7 +13,9 @@ from app.models.policy import Policy
 from app.models.asset import Asset
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
+from app.models.risk import Risk
 from app.schemas.policy_exception import (
+    ExceptionWithRiskCreate,
     PolicyExceptionCreate, PolicyExceptionOut,
     PolicyExceptionStatusChange, PolicyExceptionUpdate,
 )
@@ -32,6 +34,16 @@ async def _exc_out(s: AsyncSession, ex: PolicyException) -> PolicyExceptionOut:
     org = await s.get(OrgUnit, ex.org_unit_id) if ex.org_unit_id else None
     asset = await s.get(Asset, ex.asset_id) if ex.asset_id else None
     pol = await s.get(Policy, ex.policy_id) if ex.policy_id else None
+
+    # Load linked risk score/level
+    risk_score = None
+    risk_level = None
+    if ex.risk_id:
+        risk = await s.get(Risk, ex.risk_id)
+        if risk:
+            risk_score = float(risk.risk_score) if risk.risk_score is not None else None
+            risk_level = risk.risk_level
+
     return PolicyExceptionOut(
         id=ex.id, ref_id=ex.ref_id, title=ex.title, description=ex.description,
         policy_id=ex.policy_id, policy_title=pol.title if pol else None,
@@ -44,7 +56,8 @@ async def _exc_out(s: AsyncSession, ex: PolicyException) -> PolicyExceptionOut:
         status_id=ex.status_id, status_name=await _de_label(s, ex.status_id),
         start_date=ex.start_date, expiry_date=ex.expiry_date,
         review_date=ex.review_date, closed_at=ex.closed_at,
-        risk_id=ex.risk_id, vulnerability_id=ex.vulnerability_id,
+        risk_id=ex.risk_id, risk_score=risk_score, risk_level=risk_level,
+        vulnerability_id=ex.vulnerability_id,
         is_active=ex.is_active, created_at=ex.created_at, updated_at=ex.updated_at,
     )
 
@@ -86,6 +99,87 @@ async def create_exception(body: PolicyExceptionCreate, s: AsyncSession = Depend
     s.add(ex)
     await s.flush()
     ex.ref_id = f"EXC-{ex.id:04d}"
+    await s.commit()
+    await s.refresh(ex)
+    return await _exc_out(s, ex)
+
+
+# ═══════════════════ CREATE WITH RISK ═══════════════════
+
+@router.post(
+    "/with-risk",
+    response_model=PolicyExceptionOut,
+    status_code=201,
+    summary="Nowy wyjątek z obowiązkową oceną ryzyka odstępstwa",
+)
+async def create_exception_with_risk(
+    body: ExceptionWithRiskCreate, s: AsyncSession = Depends(get_session),
+):
+    """Create a policy exception and register the deviation risk in one transaction.
+    The risk is saved to the risk register and linked to the exception.
+    """
+    # 1. Create the deviation risk
+    risk = Risk(
+        org_unit_id=body.org_unit_id,
+        asset_name=body.risk_asset_name,
+        security_area_id=body.risk_security_area_id,
+        threat_id=body.risk_threat_id,
+        vulnerability_id=body.risk_vulnerability_id,
+        consequence_description=body.risk_consequence,
+        existing_controls=body.risk_existing_controls,
+        impact_level=body.risk_impact_level,
+        probability_level=body.risk_probability_level,
+        safeguard_rating=body.risk_safeguard_rating,
+        owner=body.risk_owner,
+        strategy_id=body.risk_strategy_id,
+        treatment_plan=body.risk_treatment_plan,
+        risk_source=f"Wyjątek od polityki: {body.title}",
+        source_type="policy_exception",
+    )
+    s.add(risk)
+    await s.flush()
+
+    # 2. Determine risk_level_id from dictionary based on computed risk_level
+    risk_level_id = None
+    if risk.risk_level:
+        from app.models.dictionary import DictionaryType
+        level_code = {"high": "high", "medium": "medium", "low": "low"}.get(risk.risk_level)
+        if level_code:
+            q = (
+                select(DictionaryEntry.id)
+                .join(DictionaryType, DictionaryEntry.dict_type_id == DictionaryType.id)
+                .where(DictionaryType.code == "risk_level")
+                .where(DictionaryEntry.code == level_code)
+                .limit(1)
+            )
+            risk_level_id = (await s.execute(q)).scalar()
+
+    # 3. Create the exception linked to the risk
+    ex = PolicyException(
+        title=body.title,
+        description=body.description,
+        policy_id=body.policy_id,
+        category_id=body.category_id,
+        org_unit_id=body.org_unit_id,
+        asset_id=body.asset_id,
+        requested_by=body.requested_by,
+        approved_by=body.approved_by,
+        risk_level_id=risk_level_id,
+        compensating_controls=body.compensating_controls,
+        status_id=body.status_id,
+        start_date=body.start_date,
+        expiry_date=body.expiry_date,
+        review_date=body.expiry_date - timedelta(days=30),
+        vulnerability_id=body.vulnerability_id,
+        risk_id=risk.id,
+    )
+    s.add(ex)
+    await s.flush()
+    ex.ref_id = f"EXC-{ex.id:04d}"
+
+    # Link the risk back to the exception
+    risk.source_id = ex.id
+
     await s.commit()
     await s.refresh(ex)
     return await _exc_out(s, ex)

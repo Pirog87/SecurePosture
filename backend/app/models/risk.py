@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from decimal import Decimal
 
@@ -5,6 +6,20 @@ from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, St
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+
+
+def compute_risk_score(impact_level: int, probability_level: int, safeguard_rating: float) -> float:
+    """R = EXP(W) * P / Z"""
+    z = float(safeguard_rating) if safeguard_rating else 0.25
+    return round(math.exp(impact_level) * probability_level / z, 2)
+
+
+def compute_risk_level(score: float) -> str:
+    if score >= 221:
+        return "high"
+    if score >= 31:
+        return "medium"
+    return "low"
 
 
 class Risk(Base):
@@ -35,9 +50,15 @@ class Risk(Base):
     probability_level: Mapped[int] = mapped_column(Integer, nullable=False)
     safeguard_rating: Mapped[Decimal] = mapped_column(Numeric(4, 2), nullable=False)
 
-    # GENERATED columns — read-only
-    risk_score: Mapped[Decimal] = mapped_column(Numeric(10, 2), server_default="0", insert_default=None)
-    risk_level: Mapped[str] = mapped_column(String(20), server_default="low", insert_default=None)
+    # Computed in application layer: R = EXP(W) * P / Z
+    risk_score: Mapped[Decimal] = mapped_column(Numeric(10, 2), server_default="0")
+    risk_level: Mapped[str] = mapped_column(String(20), server_default="low")
+
+    def recompute_score(self) -> None:
+        """Recalculate risk_score and risk_level from W, P, Z."""
+        score = compute_risk_score(self.impact_level, self.probability_level, self.safeguard_rating)
+        self.risk_score = Decimal(str(score))
+        self.risk_level = compute_risk_level(score)
 
     # ── ISO 27005 §8.5 Postepowanie z ryzykiem ──
     status_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))

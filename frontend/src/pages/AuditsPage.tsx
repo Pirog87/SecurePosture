@@ -35,7 +35,7 @@ export default function AuditsPage() {
   const [showForm, setShowForm] = useState(false);
   const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([]);
   const [auditTypes, setAuditTypes] = useState<DictionaryEntry[]>([]);
-  const [ratings, setRatings] = useState<DictionaryEntry[]>([]);
+  const [, setRatings] = useState<DictionaryEntry[]>([]);
 
   const [selectedAudit, setSelectedAudit] = useState<number | null>(null);
   const [findings, setFindings] = useState<FindingRecord[]>([]);

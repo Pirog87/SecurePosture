@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { DictionaryEntry, OrgUnit } from "../types";
+import type { DictionaryEntry } from "../types";
 
 interface VendorRecord {
   id: number;

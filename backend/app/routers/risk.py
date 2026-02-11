@@ -212,6 +212,7 @@ async def create_risk(body: RiskCreate, s: AsyncSession = Depends(get_session)):
     if calc is not None:
         data["residual_risk"] = round(calc, 2)
     risk = Risk(**data)
+    risk.recompute_score()
     s.add(risk)
     await s.flush()
 
@@ -234,6 +235,9 @@ async def update_risk(risk_id: int, body: RiskUpdate, s: AsyncSession = Depends(
     data = body.model_dump(exclude_unset=True, exclude={"safeguard_ids"})
     for k, v in data.items():
         setattr(risk, k, v)
+
+    # Recompute risk score after field changes
+    risk.recompute_score()
 
     # Recalculate residual risk if target components changed
     tw = risk.target_impact

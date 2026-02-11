@@ -140,6 +140,7 @@ async def create_exception_with_risk(
         risk_source=f"Wyjątek od polityki: {body.title}",
         source_type="policy_exception",
     )
+    risk.recompute_score()
     s.add(risk)
     await s.flush()
 

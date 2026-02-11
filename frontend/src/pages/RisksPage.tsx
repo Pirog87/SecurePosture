@@ -48,6 +48,7 @@ interface FormLookups {
   strategies: { id: number; label: string }[];
   risk_categories: { id: number; label: string }[];
   control_effectivenesses: { id: number; label: string }[];
+  identification_sources: { id: number; label: string }[];
 }
 
 /* ─── Sort types ─── */
@@ -114,7 +115,7 @@ export default function RisksPage() {
         return d.entries.filter(e => e.is_active).map(e => ({ id: e.id, label: e.label }));
       } catch { return []; }
     };
-    const [categories, sensitivities, criticalities, statuses, strategies, risk_categories, control_effectivenesses] = await Promise.all([
+    const [categories, sensitivities, criticalities, statuses, strategies, risk_categories, control_effectivenesses, identification_sources] = await Promise.all([
       dictEntries("asset_category"),
       dictEntries("sensitivity"),
       dictEntries("criticality"),
@@ -122,11 +123,12 @@ export default function RisksPage() {
       dictEntries("risk_strategy"),
       dictEntries("risk_category"),
       dictEntries("control_effectiveness"),
+      dictEntries("risk_identification_source"),
     ]);
     const result: FormLookups = {
       orgUnits, areas, threats, vulns, safeguards, assets,
       categories, sensitivities, criticalities, statuses, strategies,
-      risk_categories, control_effectivenesses,
+      risk_categories, control_effectivenesses, identification_sources,
     };
     setLookups(result);
     return result;
@@ -387,6 +389,7 @@ export default function RisksPage() {
               <DetailRow label="ID" value={<span style={{ fontFamily: "'JetBrains Mono',monospace" }}>R-{selected.id}</span>} />
               <DetailRow label="Pion" value={<span style={{ fontSize: 11 }}>{orgPathMap.get(selected.org_unit_id) ?? selected.org_unit_name}</span>} />
               <DetailRow label="Kategoria ryzyka" value={selected.risk_category_name} />
+              <DetailRow label="Zrodlo identyfikacji" value={selected.identification_source_name} />
               {selected.risk_source && (
                 <div style={{ marginTop: 4 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Zrodlo ryzyka</div>
@@ -755,6 +758,7 @@ function RiskFormTabs({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel
   const [orgUnitId, setOrgUnitId] = useState<number | null>(editRisk?.org_unit_id ?? null);
   const [riskCategoryId, setRiskCategoryId] = useState<number | null>(editRisk?.risk_category_id ?? null);
   const [riskSource, setRiskSource] = useState(editRisk?.risk_source ?? "");
+  const [identificationSourceId, setIdentificationSourceId] = useState<number | null>(editRisk?.identification_source_id ?? null);
 
   // Sekcja 2: Aktywo
   const [assetId, setAssetId] = useState<number | null>(editRisk?.asset_id ?? null);
@@ -814,6 +818,7 @@ function RiskFormTabs({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel
       org_unit_id: orgUnitId,
       risk_category_id: riskCategoryId,
       risk_source: riskSource || null,
+      identification_source_id: identificationSourceId,
       asset_id: assetId,
       asset_category_id: assetCategoryId,
       asset_name: assetName,
@@ -981,6 +986,13 @@ function RiskFormTabs({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel
               <select className="form-control" value={riskCategoryId ?? ""} onChange={e => setRiskCategoryId(e.target.value ? Number(e.target.value) : null)}>
                 <option value="">Wybierz...</option>
                 {lookups.risk_categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Zrodlo identyfikacji</label>
+              <select className="form-control" value={identificationSourceId ?? ""} onChange={e => setIdentificationSourceId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Wybierz...</option>
+                {lookups.identification_sources.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </div>
             <div className="form-group" style={{ gridColumn: "span 2" }}>

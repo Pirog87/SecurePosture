@@ -61,6 +61,8 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         risk_category_id=risk.risk_category_id,
         risk_category_name=await _de_label(risk.risk_category_id),
         risk_source=risk.risk_source,
+        identification_source_id=risk.identification_source_id,
+        identification_source_name=await _de_label(risk.identification_source_id),
         # Identyfikacja
         asset_id=risk.asset_id,
         asset_id_name=asset.name if asset else None,

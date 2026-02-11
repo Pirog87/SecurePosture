@@ -31,6 +31,7 @@ class Risk(Base):
     org_unit_id: Mapped[int] = mapped_column(ForeignKey("org_units.id"), nullable=False)
     risk_category_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     risk_source: Mapped[str | None] = mapped_column(Text)
+    identification_source_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
 
     # ── ISO 27005 §8.2 Identyfikacja ryzyka ──
     asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"))

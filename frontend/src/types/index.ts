@@ -187,6 +187,8 @@ export interface Risk {
   risk_category_id: number | null;
   risk_category_name: string | null;
   risk_source: string | null;
+  identification_source_id: number | null;
+  identification_source_name: string | null;
   // Identyfikacja aktywa
   asset_id: number | null;
   asset_id_name: string | null;

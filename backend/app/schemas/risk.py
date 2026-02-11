@@ -27,6 +27,8 @@ class RiskOut(BaseModel):
     risk_category_id: int | None = None
     risk_category_name: str | None = None
     risk_source: str | None = None
+    identification_source_id: int | None = None
+    identification_source_name: str | None = None
 
     # Identyfikacja (ISO 27005 §8.2)
     asset_id: int | None = None
@@ -95,6 +97,7 @@ class RiskCreate(BaseModel):
     org_unit_id: int
     risk_category_id: int | None = None
     risk_source: str | None = None
+    identification_source_id: int | None = None
 
     # Identyfikacja
     asset_id: int | None = None
@@ -142,6 +145,7 @@ class RiskUpdate(BaseModel):
     org_unit_id: int | None = None
     risk_category_id: int | None = None
     risk_source: str | None = None
+    identification_source_id: int | None = None
 
     # Identyfikacja
     asset_id: int | None = None

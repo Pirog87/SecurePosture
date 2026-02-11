@@ -24,31 +24,54 @@ branch_labels = None
 depends_on = None
 
 
+def _col_exists(conn, table, column):
+    return conn.execute(sa.text(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = :tbl AND column_name = :col"
+    ), {"tbl": table, "col": column}).scalar()
+
+
+def _tbl_exists(conn, table):
+    return conn.execute(sa.text(
+        "SELECT COUNT(*) FROM information_schema.tables "
+        "WHERE table_schema = DATABASE() AND table_name = :tbl"
+    ), {"tbl": table}).scalar()
+
+
+def _idx_exists(conn, index_name):
+    return conn.execute(sa.text(
+        "SELECT COUNT(*) FROM information_schema.statistics "
+        "WHERE table_schema = DATABASE() AND index_name = :idx"
+    ), {"idx": index_name}).scalar()
+
+
 def upgrade() -> None:
+    conn = op.get_bind()
+
     # ══════════════════════════════════════════════
     # 1. Extend assets table with CMDB fields
     # ══════════════════════════════════════════════
-    op.add_column("assets", sa.Column("ref_id", sa.String(20), nullable=True))
-    op.add_column("assets", sa.Column("asset_subtype", sa.String(100), nullable=True))
-    op.add_column("assets", sa.Column("technical_owner", sa.String(200), nullable=True))
-    op.add_column("assets", sa.Column(
-        "environment_id", sa.Integer,
-        sa.ForeignKey("dictionary_entries.id"), nullable=True,
-    ))
-    op.add_column("assets", sa.Column("ip_address", sa.String(45), nullable=True))
-    op.add_column("assets", sa.Column("hostname", sa.String(255), nullable=True))
-    op.add_column("assets", sa.Column("os_version", sa.String(100), nullable=True))
-    op.add_column("assets", sa.Column("vendor", sa.String(100), nullable=True))
-    op.add_column("assets", sa.Column("support_end_date", sa.Date, nullable=True))
-    op.add_column("assets", sa.Column(
-        "status_id", sa.Integer,
-        sa.ForeignKey("dictionary_entries.id"), nullable=True,
-    ))
-    op.add_column("assets", sa.Column("last_scan_date", sa.Date, nullable=True))
-    op.add_column("assets", sa.Column("notes", sa.Text, nullable=True))
+    asset_cols = [
+        ("ref_id", sa.Column("ref_id", sa.String(20), nullable=True)),
+        ("asset_subtype", sa.Column("asset_subtype", sa.String(100), nullable=True)),
+        ("technical_owner", sa.Column("technical_owner", sa.String(200), nullable=True)),
+        ("environment_id", sa.Column("environment_id", sa.Integer,
+                                     sa.ForeignKey("dictionary_entries.id"), nullable=True)),
+        ("ip_address", sa.Column("ip_address", sa.String(45), nullable=True)),
+        ("hostname", sa.Column("hostname", sa.String(255), nullable=True)),
+        ("os_version", sa.Column("os_version", sa.String(100), nullable=True)),
+        ("vendor", sa.Column("vendor", sa.String(100), nullable=True)),
+        ("support_end_date", sa.Column("support_end_date", sa.Date, nullable=True)),
+        ("status_id", sa.Column("status_id", sa.Integer,
+                                sa.ForeignKey("dictionary_entries.id"), nullable=True)),
+        ("last_scan_date", sa.Column("last_scan_date", sa.Date, nullable=True)),
+        ("notes", sa.Column("notes", sa.Text, nullable=True)),
+    ]
+    for col_name, col_def in asset_cols:
+        if not _col_exists(conn, "assets", col_name):
+            op.add_column("assets", col_def)
 
     # Auto-populate ref_id for existing assets
-    conn = op.get_bind()
     conn.execute(sa.text("""
         UPDATE assets SET ref_id = CONCAT('AST-', LPAD(id, 4, '0'))
         WHERE ref_id IS NULL
@@ -57,122 +80,131 @@ def upgrade() -> None:
     # ══════════════════════════════════════════════
     # 2. Extend risks table
     # ══════════════════════════════════════════════
-    op.add_column("risks", sa.Column("vendor_id", sa.Integer, nullable=True))
-    op.add_column("risks", sa.Column("source_type", sa.String(50), nullable=True))
-    op.add_column("risks", sa.Column("source_id", sa.Integer, nullable=True))
+    for col_name, col_def in [
+        ("vendor_id", sa.Column("vendor_id", sa.Integer, nullable=True)),
+        ("source_type", sa.Column("source_type", sa.String(50), nullable=True)),
+        ("source_id", sa.Column("source_id", sa.Integer, nullable=True)),
+    ]:
+        if not _col_exists(conn, "risks", col_name):
+            op.add_column("risks", col_def)
 
     # ══════════════════════════════════════════════
     # 3. Create vulnerabilities table
     # ══════════════════════════════════════════════
-    op.create_table(
-        "vulnerabilities_registry",
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("ref_id", sa.String(20), nullable=True),
-        sa.Column("title", sa.String(255), nullable=False),
-        sa.Column("description", sa.Text, nullable=True),
-        sa.Column("source_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("org_unit_id", sa.Integer,
-                  sa.ForeignKey("org_units.id"), nullable=False),
-        sa.Column("asset_id", sa.Integer,
-                  sa.ForeignKey("assets.id"), nullable=True),
-        sa.Column("category_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("severity_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("cvss_score", sa.Numeric(3, 1), nullable=True),
-        sa.Column("cvss_vector", sa.String(255), nullable=True),
-        sa.Column("cve_id", sa.String(20), nullable=True),
-        sa.Column("status_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("remediation_priority_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("owner", sa.String(100), nullable=False),
-        sa.Column("detected_at", sa.Date, nullable=False),
-        sa.Column("closed_at", sa.Date, nullable=True),
-        sa.Column("sla_deadline", sa.Date, nullable=True),
-        sa.Column("remediation_notes", sa.Text, nullable=True),
-        sa.Column("risk_id", sa.Integer,
-                  sa.ForeignKey("risks.id"), nullable=True),
-        sa.Column("created_by", sa.String(100), nullable=True),
-        sa.Column("is_active", sa.Boolean, server_default=sa.text("1"), nullable=False),
-        sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime, server_default=sa.func.now(),
-                  onupdate=sa.func.now(), nullable=False),
-    )
-    op.create_index("ix_vuln_status", "vulnerabilities_registry", ["status_id"])
-    op.create_index("ix_vuln_severity", "vulnerabilities_registry", ["severity_id"])
-    op.create_index("ix_vuln_org_unit", "vulnerabilities_registry", ["org_unit_id"])
-    op.create_index("ix_vuln_asset", "vulnerabilities_registry", ["asset_id"])
+    if not _tbl_exists(conn, "vulnerabilities_registry"):
+        op.create_table(
+            "vulnerabilities_registry",
+            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+            sa.Column("ref_id", sa.String(20), nullable=True),
+            sa.Column("title", sa.String(255), nullable=False),
+            sa.Column("description", sa.Text, nullable=True),
+            sa.Column("source_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("org_unit_id", sa.Integer,
+                      sa.ForeignKey("org_units.id"), nullable=False),
+            sa.Column("asset_id", sa.Integer,
+                      sa.ForeignKey("assets.id"), nullable=True),
+            sa.Column("category_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("severity_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("cvss_score", sa.Numeric(3, 1), nullable=True),
+            sa.Column("cvss_vector", sa.String(255), nullable=True),
+            sa.Column("cve_id", sa.String(20), nullable=True),
+            sa.Column("status_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("remediation_priority_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("owner", sa.String(100), nullable=False),
+            sa.Column("detected_at", sa.Date, nullable=False),
+            sa.Column("closed_at", sa.Date, nullable=True),
+            sa.Column("sla_deadline", sa.Date, nullable=True),
+            sa.Column("remediation_notes", sa.Text, nullable=True),
+            sa.Column("risk_id", sa.Integer,
+                      sa.ForeignKey("risks.id"), nullable=True),
+            sa.Column("created_by", sa.String(100), nullable=True),
+            sa.Column("is_active", sa.Boolean, server_default=sa.text("1"), nullable=False),
+            sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
+            sa.Column("updated_at", sa.DateTime, server_default=sa.func.now(),
+                      onupdate=sa.func.now(), nullable=False),
+        )
+    for idx in ["ix_vuln_status", "ix_vuln_severity", "ix_vuln_org_unit", "ix_vuln_asset"]:
+        if not _idx_exists(conn, idx):
+            col = {"ix_vuln_status": "status_id", "ix_vuln_severity": "severity_id",
+                   "ix_vuln_org_unit": "org_unit_id", "ix_vuln_asset": "asset_id"}[idx]
+            op.create_index(idx, "vulnerabilities_registry", [col])
 
     # ══════════════════════════════════════════════
     # 4. Create incidents table
     # ══════════════════════════════════════════════
-    op.create_table(
-        "incidents",
-        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-        sa.Column("ref_id", sa.String(20), nullable=True),
-        sa.Column("title", sa.String(255), nullable=False),
-        sa.Column("description", sa.Text, nullable=False),
-        sa.Column("category_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("severity_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("org_unit_id", sa.Integer,
-                  sa.ForeignKey("org_units.id"), nullable=False),
-        sa.Column("asset_id", sa.Integer,
-                  sa.ForeignKey("assets.id"), nullable=True),
-        sa.Column("reported_by", sa.String(100), nullable=False),
-        sa.Column("assigned_to", sa.String(100), nullable=False),
-        sa.Column("status_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("reported_at", sa.DateTime, nullable=False),
-        sa.Column("detected_at", sa.DateTime, nullable=True),
-        sa.Column("closed_at", sa.DateTime, nullable=True),
-        sa.Column("ttr_minutes", sa.Integer, nullable=True),
-        sa.Column("impact_id", sa.Integer,
-                  sa.ForeignKey("dictionary_entries.id"), nullable=True),
-        sa.Column("personal_data_breach", sa.Boolean, server_default=sa.text("0"), nullable=False),
-        sa.Column("authority_notification", sa.Boolean, server_default=sa.text("0"), nullable=False),
-        sa.Column("actions_taken", sa.Text, nullable=True),
-        sa.Column("root_cause", sa.Text, nullable=True),
-        sa.Column("lessons_learned", sa.Text, nullable=True),
-        sa.Column("is_active", sa.Boolean, server_default=sa.text("1"), nullable=False),
-        sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime, server_default=sa.func.now(),
-                  onupdate=sa.func.now(), nullable=False),
-    )
-    op.create_index("ix_inc_status", "incidents", ["status_id"])
-    op.create_index("ix_inc_severity", "incidents", ["severity_id"])
-    op.create_index("ix_inc_org_unit", "incidents", ["org_unit_id"])
+    if not _tbl_exists(conn, "incidents"):
+        op.create_table(
+            "incidents",
+            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+            sa.Column("ref_id", sa.String(20), nullable=True),
+            sa.Column("title", sa.String(255), nullable=False),
+            sa.Column("description", sa.Text, nullable=False),
+            sa.Column("category_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("severity_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("org_unit_id", sa.Integer,
+                      sa.ForeignKey("org_units.id"), nullable=False),
+            sa.Column("asset_id", sa.Integer,
+                      sa.ForeignKey("assets.id"), nullable=True),
+            sa.Column("reported_by", sa.String(100), nullable=False),
+            sa.Column("assigned_to", sa.String(100), nullable=False),
+            sa.Column("status_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("reported_at", sa.DateTime, nullable=False),
+            sa.Column("detected_at", sa.DateTime, nullable=True),
+            sa.Column("closed_at", sa.DateTime, nullable=True),
+            sa.Column("ttr_minutes", sa.Integer, nullable=True),
+            sa.Column("impact_id", sa.Integer,
+                      sa.ForeignKey("dictionary_entries.id"), nullable=True),
+            sa.Column("personal_data_breach", sa.Boolean, server_default=sa.text("0"), nullable=False),
+            sa.Column("authority_notification", sa.Boolean, server_default=sa.text("0"), nullable=False),
+            sa.Column("actions_taken", sa.Text, nullable=True),
+            sa.Column("root_cause", sa.Text, nullable=True),
+            sa.Column("lessons_learned", sa.Text, nullable=True),
+            sa.Column("is_active", sa.Boolean, server_default=sa.text("1"), nullable=False),
+            sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
+            sa.Column("updated_at", sa.DateTime, server_default=sa.func.now(),
+                      onupdate=sa.func.now(), nullable=False),
+        )
+    for idx in ["ix_inc_status", "ix_inc_severity", "ix_inc_org_unit"]:
+        if not _idx_exists(conn, idx):
+            col = {"ix_inc_status": "status_id", "ix_inc_severity": "severity_id",
+                   "ix_inc_org_unit": "org_unit_id"}[idx]
+            op.create_index(idx, "incidents", [col])
 
     # ══════════════════════════════════════════════
     # 5. Create M2M tables
     # ══════════════════════════════════════════════
-    op.create_table(
-        "incident_risks",
-        sa.Column("incident_id", sa.Integer,
-                  sa.ForeignKey("incidents.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("risk_id", sa.Integer,
-                  sa.ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
-    )
+    if not _tbl_exists(conn, "incident_risks"):
+        op.create_table(
+            "incident_risks",
+            sa.Column("incident_id", sa.Integer,
+                      sa.ForeignKey("incidents.id", ondelete="CASCADE"), primary_key=True),
+            sa.Column("risk_id", sa.Integer,
+                      sa.ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True),
+            sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
+        )
 
-    op.create_table(
-        "incident_vulnerabilities",
-        sa.Column("incident_id", sa.Integer,
-                  sa.ForeignKey("incidents.id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("vulnerability_id", sa.Integer,
-                  sa.ForeignKey("vulnerabilities_registry.id", ondelete="CASCADE"),
-                  primary_key=True),
-        sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
-    )
+    if not _tbl_exists(conn, "incident_vulnerabilities"):
+        op.create_table(
+            "incident_vulnerabilities",
+            sa.Column("incident_id", sa.Integer,
+                      sa.ForeignKey("incidents.id", ondelete="CASCADE"), primary_key=True),
+            sa.Column("vulnerability_id", sa.Integer,
+                      sa.ForeignKey("vulnerabilities_registry.id", ondelete="CASCADE"),
+                      primary_key=True),
+            sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
+        )
 
     # ══════════════════════════════════════════════
     # 6. Seed 25 new dictionary types + entries
     # ══════════════════════════════════════════════
-    conn = op.get_bind()
-
     _DICTS = {
         # ── Vulnerability dictionaries ──
         "vuln_source": {
@@ -452,29 +484,39 @@ def upgrade() -> None:
     }
 
     for type_code, type_data in _DICTS.items():
-        # Insert dictionary type
-        conn.execute(sa.text("""
-            INSERT INTO dictionary_types (code, name, is_system, created_at, updated_at)
-            VALUES (:code, :name, 1, NOW(), NOW())
-        """), {"code": type_code, "name": type_data["name"]})
+        # Insert dictionary type (skip if already exists)
+        exists = conn.execute(sa.text(
+            "SELECT id FROM dictionary_types WHERE code = :code"
+        ), {"code": type_code}).scalar()
+
+        if not exists:
+            conn.execute(sa.text("""
+                INSERT INTO dictionary_types (code, name, is_system, created_at, updated_at)
+                VALUES (:code, :name, 1, NOW(), NOW())
+            """), {"code": type_code, "name": type_data["name"]})
 
         # Get the type id
         type_id = conn.execute(sa.text(
             "SELECT id FROM dictionary_types WHERE code = :code"
         ), {"code": type_code}).scalar()
 
-        # Insert entries
+        # Insert entries (skip duplicates)
         for entry_code, entry_label, sort_order in type_data["entries"]:
-            conn.execute(sa.text("""
-                INSERT INTO dictionary_entries
-                    (dict_type_id, code, label, sort_order, is_active, created_at, updated_at)
-                VALUES (:type_id, :code, :label, :sort, 1, NOW(), NOW())
-            """), {
-                "type_id": type_id,
-                "code": entry_code,
-                "label": entry_label,
-                "sort": sort_order,
-            })
+            entry_exists = conn.execute(sa.text(
+                "SELECT COUNT(*) FROM dictionary_entries "
+                "WHERE dict_type_id = :type_id AND code = :code"
+            ), {"type_id": type_id, "code": entry_code}).scalar()
+            if not entry_exists:
+                conn.execute(sa.text("""
+                    INSERT INTO dictionary_entries
+                        (dict_type_id, code, label, sort_order, is_active, created_at, updated_at)
+                    VALUES (:type_id, :code, :label, :sort, 1, NOW(), NOW())
+                """), {
+                    "type_id": type_id,
+                    "code": entry_code,
+                    "label": entry_label,
+                    "sort": sort_order,
+                })
 
 
 def downgrade() -> None:

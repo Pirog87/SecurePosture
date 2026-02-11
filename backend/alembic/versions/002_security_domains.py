@@ -18,8 +18,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add owner column to security_domains
-    op.add_column("security_domains", sa.Column("owner", sa.String(200), nullable=True))
+    conn = op.get_bind()
+
+    # Add owner column to security_domains (skip if already exists)
+    col_exists = conn.execute(sa.text(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_schema = DATABASE() AND table_name = 'security_domains' AND column_name = 'owner'"
+    )).scalar()
+    if not col_exists:
+        op.add_column("security_domains", sa.Column("owner", sa.String(200), nullable=True))
 
     # Widen color column (model uses String(30), migration had String(7))
     op.alter_column("security_domains", "color",
@@ -27,17 +34,22 @@ def upgrade() -> None:
                     type_=sa.String(30),
                     existing_nullable=True)
 
-    # Create domain_cis_controls (M:N mapping)
-    op.create_table(
-        "domain_cis_controls",
-        sa.Column("domain_id", sa.Integer,
-                  sa.ForeignKey("security_domains.id", ondelete="CASCADE"),
-                  primary_key=True),
-        sa.Column("cis_control_id", sa.Integer,
-                  sa.ForeignKey("cis_controls.id", ondelete="CASCADE"),
-                  primary_key=True),
-        sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
-    )
+    # Create domain_cis_controls (M:N mapping) — skip if already exists
+    tbl_exists = conn.execute(sa.text(
+        "SELECT COUNT(*) FROM information_schema.tables "
+        "WHERE table_schema = DATABASE() AND table_name = 'domain_cis_controls'"
+    )).scalar()
+    if not tbl_exists:
+        op.create_table(
+            "domain_cis_controls",
+            sa.Column("domain_id", sa.Integer,
+                      sa.ForeignKey("security_domains.id", ondelete="CASCADE"),
+                      primary_key=True),
+            sa.Column("cis_control_id", sa.Integer,
+                      sa.ForeignKey("cis_controls.id", ondelete="CASCADE"),
+                      primary_key=True),
+            sa.Column("created_at", sa.DateTime, server_default=sa.func.now(), nullable=False),
+        )
 
 
 def downgrade() -> None:

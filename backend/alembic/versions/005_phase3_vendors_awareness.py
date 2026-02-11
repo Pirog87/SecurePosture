@@ -142,56 +142,11 @@ def upgrade() -> None:
     )
 
     # ══════════════════════════════════════════════
-    # 7. Seed dictionary types and entries
+    # 7. Dictionary seeding — skipped
+    # These 6 dictionary types (vendor_category, vendor_status,
+    # vendor_data_access, vendor_risk_rating, campaign_type,
+    # campaign_status) were already seeded in migration 003.
     # ══════════════════════════════════════════════
-    dict_types = sa.table(
-        "dictionary_types",
-        sa.Column("id", sa.Integer),
-        sa.Column("code", sa.String),
-        sa.Column("name", sa.String),
-        sa.Column("description", sa.String),
-    )
-    dict_entries = sa.table(
-        "dictionary_entries",
-        sa.Column("id", sa.Integer),
-        sa.Column("dictionary_type_id", sa.Integer),
-        sa.Column("code", sa.String),
-        sa.Column("label", sa.String),
-        sa.Column("sort_order", sa.Integer),
-        sa.Column("is_active", sa.Boolean),
-    )
-
-    dictionaries = {
-        "vendor_category": ("Kategoria dostawcy", [
-            "Cloud Provider", "SaaS", "Outsourcing IT", "Consulting", "Hardware", "Telco", "Inne",
-        ]),
-        "vendor_status": ("Status dostawcy", [
-            "Aktywny", "W ocenie", "Zawieszony", "Zakończony",
-        ]),
-        "vendor_data_access": ("Poziom dostępu do danych", [
-            "Brak dostępu", "Dane wewnętrzne", "Dane poufne", "Dane osobowe",
-        ]),
-        "vendor_risk_rating": ("Rating ryzyka dostawcy", [
-            "A (niskie ryzyko)", "B", "C", "D (wysokie ryzyko)",
-        ]),
-        "campaign_type": ("Typ kampanii awareness", [
-            "Szkolenie online", "Szkolenie stacjonarne", "Phishing simulation", "Test wiedzy",
-        ]),
-        "campaign_status": ("Status kampanii", [
-            "Planowana", "W trakcie", "Zakończona",
-        ]),
-    }
-
-    for code, (name, entries) in dictionaries.items():
-        op.execute(dict_types.insert().values(code=code, name=name, description=name))
-        tid = op.get_bind().execute(
-            sa.text("SELECT id FROM dictionary_types WHERE code = :c"), {"c": code}
-        ).scalar()
-        for i, label in enumerate(entries, 1):
-            entry_code = label.lower().replace(" ", "_").replace("(", "").replace(")", "")
-            op.execute(dict_entries.insert().values(
-                dictionary_type_id=tid, code=entry_code, label=label, sort_order=i, is_active=True,
-            ))
 
 
 def downgrade() -> None:
@@ -201,10 +156,4 @@ def downgrade() -> None:
     op.drop_table("vendor_assessment_answers")
     op.drop_table("vendor_assessments")
     op.drop_table("vendors")
-    for code in ["vendor_category", "vendor_status", "vendor_data_access",
-                 "vendor_risk_rating", "campaign_type", "campaign_status"]:
-        op.execute(sa.text(
-            "DELETE FROM dictionary_entries WHERE dictionary_type_id = "
-            "(SELECT id FROM dictionary_types WHERE code = :c)"
-        ).bindparams(c=code))
-        op.execute(sa.text("DELETE FROM dictionary_types WHERE code = :c").bindparams(c=code))
+    # Dictionary cleanup handled by migration 003 downgrade

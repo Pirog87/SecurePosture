@@ -12,6 +12,7 @@ const sections: { title: string; items: NavItem[] }[] = [
     title: "Dashboardy",
     items: [
       { to: "/", icon: "📊", label: "Executive Summary" },
+      { to: "/security-score", icon: "🎯", label: "Security Score" },
       { to: "/domains", icon: "🛡", label: "Domeny Bezpieczenstwa" },
     ],
   },
@@ -30,6 +31,21 @@ const sections: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/vulnerabilities", icon: "🔓", label: "Podatności" },
       { to: "/incidents", icon: "🚨", label: "Incydenty" },
+    ],
+  },
+  {
+    title: "Governance",
+    items: [
+      { to: "/policies", icon: "📜", label: "Polityki" },
+      { to: "/exceptions", icon: "⚡", label: "Wyjątki" },
+      { to: "/audits", icon: "🔍", label: "Audyty" },
+    ],
+  },
+  {
+    title: "Dostawcy & Awareness",
+    items: [
+      { to: "/vendors", icon: "🏭", label: "Dostawcy (TPRM)" },
+      { to: "/awareness", icon: "🎓", label: "Awareness" },
     ],
   },
   {

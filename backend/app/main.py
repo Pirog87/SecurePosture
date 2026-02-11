@@ -18,7 +18,13 @@ from app.routers.risk import router as risk_router
 from app.routers.risk_review import router as risk_review_router
 from app.routers.vulnerability import router as vulnerability_router
 from app.routers.incident import router as incident_router
+from app.routers.policy import router as policy_router
+from app.routers.policy_exception import router as exception_router
+from app.routers.audit_register import router as audit_register_router
 from app.routers.security_area import router as security_area_router
+from app.routers.vendor import router as vendor_router
+from app.routers.awareness import router as awareness_router
+from app.routers.security_score import router as score_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -49,6 +55,12 @@ app.include_router(framework_router)
 app.include_router(assessment_router)
 app.include_router(vulnerability_router)
 app.include_router(incident_router)
+app.include_router(policy_router)
+app.include_router(exception_router)
+app.include_router(audit_register_router)
+app.include_router(vendor_router)
+app.include_router(awareness_router)
+app.include_router(score_router)
 app.include_router(domain_router)
 app.include_router(audit_router)
 

@@ -23,7 +23,7 @@ class Vulnerability(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(400), nullable=False)
-    security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_areas.id"))
+    security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_domains.id"))
     description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

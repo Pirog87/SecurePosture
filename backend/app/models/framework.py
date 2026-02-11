@@ -137,7 +137,7 @@ class FrameworkNodeSecurityArea(Base):
         ForeignKey("framework_nodes.id", ondelete="CASCADE"), nullable=False,
     )
     security_area_id: Mapped[int] = mapped_column(
-        ForeignKey("security_areas.id", ondelete="CASCADE"), nullable=False,
+        ForeignKey("security_domains.id", ondelete="CASCADE"), nullable=False,
     )
     source: Mapped[str] = mapped_column(
         Enum("seed", "manual", "ai_suggested", name="mapping_source_enum"),
@@ -197,7 +197,7 @@ class Assessment(Base):
     ref_id: Mapped[str | None] = mapped_column(String(20))
     framework_id: Mapped[int] = mapped_column(ForeignKey("frameworks.id"), nullable=False)
     org_unit_id: Mapped[int | None] = mapped_column(ForeignKey("org_units.id"))
-    security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_areas.id"))
+    security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_domains.id"))
 
     title: Mapped[str | None] = mapped_column(String(500))
     assessor: Mapped[str | None] = mapped_column(String(200))

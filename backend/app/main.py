@@ -9,6 +9,7 @@ from app.routers.audit import router as audit_router
 from app.routers.catalog import router as catalog_router
 from app.routers.cis import router as cis_router
 from app.routers.dashboard import router as dashboard_router
+from app.routers.framework import router as framework_router
 from app.routers.dictionary import router as dictionary_router
 from app.routers.org_unit import router as org_unit_router
 from app.routers.risk import router as risk_router
@@ -40,6 +41,7 @@ app.include_router(risk_router)
 app.include_router(risk_review_router)
 app.include_router(action_router)
 app.include_router(cis_router)
+app.include_router(framework_router)
 app.include_router(audit_router)
 
 

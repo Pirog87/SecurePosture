@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "../services/api";
-import type { AssetGraph, AssetGraphNode, AssetGraphEdge, Asset, AssetRelationship } from "../types";
+import type { AssetGraph, AssetGraphNode, Asset, AssetRelationship } from "../types";
 import Modal from "../components/Modal";
 
 const REL_TYPES = [

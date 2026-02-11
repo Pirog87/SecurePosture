@@ -1,6 +1,6 @@
 """SQLAlchemy models for Security Score module."""
 from sqlalchemy import Boolean, Column, DateTime, Integer, Numeric, String, Text, func
-from app.database import Base
+from .base import Base
 
 
 class SecurityScoreConfig(Base):

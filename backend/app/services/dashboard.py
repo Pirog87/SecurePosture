@@ -135,6 +135,7 @@ async def get_risk_dashboard(s: AsyncSession, org_unit_id: int | None = None) ->
             status_alias.color,
             func.count().label("cnt"),
         )
+        .select_from(Risk)
         .join(status_alias, Risk.status_id == status_alias.id, isouter=True)
         .where(flt)
         .group_by(status_alias.label, status_alias.color)
@@ -654,6 +655,7 @@ async def get_executive_summary(
             SecurityArea.name.label("area"),
             DictionaryEntry.label.label("status"),
         )
+        .select_from(Risk)
         .join(OrgUnit, Risk.org_unit_id == OrgUnit.id)
         .join(SecurityArea, Risk.security_area_id == SecurityArea.id, isouter=True)
         .join(DictionaryEntry, Risk.status_id == DictionaryEntry.id, isouter=True)

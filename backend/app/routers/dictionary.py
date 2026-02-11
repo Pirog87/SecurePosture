@@ -75,6 +75,21 @@ async def list_dictionary_types(
     ]
 
 
+# ── GET entries by code (alias used by frontend) ──
+
+@router.get(
+    "/by-code/{code}",
+    response_model=DictionaryTypeWithEntries,
+    summary="Pozycje słownika (alias /by-code)",
+)
+async def get_entries_by_code(
+    code: str,
+    include_archived: bool = Query(False),
+    s: AsyncSession = Depends(get_session),
+):
+    return await get_entries(code, include_archived, s)
+
+
 # ── GET entries for a dictionary ──
 
 @router.get(

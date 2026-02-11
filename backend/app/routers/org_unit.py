@@ -79,6 +79,18 @@ async def list_units(
     ]
 
 
+@router.get("/api/v1/org-units/flat", summary="Plaska lista jednostek (id + name)")
+async def list_units_flat(
+    is_active: bool = Query(True),
+    s: AsyncSession = Depends(get_session),
+):
+    q = select(OrgUnit.id, OrgUnit.name).order_by(OrgUnit.name)
+    if is_active is not None:
+        q = q.where(OrgUnit.is_active == is_active)
+    rows = (await s.execute(q)).all()
+    return [{"id": r.id, "name": r.name} for r in rows]
+
+
 @router.get("/api/v1/org-units/tree", response_model=list[OrgUnitTreeNode], summary="Drzewo jednostek")
 async def get_tree(
     include_inactive: bool = Query(False),

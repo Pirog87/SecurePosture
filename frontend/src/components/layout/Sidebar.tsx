@@ -33,6 +33,14 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Governance",
+    items: [
+      { to: "/policies", icon: "📜", label: "Polityki" },
+      { to: "/exceptions", icon: "⚡", label: "Wyjątki" },
+      { to: "/audits", icon: "🔍", label: "Audyty" },
+    ],
+  },
+  {
     title: "Framework Engine",
     items: [
       { to: "/frameworks", icon: "📐", label: "Frameworki" },

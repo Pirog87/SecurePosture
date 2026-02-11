@@ -9,6 +9,9 @@ from .risk import Risk, RiskSafeguard, RiskReview, RiskReviewConfig
 from .cis import CisControl, CisSubControl, CisAttackMapping, CisAssessment, CisAssessmentAnswer
 from .vulnerability import VulnerabilityRecord
 from .incident import Incident, IncidentRisk, IncidentVulnerability
+from .policy import Policy, PolicyStandardMapping, PolicyAcknowledgment
+from .policy_exception import PolicyException
+from .audit_register import Audit, AuditFinding
 from .action import Action, ActionLink, ActionHistory
 from .audit import AuditLog
 from .framework import (
@@ -34,6 +37,9 @@ __all__ = [
     "CisControl", "CisSubControl", "CisAttackMapping", "CisAssessment", "CisAssessmentAnswer",
     "VulnerabilityRecord",
     "Incident", "IncidentRisk", "IncidentVulnerability",
+    "Policy", "PolicyStandardMapping", "PolicyAcknowledgment",
+    "PolicyException",
+    "Audit", "AuditFinding",
     "AuditLog",
     "Framework", "FrameworkNode", "FrameworkNodeSecurityArea",
     "AssessmentDimension", "DimensionLevel",

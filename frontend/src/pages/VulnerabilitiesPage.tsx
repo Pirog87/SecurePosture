@@ -102,14 +102,14 @@ export default function VulnerabilitiesPage() {
     return true;
   });
 
-  const severityColor = (name: string | null) => {
-    if (!name) return "";
+  const severityStyle = (name: string | null): React.CSSProperties => {
+    if (!name) return {};
     const n = name.toLowerCase();
-    if (n.includes("krytyczny") || n.includes("critical")) return "color: #dc2626; font-weight: bold";
-    if (n.includes("wysoki") || n.includes("high")) return "color: #ea580c; font-weight: bold";
-    if (n.includes("średni") || n.includes("medium")) return "color: #d97706";
-    if (n.includes("niski") || n.includes("low")) return "color: #65a30d";
-    return "color: #6b7280";
+    if (n.includes("krytyczny") || n.includes("critical")) return { color: "#dc2626", fontWeight: "bold" };
+    if (n.includes("wysoki") || n.includes("high")) return { color: "#ea580c", fontWeight: "bold" };
+    if (n.includes("średni") || n.includes("medium")) return { color: "#d97706" };
+    if (n.includes("niski") || n.includes("low")) return { color: "#65a30d" };
+    return { color: "#6b7280" };
   };
 
   if (loading) return <div className="page-container"><p>Ładowanie...</p></div>;
@@ -237,7 +237,7 @@ export default function VulnerabilitiesPage() {
             <tr key={v.id}>
               <td style={{ fontFamily: "monospace", fontSize: 12 }}>{v.ref_id}</td>
               <td>{v.title}</td>
-              <td><span style={{ cssText: severityColor(v.severity_name) }}>{v.severity_name ?? "—"}</span></td>
+              <td><span style={severityStyle(v.severity_name)}>{v.severity_name ?? "—"}</span></td>
               <td>{v.cvss_score != null ? v.cvss_score.toFixed(1) : "—"}</td>
               <td>{v.status_name ?? "—"}</td>
               <td style={{ fontFamily: "monospace", fontSize: 12 }}>{v.cve_id ?? "—"}</td>

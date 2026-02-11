@@ -115,7 +115,7 @@ export default function SecurityScorePage() {
           {/* Gauge */}
           <div className="card" style={{ padding: 24, textAlign: "center", marginBottom: 16 }}>
             <div style={{
-              display: "inline-block", width: 180, height: 180, borderRadius: "50%",
+              width: 180, height: 180, borderRadius: "50%",
               border: `8px solid ${score.color}`,
               backgroundColor: scoreBg(score.total_score),
               display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",

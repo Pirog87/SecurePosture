@@ -18,13 +18,87 @@ from app.models.framework import (
 )
 from app.models.security_area import SecurityDomain
 from app.schemas.framework import (
-    AreaMappingBulkCreate, AreaMappingOut, DimensionOut,
-    FrameworkBrief, FrameworkImportResult, FrameworkNodeBrief,
-    FrameworkNodeOut, FrameworkNodeTreeOut, FrameworkOut,
+    AreaMappingBulkCreate, AreaMappingOut, AutoMapResult,
+    DimensionOut, DimensionsUpdate,
+    FrameworkBrief, FrameworkImportResult, FrameworkMetrics, FrameworkMetricUnit,
+    FrameworkNodeBrief, FrameworkNodeOut, FrameworkNodeTreeOut, FrameworkOut,
 )
 from app.services.framework_import import import_from_excel, import_from_yaml
 
 router = APIRouter(prefix="/api/v1/frameworks", tags=["Frameworks"])
+
+
+# ═══════════════════════════════════════════════
+# METRICS — must be before /{fw_id} to avoid path collision
+# ═══════════════════════════════════════════════
+
+@router.get("/metrics", response_model=FrameworkMetrics, summary="Metryki Control Maturity")
+async def get_metrics(
+    framework_id: int | None = Query(None, description="ID frameworka (domyślnie: najnowszy aktywny)"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Latest approved assessment scores per org unit — for Security Score pillar."""
+    from app.models.framework import Assessment
+    from app.models.org_unit import OrgUnit
+    from sqlalchemy import and_
+
+    if framework_id:
+        fw = await s.get(Framework, framework_id)
+    else:
+        fw = (await s.execute(
+            select(Framework).where(Framework.is_active.is_(True))
+            .order_by(Framework.created_at.desc()).limit(1)
+        )).scalar_one_or_none()
+
+    if not fw:
+        raise HTTPException(404, "Brak aktywnych frameworków")
+
+    sub = (
+        select(
+            Assessment.org_unit_id,
+            func.max(Assessment.assessment_date).label("max_date"),
+        )
+        .where(
+            Assessment.framework_id == fw.id,
+            Assessment.is_active.is_(True),
+            Assessment.status == "approved",
+        )
+        .group_by(Assessment.org_unit_id)
+        .subquery()
+    )
+
+    rows = (await s.execute(
+        select(Assessment, OrgUnit.name.label("ou_name"))
+        .outerjoin(OrgUnit, Assessment.org_unit_id == OrgUnit.id)
+        .join(sub, and_(
+            Assessment.org_unit_id == sub.c.org_unit_id,
+            Assessment.assessment_date == sub.c.max_date,
+        ))
+        .where(
+            Assessment.framework_id == fw.id,
+            Assessment.is_active.is_(True),
+            Assessment.status == "approved",
+        )
+        .order_by(Assessment.org_unit_id)
+    )).all()
+
+    units = []
+    scores = []
+    for a, ou_name in rows:
+        units.append(FrameworkMetricUnit(
+            org_unit_id=a.org_unit_id, org_unit_name=ou_name,
+            assessment_id=a.id, assessment_date=a.assessment_date,
+            overall_score=float(a.overall_score) if a.overall_score else None,
+            completion_pct=float(a.completion_pct) if a.completion_pct else None,
+        ))
+        if a.overall_score is not None:
+            scores.append(float(a.overall_score))
+
+    return FrameworkMetrics(
+        framework_id=fw.id, framework_name=fw.name,
+        units=units,
+        organization_score=sum(scores) / len(scores) if scores else None,
+    )
 
 
 # ═══════════════════════════════════════════════
@@ -335,4 +409,157 @@ async def import_from_github(
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Błąd importu: {e}")
+        raise HTTPException(500, f"Błąd importu GitHub: {e}")
+
+
+# ═══════════════════════════════════════════════
+# AUTO-MAP AREAS (seed mapping CIS → security areas)
+# ═══════════════════════════════════════════════
+
+# Pre-built CIS v8 → security area mapping (control ref_id → area codes)
+_CIS_AREA_MAP: dict[str, list[str]] = {
+    "1":  ["WORKSTATIONS", "SERVER_INFRA", "MOBILE_DEVICES", "NETWORK_INFRA"],
+    "2":  ["WORKSTATIONS", "SERVER_INFRA"],
+    "3":  ["DATA_PROTECTION"],
+    "4":  ["WORKSTATIONS", "SERVER_INFRA", "NETWORK_INFRA", "PUBLIC_CLOUD"],
+    "5":  ["ACCESS_CONTROL"],
+    "6":  ["ACCESS_CONTROL"],
+    "7":  ["WORKSTATIONS", "SERVER_INFRA"],
+    "8":  ["SERVER_INFRA"],
+    "9":  ["WORKSTATIONS", "M365_CLOUD"],
+    "10": ["WORKSTATIONS", "SERVER_INFRA"],
+    "11": ["SERVER_INFRA"],
+    "12": ["NETWORK_INFRA"],
+    "13": ["NETWORK_INFRA"],
+    "14": [],
+    "15": ["PUBLIC_CLOUD", "M365_CLOUD"],
+    "16": ["WORKSTATIONS"],
+    "17": ["SERVER_INFRA"],
+    "18": ["WORKSTATIONS", "SERVER_INFRA"],
+}
+
+
+@router.post("/{fw_id}/auto-map-areas", response_model=AutoMapResult, summary="Auto-mapowanie nodes→areas (seed)")
+async def auto_map_areas(fw_id: int, s: AsyncSession = Depends(get_session)):
+    """Auto-map framework nodes to security areas using pre-built seed mappings."""
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Framework nie istnieje")
+
+    areas = (await s.execute(
+        select(SecurityDomain).where(SecurityDomain.is_active.is_(True))
+    )).scalars().all()
+    code_to_id = {a.code: a.id for a in areas if a.code}
+
+    top_nodes = (await s.execute(
+        select(FrameworkNode).where(
+            FrameworkNode.framework_id == fw_id,
+            FrameworkNode.depth == 1,
+            FrameworkNode.is_active.is_(True),
+        )
+    )).scalars().all()
+    ref_to_node_id = {n.ref_id: n.id for n in top_nodes if n.ref_id}
+
+    all_children = (await s.execute(
+        select(FrameworkNode).where(
+            FrameworkNode.framework_id == fw_id,
+            FrameworkNode.depth > 1,
+            FrameworkNode.is_active.is_(True),
+        )
+    )).scalars().all()
+    children_by_parent: dict[int, list[int]] = {}
+    for child in all_children:
+        if child.parent_id:
+            children_by_parent.setdefault(child.parent_id, []).append(child.id)
+
+    created = 0
+    for control_ref, area_codes in _CIS_AREA_MAP.items():
+        parent_id = ref_to_node_id.get(control_ref)
+        if not parent_id:
+            continue
+        node_ids = [parent_id] + children_by_parent.get(parent_id, [])
+        for area_code in area_codes:
+            area_id = code_to_id.get(area_code)
+            if not area_id:
+                continue
+            for node_id in node_ids:
+                existing = (await s.execute(
+                    select(FrameworkNodeSecurityArea).where(
+                        FrameworkNodeSecurityArea.framework_node_id == node_id,
+                        FrameworkNodeSecurityArea.security_area_id == area_id,
+                    )
+                )).scalar_one_or_none()
+                if existing:
+                    continue
+                s.add(FrameworkNodeSecurityArea(
+                    framework_node_id=node_id, security_area_id=area_id,
+                    source="seed", created_by="auto-map",
+                ))
+                created += 1
+
+    await s.commit()
+    return AutoMapResult(framework_id=fw_id, mappings_created=created)
+
+
+# ═══════════════════════════════════════════════
+# DIMENSIONS — edit scale
+# ═══════════════════════════════════════════════
+
+@router.put("/{fw_id}/dimensions", response_model=list[DimensionOut], summary="Edycja skali ocen")
+async def update_dimensions(
+    fw_id: int, body: DimensionsUpdate, s: AsyncSession = Depends(get_session),
+):
+    """Replace dimensions and levels. Only allowed when no active assessments exist."""
+    from sqlalchemy import delete as sa_delete
+    from app.models.framework import Assessment
+
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Framework nie istnieje")
+
+    existing_assessments = (await s.execute(
+        select(func.count(Assessment.id)).where(
+            Assessment.framework_id == fw_id, Assessment.is_active.is_(True),
+        )
+    )).scalar() or 0
+    if existing_assessments > 0:
+        raise HTTPException(
+            409,
+            f"Framework ma {existing_assessments} aktywnych ocen. "
+            "Zmiana skali wymaga archiwizacji istniejących ocen."
+        )
+
+    old_dims = (await s.execute(
+        select(AssessmentDimension).where(AssessmentDimension.framework_id == fw_id)
+    )).scalars().all()
+    for dim in old_dims:
+        await s.execute(sa_delete(DimensionLevel).where(DimensionLevel.dimension_id == dim.id))
+    await s.execute(sa_delete(AssessmentDimension).where(AssessmentDimension.framework_id == fw_id))
+    await s.flush()
+
+    for dim_data in body.dimensions:
+        dim = AssessmentDimension(
+            framework_id=fw_id, dimension_key=dim_data.dimension_key,
+            name=dim_data.name, name_pl=dim_data.name_pl,
+            description=dim_data.description, order_id=dim_data.order_id,
+            weight=dim_data.weight,
+        )
+        s.add(dim)
+        await s.flush()
+        for lv in dim_data.levels:
+            s.add(DimensionLevel(
+                dimension_id=dim.id, level_order=lv.level_order,
+                value=lv.value, label=lv.label, label_pl=lv.label_pl,
+                description=lv.description, color=lv.color,
+            ))
+
+    await s.commit()
+
+    q = (
+        select(AssessmentDimension)
+        .options(selectinload(AssessmentDimension.levels))
+        .where(AssessmentDimension.framework_id == fw_id)
+        .order_by(AssessmentDimension.order_id)
+    )
+    dims = (await s.execute(q)).scalars().unique().all()
+    return [DimensionOut.model_validate(d) for d in dims]

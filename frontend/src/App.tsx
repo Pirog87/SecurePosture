@@ -13,6 +13,10 @@ import AssetGraphPage from "./pages/AssetGraphPage";
 import ActionsPage from "./pages/ActionsPage";
 import AuditPage from "./pages/AuditPage";
 import DomainDashboardPage from "./pages/DomainDashboardPage";
+import FrameworksPage from "./pages/FrameworksPage";
+import FrameworkDetailPage from "./pages/FrameworkDetailPage";
+import AssessmentsPage from "./pages/AssessmentsPage";
+import AssessmentFormPage from "./pages/AssessmentFormPage";
 
 export default function App() {
   return (
@@ -25,6 +29,11 @@ export default function App() {
           <Route path="assets/graph" element={<AssetGraphPage />} />
           <Route path="risks" element={<RisksPage />} />
           <Route path="reviews" element={<ReviewsPage />} />
+          <Route path="frameworks" element={<FrameworksPage />} />
+          <Route path="frameworks/:fwId" element={<FrameworkDetailPage />} />
+          <Route path="assessments" element={<AssessmentsPage />} />
+          <Route path="assessments/new" element={<AssessmentsPage />} />
+          <Route path="assessments/:assessmentId" element={<AssessmentFormPage />} />
           <Route path="cis" element={<CisListPage />} />
           <Route path="cis/assess" element={<CisAssessPage />} />
           <Route path="org-structure" element={<OrgStructurePage />} />

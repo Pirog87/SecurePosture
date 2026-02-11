@@ -581,6 +581,163 @@ export interface CisTrend {
   points: CisTrendPoint[];
 }
 
+// ═══ Framework Engine ═══
+export interface FrameworkBrief {
+  id: number;
+  ref_id: string | null;
+  name: string;
+  version: string | null;
+  provider: string | null;
+  total_nodes: number;
+  total_assessable: number;
+  is_active: boolean;
+}
+
+export interface DimensionLevel {
+  id: number;
+  level_order: number;
+  value: number;
+  label: string;
+  label_pl: string | null;
+  description: string | null;
+  color: string | null;
+}
+
+export interface Dimension {
+  id: number;
+  dimension_key: string;
+  name: string;
+  name_pl: string | null;
+  description: string | null;
+  order_id: number;
+  weight: number;
+  levels: DimensionLevel[];
+}
+
+export interface FrameworkDetail {
+  id: number;
+  urn: string | null;
+  ref_id: string | null;
+  name: string;
+  description: string | null;
+  version: string | null;
+  provider: string | null;
+  packager: string | null;
+  source_format: string | null;
+  locale: string | null;
+  implementation_groups_definition: Record<string, unknown> | null;
+  total_nodes: number;
+  total_assessable: number;
+  imported_at: string | null;
+  imported_by: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  dimensions: Dimension[];
+}
+
+export interface FrameworkNodeTree {
+  id: number;
+  framework_id: number;
+  parent_id: number | null;
+  urn: string | null;
+  ref_id: string | null;
+  name: string;
+  name_pl: string | null;
+  description: string | null;
+  description_pl: string | null;
+  depth: number;
+  order_id: number;
+  assessable: boolean;
+  implementation_groups: string | null;
+  weight: number;
+  importance: string | null;
+  maturity_level: number | null;
+  annotation: string | null;
+  typical_evidence: string | null;
+  children: FrameworkNodeTree[];
+}
+
+export interface FrameworkImportResult {
+  framework_id: number;
+  name: string;
+  total_nodes: number;
+  total_assessable: number;
+  dimensions_created: number;
+}
+
+// ═══ Assessment Engine ═══
+export interface AssessmentBrief {
+  id: number;
+  framework_name: string | null;
+  org_unit_name: string | null;
+  assessment_date: string;
+  status: string;
+  overall_score: number | null;
+  completion_pct: number | null;
+}
+
+export interface AssessmentDetail {
+  id: number;
+  ref_id: string | null;
+  framework_id: number;
+  framework_name: string | null;
+  org_unit_id: number | null;
+  org_unit_name: string | null;
+  security_area_id: number | null;
+  security_area_name: string | null;
+  title: string | null;
+  assessor: string | null;
+  assessment_date: string;
+  status: string;
+  implementation_group_filter: string | null;
+  notes: string | null;
+  completion_pct: number | null;
+  overall_score: number | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssessmentAnswer {
+  id: number;
+  assessment_id: number;
+  framework_node_id: number;
+  node_ref_id: string | null;
+  node_name: string | null;
+  dimension_id: number;
+  dimension_key: string | null;
+  level_id: number | null;
+  level_value: number | null;
+  level_label: string | null;
+  not_applicable: boolean;
+  notes: string | null;
+  evidence: string | null;
+}
+
+export interface NodeScore {
+  framework_node_id: number;
+  ref_id: string | null;
+  name: string | null;
+  score: number | null;
+  dimension_scores: Record<string, number | null>;
+  not_applicable: boolean;
+}
+
+export interface AssessmentScore {
+  assessment_id: number;
+  overall_score: number | null;
+  completion_pct: number | null;
+  total_assessable: number;
+  answered_count: number;
+  na_count: number;
+  node_scores: NodeScore[];
+  dimension_averages: Record<string, number | null>;
+  ig_scores: Record<string, number | null>;
+}
+
 // ═══ Domain Dashboard ═══
 export interface DomainTopRisk {
   id: number;

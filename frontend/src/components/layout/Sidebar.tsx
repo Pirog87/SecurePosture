@@ -26,10 +26,17 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Framework Engine",
+    items: [
+      { to: "/frameworks", icon: "📐", label: "Frameworki" },
+      { to: "/assessments", icon: "📝", label: "Oceny" },
+    ],
+  },
+  {
     title: "CIS Benchmark",
     items: [
-      { to: "/cis", icon: "📋", label: "Lista Ocen" },
-      { to: "/cis/assess", icon: "✅", label: "Formularz Oceny" },
+      { to: "/cis", icon: "📋", label: "Lista Ocen CIS" },
+      { to: "/cis/assess", icon: "✅", label: "Formularz CIS" },
     ],
   },
   {

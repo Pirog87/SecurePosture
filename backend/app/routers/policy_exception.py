@@ -147,6 +147,7 @@ async def create_exception_with_risk(
         if level_code:
             q = (
                 select(DictionaryEntry.id)
+                .select_from(DictionaryEntry)
                 .join(DictionaryType, DictionaryEntry.dict_type_id == DictionaryType.id)
                 .where(DictionaryType.code == "risk_level")
                 .where(DictionaryEntry.code == level_code)

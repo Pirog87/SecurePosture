@@ -266,6 +266,7 @@ async def accept_risk(risk_id: int, body: RiskAcceptRequest, s: AsyncSession = D
     from app.models.dictionary import DictionaryType
     q = (
         select(DictionaryEntry.id)
+        .select_from(DictionaryEntry)
         .join(DictionaryType, DictionaryEntry.dict_type_id == DictionaryType.id)
         .where(DictionaryType.code == "risk_status")
         .where(DictionaryEntry.code == "accepted")
@@ -290,6 +291,7 @@ async def close_risk(risk_id: int, s: AsyncSession = Depends(get_session)):
     from app.models.dictionary import DictionaryType
     q = (
         select(DictionaryEntry.id)
+        .select_from(DictionaryEntry)
         .join(DictionaryType, DictionaryEntry.dict_type_id == DictionaryType.id)
         .where(DictionaryType.code == "risk_status")
         .where(DictionaryEntry.code == "closed")

@@ -222,6 +222,7 @@ async def close_action(action_id: int, body: ActionCloseRequest, s: AsyncSession
     from app.models.dictionary import DictionaryType
     q = (
         select(DictionaryEntry.id)
+        .select_from(DictionaryEntry)
         .join(DictionaryType, DictionaryEntry.dict_type_id == DictionaryType.id)
         .where(DictionaryType.code == "action_status")
         .where(DictionaryEntry.code == "completed")

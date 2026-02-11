@@ -227,7 +227,8 @@ async def create_assessment(vendor_id: int, body: VendorAssessmentCreate, s: Asy
         from sqlalchemy import and_
         from app.models.dictionary import DictionaryType
         rating_q = (select(DictionaryEntry)
-                    .join(DictionaryType, DictionaryEntry.dictionary_type_id == DictionaryType.id)
+                    .select_from(DictionaryEntry)
+                    .join(DictionaryType, DictionaryEntry.dict_type_id == DictionaryType.id)
                     .where(and_(DictionaryType.code == "vendor_risk_rating", DictionaryEntry.code == rating_code)))
         rating_entry = (await s.execute(rating_q)).scalars().first()
         if rating_entry:

@@ -129,7 +129,6 @@ export default function ExceptionsPage() {
 
   const openAddForm = async () => {
     await loadLookups();
-    setEditExc(null);
     setShowForm(true);
   };
 

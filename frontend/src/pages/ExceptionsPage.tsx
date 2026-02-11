@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "../services/api";
-import type { OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, DictionaryTypeWithEntries } from "../types";
+import type { OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, DictionaryTypeWithEntries, Asset, Risk } from "../types";
 import { flattenTree, buildPathMap } from "../utils/orgTree";
 import Modal from "../components/Modal";
 
@@ -38,6 +38,8 @@ interface ExceptionRecord {
   updated_at: string;
 }
 
+interface AssetOption { id: number; name: string; org_unit_id: number | null; org_unit_name: string | null }
+
 interface Lookups {
   orgUnits: OrgUnitTreeNode[];
   policies: { id: number; title: string }[];
@@ -48,6 +50,7 @@ interface Lookups {
   threats: Threat[];
   vulns: Vulnerability[];
   strategies: { id: number; label: string }[];
+  assets: AssetOption[];
 }
 
 /* ─── Risk helpers ─── */
@@ -121,12 +124,13 @@ export default function ExceptionsPage() {
 
   const loadLookups = async (): Promise<Lookups> => {
     if (lookups) return lookups;
-    const [orgUnits, policiesRaw, areasRaw, threatsRaw, vulnsRaw] = await Promise.all([
+    const [orgUnits, policiesRaw, areasRaw, threatsRaw, vulnsRaw, assetsRaw] = await Promise.all([
       api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").catch(() => [] as OrgUnitTreeNode[]),
       api.get<{ id: number; title: string }[]>("/api/v1/policies").catch(() => []),
       api.get<SecurityArea[]>("/api/v1/domains").catch(() => [] as SecurityArea[]),
       api.get<Threat[]>("/api/v1/threats").catch(() => [] as Threat[]),
       api.get<Vulnerability[]>("/api/v1/vulnerabilities").catch(() => [] as Vulnerability[]),
+      api.get<Asset[]>("/api/v1/assets").catch(() => [] as Asset[]),
     ]);
     const policies = policiesRaw.map((p: any) => ({ id: p.id, title: p.title }));
     const dictEntries = async (code: string) => {
@@ -141,7 +145,8 @@ export default function ExceptionsPage() {
       dictEntries("risk_level"),
       dictEntries("risk_strategy"),
     ]);
-    const result: Lookups = { orgUnits, policies, categories, statuses, riskLevels, areas: areasRaw, threats: threatsRaw, vulns: vulnsRaw, strategies };
+    const assets: AssetOption[] = assetsRaw.map(a => ({ id: a.id, name: a.name, org_unit_id: a.org_unit_id, org_unit_name: a.org_unit_name }));
+    const result: Lookups = { orgUnits, policies, categories, statuses, riskLevels, areas: areasRaw, threats: threatsRaw, vulns: vulnsRaw, strategies, assets };
     setLookups(result);
     return result;
   };
@@ -376,6 +381,11 @@ export default function ExceptionsPage() {
               <DetailRow label="Polityka" value={selected.policy_title} />
               <DetailRow label="Pion" value={orgPathMap.get(selected.org_unit_id) ?? selected.org_unit_name} />
               <DetailRow label="Kategoria" value={selected.category_name} />
+              {selected.asset_name && (
+                <DetailRow label="Powiazany aktyw" value={
+                  <span style={{ color: "var(--purple)", fontWeight: 500 }}>{selected.asset_name}</span>
+                } />
+              )}
               <DetailRow label="Wnioskujacy" value={selected.requested_by} />
               <DetailRow label="Zatwierdzajacy" value={selected.approved_by} />
 
@@ -490,6 +500,51 @@ export default function ExceptionsPage() {
 /* ═══════════════════════════════════════════════════════════════════
    ExceptionWizard — 2-step form with mandatory risk assessment
    ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Z-level visual helper ── */
+const Z_LEVELS = [
+  { value: 0.10, label: "Brak zabezpieczen", color: "var(--red)" },
+  { value: 0.25, label: "Czesciowe", color: "var(--orange)" },
+  { value: 0.70, label: "Dobra jakosc", color: "var(--blue)" },
+  { value: 0.95, label: "Skuteczne, testowane", color: "var(--green)" },
+] as const;
+
+function ZLevelPanel({ value, onChange, readonly }: { value: number; onChange?: (z: number) => void; readonly?: boolean }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "center", marginBottom: 2 }}>
+        Ocena zabezpieczen (Z)
+      </div>
+      {Z_LEVELS.map(z => {
+        const isActive = Math.abs(value - z.value) < 0.01;
+        return (
+          <div
+            key={z.value}
+            style={{
+              padding: "6px 10px", borderRadius: 6, fontSize: 11, cursor: readonly ? "default" : "pointer",
+              display: "flex", alignItems: "center", gap: 8,
+              background: isActive ? `${z.color}18` : "transparent",
+              border: isActive ? `2px solid ${z.color}` : "2px solid var(--border)",
+              color: isActive ? z.color : "var(--text-muted)",
+              fontWeight: isActive ? 600 : 400,
+              transition: "all 0.15s",
+            }}
+            onClick={() => !readonly && onChange?.(z.value)}
+          >
+            <span style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: isActive ? z.color : "var(--border)",
+              flexShrink: 0,
+            }} />
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", minWidth: 30 }}>{z.value.toFixed(2)}</span>
+            <span>{z.label}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmit, onCancel }: {
   lookups: Lookups;
   flatUnits: { id: number; name: string; depth: number }[];
@@ -502,12 +557,21 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
   const [step, setStep] = useState(1);
   const [triedNext, setTriedNext] = useState(false);
 
+  // Edit mode tab
+  const [editTab, setEditTab] = useState<"basic" | "risk">("basic");
+  const [editRisk, setEditRisk] = useState<Risk | null>(null);
+  const [editRiskLoading, setEditRiskLoading] = useState(false);
+  const [actionCreating, setActionCreating] = useState(false);
+  const [actionCreated, setActionCreated] = useState(false);
+  const [actionTitle, setActionTitle] = useState("");
+
   // Step 1: Exception fields
   const [title, setTitle] = useState(editingException?.title ?? "");
   const [description, setDescription] = useState(editingException?.description ?? "");
   const [policyId, setPolicyId] = useState<number | null>(editingException?.policy_id ?? null);
   const [categoryId, setCategoryId] = useState<number | null>(editingException?.category_id ?? null);
   const [orgUnitId, setOrgUnitId] = useState<number | null>(editingException?.org_unit_id ?? null);
+  const [assetId, setAssetId] = useState<number | null>(editingException?.asset_id ?? null);
   const [requestedBy, setRequestedBy] = useState(editingException?.requested_by ?? "");
   const [approvedBy, setApprovedBy] = useState(editingException?.approved_by ?? "");
   const [compensatingControls, setCompensatingControls] = useState(editingException?.compensating_controls ?? "");
@@ -534,6 +598,49 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
   const lvColor = liveScore >= 221 ? "var(--red)" : liveScore >= 31 ? "var(--orange)" : "var(--green)";
   const lvBg = liveScore >= 221 ? "var(--red-dim)" : liveScore >= 31 ? "var(--orange-dim)" : "var(--green-dim)";
   const liveLabel = riskLabel(liveScore);
+
+  // Org unit conflict detection
+  const selectedAsset = lookups.assets.find(a => a.id === assetId);
+  const orgConflict = selectedAsset && orgUnitId && selectedAsset.org_unit_id && selectedAsset.org_unit_id !== orgUnitId;
+
+  // Fetch risk data for edit mode
+  useEffect(() => {
+    if (isEdit && editingException?.risk_id) {
+      setEditRiskLoading(true);
+      api.get<Risk>(`/api/v1/risks/${editingException.risk_id}`)
+        .then(r => {
+          setEditRisk(r);
+          setActionTitle(`Plan postepowania: ${editingException.title}`);
+        })
+        .catch(() => {})
+        .finally(() => setEditRiskLoading(false));
+    }
+  }, []);
+
+  // Create action from treatment plan
+  const handleCreateAction = async () => {
+    if (!editingException || !editRisk) return;
+    setActionCreating(true);
+    try {
+      const links: { entity_type: string; entity_id: number }[] = [
+        { entity_type: "risk", entity_id: editRisk.id },
+        { entity_type: "policy_exception", entity_id: editingException.id },
+      ];
+      if (assetId) links.push({ entity_type: "asset", entity_id: assetId });
+      await api.post("/api/v1/actions", {
+        title: actionTitle || `Plan postepowania: ${editingException.title}`,
+        description: editRisk.treatment_plan || null,
+        org_unit_id: editingException.org_unit_id,
+        owner: editRisk.owner || null,
+        links,
+      });
+      setActionCreated(true);
+    } catch (err) {
+      alert("Blad tworzenia dzialania: " + err);
+    } finally {
+      setActionCreating(false);
+    }
+  };
 
   // Expiry date max = start_date + 6 months
   const maxExpiryDate = useMemo(() => {
@@ -571,13 +678,21 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
     }
   };
 
+  const handleAssetChange = (newAssetId: number | null) => {
+    setAssetId(newAssetId);
+    if (!isEdit && newAssetId) {
+      const asset = lookups.assets.find(a => a.id === newAssetId);
+      if (asset) setRiskAssetName(asset.name);
+    }
+  };
+
   const handleSubmit = () => {
     if (isEdit) {
-      // Edit mode — send only updatable fields
       onSubmit({
         title,
         description,
         category_id: categoryId,
+        asset_id: assetId,
         approved_by: approvedBy || null,
         compensating_controls: compensatingControls || null,
         status_id: statusId,
@@ -591,6 +706,7 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
         policy_id: policyId,
         category_id: categoryId,
         org_unit_id: orgUnitId,
+        asset_id: assetId,
         requested_by: requestedBy,
         approved_by: approvedBy || null,
         compensating_controls: compensatingControls || null,
@@ -614,100 +730,324 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
     }
   };
 
-  // Auto-fill risk asset name from exception title
+  // Auto-fill risk asset name from exception title or asset name
   useEffect(() => {
     if (!riskAssetName && title) {
-      setRiskAssetName(title);
+      setRiskAssetName(assetId ? (lookups.assets.find(a => a.id === assetId)?.name ?? title) : title);
     }
   }, [step]);
 
-  // Edit mode: single step
+  /* ── Asset select + org conflict helper (shared between create and edit) ── */
+  const AssetSelectBlock = ({ gridColumn }: { gridColumn?: string }) => (
+    <>
+      <div className="form-group" style={gridColumn ? { gridColumn } : undefined}>
+        <label>Powiazany aktyw</label>
+        <select className="form-control" value={assetId ?? ""}
+          onChange={e => handleAssetChange(e.target.value ? Number(e.target.value) : null)}>
+          <option value="">Brak powiazania</option>
+          {lookups.assets.map(a => <option key={a.id} value={a.id}>{a.name}{a.org_unit_name ? ` (${a.org_unit_name})` : ""}</option>)}
+        </select>
+      </div>
+      {orgConflict && (
+        <div style={{
+          gridColumn: gridColumn ?? "span 2", padding: "8px 12px", borderRadius: 6, fontSize: 11,
+          background: "var(--orange-dim)", border: "1px solid var(--orange)", color: "var(--orange)",
+        }}>
+          Uwaga: Jednostka org. aktywa ({selectedAsset?.org_unit_name}) rozni sie od jednostki wyjatku.
+          Nadrzedna jest jednostka z aktywa.
+        </div>
+      )}
+    </>
+  );
+
+  // ═══ Edit mode: tabbed interface ═══
   if (isEdit) {
     return (
       <div>
-        <SectionHeader number={"\u2460"} label="Dane podstawowe wyjatku" />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-          <div className="form-group" style={{ gridColumn: "span 2" }}>
-            <label>Tytul wyjatku *</label>
-            <input className="form-control" value={title} onChange={e => setTitle(e.target.value)}
-              placeholder="np. Brak szyfrowania dyskow na stacjach roboczych w oddziale X" />
-          </div>
-          <div className="form-group">
-            <label>Polityka</label>
-            <input className="form-control" disabled value={lookups.policies.find(p => p.id === policyId)?.title ?? ""} />
-          </div>
-          <div className="form-group">
-            <label>Jednostka organizacyjna</label>
-            <input className="form-control" disabled value={flatUnits.find(u => u.id === orgUnitId)?.name ?? ""} />
-          </div>
-          <div className="form-group">
-            <label>Wnioskujacy</label>
-            <input className="form-control" disabled value={requestedBy} />
-          </div>
-          <div className="form-group">
-            <label>Zatwierdzajacy</label>
-            <input className="form-control" value={approvedBy} onChange={e => setApprovedBy(e.target.value)}
-              placeholder="Imie i nazwisko" />
-          </div>
-          <div className="form-group">
-            <label>Kategoria</label>
-            <select className="form-control" value={categoryId ?? ""} onChange={e => setCategoryId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">Brak</option>
-              {lookups.categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>Status</label>
-            <select className="form-control" value={statusId ?? ""} onChange={e => setStatusId(e.target.value ? Number(e.target.value) : null)}>
-              <option value="">Brak</option>
-              {lookups.statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>Data rozpoczecia</label>
-            <input className="form-control" type="date" disabled value={startDate} />
-          </div>
-          <div className="form-group">
-            <label>Data wygasniecia *{maxExpiryDate && <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 400 }}> (max {maxExpiryDate})</span>}</label>
-            <input className="form-control" type="date" value={expiryDate}
-              max={maxExpiryDate}
-              style={expiryTooFar ? { border: errorBorder, boxShadow: errorShadow } : undefined}
-              onChange={e => setExpiryDate(e.target.value)} />
-            {expiryTooFar && (
-              <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>
-                Data wygasniecia nie moze byc wieksza niz 6 miesiecy od daty rozpoczecia ({maxExpiryDate}).
+        {/* Tab bar */}
+        <div style={{ display: "flex", gap: 0, marginBottom: 20 }}>
+          {[
+            { key: "basic" as const, label: "Dane podstawowe" },
+            { key: "risk" as const, label: "Ryzyko odstepstwa" },
+          ].map(t => (
+            <div
+              key={t.key}
+              style={{
+                flex: 1, textAlign: "center", padding: "10px 16px",
+                background: editTab === t.key ? "var(--blue-dim)" : "transparent",
+                borderBottom: editTab === t.key ? "2px solid var(--blue)" : "2px solid var(--border)",
+                color: editTab === t.key ? "var(--blue)" : "var(--text-muted)",
+                fontWeight: editTab === t.key ? 600 : 400,
+                fontSize: 13, cursor: "pointer", transition: "all 0.2s",
+              }}
+              onClick={() => setEditTab(t.key)}
+            >
+              {t.label}
+            </div>
+          ))}
+        </div>
+
+        {/* Tab: Basic Data */}
+        {editTab === "basic" && (
+          <div>
+            <SectionHeader number={"\u2460"} label="Dane podstawowe wyjatku" />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div className="form-group" style={{ gridColumn: "span 2" }}>
+                <label>Tytul wyjatku *</label>
+                <input className="form-control" value={title} onChange={e => setTitle(e.target.value)}
+                  placeholder="np. Brak szyfrowania dyskow na stacjach roboczych w oddziale X" />
               </div>
+              <div className="form-group">
+                <label>Polityka</label>
+                <input className="form-control" disabled value={lookups.policies.find(p => p.id === policyId)?.title ?? ""} />
+              </div>
+              <div className="form-group">
+                <label>Jednostka organizacyjna</label>
+                <input className="form-control" disabled value={flatUnits.find(u => u.id === orgUnitId)?.name ?? ""} />
+              </div>
+              <AssetSelectBlock />
+              <div className="form-group">
+                <label>Wnioskujacy</label>
+                <input className="form-control" disabled value={requestedBy} />
+              </div>
+              <div className="form-group">
+                <label>Zatwierdzajacy</label>
+                <input className="form-control" value={approvedBy} onChange={e => setApprovedBy(e.target.value)}
+                  placeholder="Imie i nazwisko" />
+              </div>
+              <div className="form-group">
+                <label>Kategoria</label>
+                <select className="form-control" value={categoryId ?? ""} onChange={e => setCategoryId(e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">Brak</option>
+                  {lookups.categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Status</label>
+                <select className="form-control" value={statusId ?? ""} onChange={e => setStatusId(e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">Brak</option>
+                  {lookups.statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Data rozpoczecia</label>
+                <input className="form-control" type="date" disabled value={startDate} />
+              </div>
+              <div className="form-group">
+                <label>Data wygasniecia *{maxExpiryDate && <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 400 }}> (max {maxExpiryDate})</span>}</label>
+                <input className="form-control" type="date" value={expiryDate}
+                  max={maxExpiryDate}
+                  style={expiryTooFar ? { border: errorBorder, boxShadow: errorShadow } : undefined}
+                  onChange={e => setExpiryDate(e.target.value)} />
+                {expiryTooFar && (
+                  <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>
+                    Data wygasniecia nie moze byc wieksza niz 6 miesiecy od daty rozpoczecia ({maxExpiryDate}).
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <SectionHeader number={"\u2461"} label="Uzasadnienie i kompensacja" />
+            <div className="form-group">
+              <label>Uzasadnienie biznesowe *</label>
+              <textarea className="form-control" rows={3} value={description} onChange={e => setDescription(e.target.value)}
+                placeholder="Opisz powod wyjatku, wplyw na biznes, uzasadnienie..." />
+            </div>
+            <div className="form-group">
+              <label>Srodki kompensacyjne</label>
+              <textarea className="form-control" rows={3} value={compensatingControls} onChange={e => setCompensatingControls(e.target.value)}
+                placeholder="Opisz jakie dodatkowe srodki bezpieczenstwa zostana wdrozone..." />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button type="button" className="btn" onClick={onCancel}>Anuluj</button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={saving || !title || !description || !!expiryTooFar}
+                onClick={handleSubmit}
+              >
+                {saving ? "Zapisywanie..." : "Zapisz zmiany"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Risk Assessment (read-only view + action creation) */}
+        {editTab === "risk" && (
+          <div>
+            {editRiskLoading ? (
+              <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Ladowanie danych ryzyka...</div>
+            ) : !editRisk ? (
+              <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
+                Brak powiazanego ryzyka odstepstwa.
+              </div>
+            ) : (
+              <>
+                {/* Risk score banner */}
+                {(() => {
+                  const rs = editRisk.risk_score;
+                  const rc = riskColor(rs);
+                  const rb = riskBg(rs);
+                  return (
+                    <div style={{
+                      background: rb, border: `1px solid ${rc}`, borderRadius: 10,
+                      padding: "12px 20px", marginBottom: 16,
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: rc, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>
+                          Ryzyko odstepstwa
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                          R = EXP({editRisk.impact_level}) &times; {editRisk.probability_level} / {editRisk.safeguard_rating} = <strong style={{ color: rc }}>{rs.toFixed(1)}</strong>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: rc }}>{rs.toFixed(1)}</div>
+                        <span className="score-badge" style={{ background: `${rc}30`, color: rc, fontSize: 12 }}>{riskLabel(rs)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Matrix + Z panel side by side */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, marginBottom: 16 }}>
+                  {/* Risk matrix 3x3 (read-only) */}
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Macierz ryzyka
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "auto repeat(3, 1fr)", gap: 2, maxWidth: 280 }}>
+                      <div />
+                      {["P=1", "P=2", "P=3"].map(h => (
+                        <div key={h} style={{ textAlign: "center", fontSize: 10, color: "var(--text-muted)", padding: 4 }}>{h}</div>
+                      ))}
+                      {[3, 2, 1].map(w => (
+                        <>
+                          <div key={`w${w}`} style={{ fontSize: 10, color: "var(--text-muted)", padding: 4, display: "flex", alignItems: "center" }}>W={w}</div>
+                          {[1, 2, 3].map(p => {
+                            const score = Math.exp(w) * p / editRisk.safeguard_rating;
+                            const isActive = w === editRisk.impact_level && p === editRisk.probability_level;
+                            return (
+                              <div
+                                key={`${w}-${p}`}
+                                style={{
+                                  textAlign: "center", padding: 6, borderRadius: 4, fontSize: 10,
+                                  fontFamily: "'JetBrains Mono',monospace", fontWeight: isActive ? 700 : 400,
+                                  background: riskBg(score), color: riskColor(score),
+                                  border: isActive ? `2px solid ${riskColor(score)}` : "2px solid transparent",
+                                }}
+                              >
+                                {score.toFixed(0)}
+                              </div>
+                            );
+                          })}
+                        </>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Z Level Panel */}
+                  <ZLevelPanel value={editRisk.safeguard_rating} readonly />
+                </div>
+
+                {/* Risk details */}
+                <div style={{ fontSize: 12, lineHeight: 2 }}>
+                  <SectionHeader number={"\u2460"} label="Identyfikacja ryzyka" />
+                  <DetailRow label="Aktywo" value={editRisk.asset_name} />
+                  <DetailRow label="Domena" value={editRisk.security_area_name} />
+                  <DetailRow label="Zagrozenie" value={editRisk.threat_name} />
+                  <DetailRow label="Podatnosc" value={editRisk.vulnerability_name} />
+                  {editRisk.consequence_description && (
+                    <div style={{ marginTop: 4, marginBottom: 8 }}>
+                      <span style={{ color: "var(--text-muted)" }}>Konsekwencje:</span>
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, marginTop: 2 }}>
+                        {editRisk.consequence_description}
+                      </div>
+                    </div>
+                  )}
+
+                  <SectionHeader number={"\u2461"} label="Analiza ryzyka" />
+                  <DetailRow label="Wplyw (W)" value={`${editRisk.impact_level} — ${["", "Niski", "Sredni", "Wysoki"][editRisk.impact_level]}`} />
+                  <DetailRow label="Prawdopodobienstwo (P)" value={`${editRisk.probability_level} — ${["", "Niskie", "Srednie", "Wysokie"][editRisk.probability_level]}`} />
+                  <DetailRow label="Ocena zabezpieczen (Z)" value={
+                    <span style={{ color: Z_LEVELS.find(z => Math.abs(z.value - editRisk.safeguard_rating) < 0.01)?.color }}>
+                      {editRisk.safeguard_rating.toFixed(2)} — {Z_LEVELS.find(z => Math.abs(z.value - editRisk.safeguard_rating) < 0.01)?.label ?? ""}
+                    </span>
+                  } />
+
+                  <SectionHeader number={"\u2462"} label="Postepowanie z ryzykiem" />
+                  <DetailRow label="Wlasciciel" value={editRisk.owner} />
+                  <DetailRow label="Strategia" value={editRisk.strategy_name} />
+                  {editRisk.treatment_plan && (
+                    <div style={{ marginTop: 4, marginBottom: 8 }}>
+                      <span style={{ color: "var(--text-muted)" }}>Plan postepowania:</span>
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, marginTop: 2 }}>
+                        {editRisk.treatment_plan}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Linked actions from risk */}
+                  {editRisk.linked_actions.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Powiazane dzialania</div>
+                      <div className="tag-list">
+                        {editRisk.linked_actions.map(a => (
+                          <span key={a.action_id} className="tag" style={{
+                            cursor: "default",
+                            borderLeft: `3px solid ${a.is_overdue ? "var(--red)" : a.status_name?.toLowerCase().includes("zamkn") ? "var(--green)" : "var(--blue)"}`,
+                          }}>
+                            <span style={{ fontSize: 10, color: "var(--text-muted)", marginRight: 4 }}>D-{a.action_id}</span>
+                            {a.title}
+                            {a.is_overdue && <span style={{ color: "var(--red)", marginLeft: 4, fontSize: 10 }}>!</span>}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Create action from treatment plan */}
+                <div style={{
+                  marginTop: 16, padding: 14, borderRadius: 8,
+                  background: "rgba(59,130,246,0.05)", border: "1px solid rgba(59,130,246,0.15)",
+                }}>
+                  <div style={{ fontSize: 12, color: "var(--blue)", fontWeight: 600, marginBottom: 8 }}>
+                    Zarejestruj dzialanie z planu postepowania
+                  </div>
+                  {actionCreated ? (
+                    <div style={{ fontSize: 12, color: "var(--green)", padding: "8px 0" }}>
+                      Dzialanie zostalo utworzone i powiazane z ryzykiem oraz wyjatkiem.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="form-group" style={{ marginBottom: 8 }}>
+                        <input className="form-control" value={actionTitle}
+                          onChange={e => setActionTitle(e.target.value)}
+                          placeholder="Tytul dzialania..."
+                          style={{ fontSize: 12 }} />
+                      </div>
+                      <button
+                        className="btn btn-sm btn-primary"
+                        disabled={actionCreating || !actionTitle}
+                        onClick={handleCreateAction}
+                      >
+                        {actionCreating ? "Tworzenie..." : "Utworz dzialanie"}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </>
             )}
           </div>
-        </div>
-
-        <SectionHeader number={"\u2461"} label="Uzasadnienie i kompensacja" />
-        <div className="form-group">
-          <label>Uzasadnienie biznesowe *</label>
-          <textarea className="form-control" rows={3} value={description} onChange={e => setDescription(e.target.value)}
-            placeholder="Opisz powod wyjatku, wplyw na biznes, uzasadnienie..." />
-        </div>
-        <div className="form-group">
-          <label>Srodki kompensacyjne</label>
-          <textarea className="form-control" rows={3} value={compensatingControls} onChange={e => setCompensatingControls(e.target.value)}
-            placeholder="Opisz jakie dodatkowe srodki bezpieczenstwa zostana wdrozone..." />
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-          <button type="button" className="btn" onClick={onCancel}>Anuluj</button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={saving || !title || !description || !!expiryTooFar}
-            onClick={handleSubmit}
-          >
-            {saving ? "Zapisywanie..." : "Zapisz zmiany"}
-          </button>
-        </div>
+        )}
       </div>
     );
   }
 
+  // ═══ Create mode: 2-step wizard ═══
   return (
     <div>
       {/* Step indicator */}
@@ -775,6 +1115,7 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
               </select>
               {triedNext && step1Errors.orgUnitId && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
             </div>
+            <AssetSelectBlock gridColumn="span 2" />
             <div className="form-group">
               <label>Wnioskujacy *</label>
               <input className="form-control" value={requestedBy} onChange={e => setRequestedBy(e.target.value)}
@@ -882,46 +1223,51 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
             </div>
           </div>
 
-          {/* Risk matrix 3x3 */}
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Macierz ryzyka
+          {/* Risk matrix 3x3 + Z panel side by side */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                Macierz ryzyka (W &times; P)
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "auto repeat(3, 1fr)", gap: 2, maxWidth: 280 }}>
+                <div />
+                {["P=1", "P=2", "P=3"].map(h => (
+                  <div key={h} style={{ textAlign: "center", fontSize: 10, color: "var(--text-muted)", padding: 4 }}>{h}</div>
+                ))}
+                {[3, 2, 1].map(w => (
+                  <>
+                    <div key={`w${w}`} style={{ fontSize: 10, color: "var(--text-muted)", padding: 4, display: "flex", alignItems: "center" }}>W={w}</div>
+                    {[1, 2, 3].map(p => {
+                      const score = Math.exp(w) * p / Z;
+                      const isActive = w === W && p === P;
+                      return (
+                        <div
+                          key={`${w}-${p}`}
+                          style={{
+                            textAlign: "center", padding: 6, borderRadius: 4, fontSize: 10,
+                            fontFamily: "'JetBrains Mono',monospace", fontWeight: isActive ? 700 : 400,
+                            background: riskBg(score),
+                            color: riskColor(score),
+                            border: isActive ? `2px solid ${riskColor(score)}` : "2px solid transparent",
+                            cursor: "pointer",
+                            transition: "all 0.15s",
+                          }}
+                          onClick={() => { setW(w); setP(p); }}
+                        >
+                          {score.toFixed(0)}
+                        </div>
+                      );
+                    })}
+                  </>
+                ))}
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "center", marginTop: 4 }}>
+                Kliknij komorke aby wybrac W i P
+              </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "auto repeat(3, 1fr)", gap: 2, maxWidth: 340, margin: "0 auto" }}>
-              <div />
-              {["P=1", "P=2", "P=3"].map(h => (
-                <div key={h} style={{ textAlign: "center", fontSize: 10, color: "var(--text-muted)", padding: 4 }}>{h}</div>
-              ))}
-              {[3, 2, 1].map(w => (
-                <>
-                  <div key={`w${w}`} style={{ fontSize: 10, color: "var(--text-muted)", padding: 4, display: "flex", alignItems: "center" }}>W={w}</div>
-                  {[1, 2, 3].map(p => {
-                    const score = Math.exp(w) * p / Z;
-                    const isActive = w === W && p === P;
-                    return (
-                      <div
-                        key={`${w}-${p}`}
-                        style={{
-                          textAlign: "center", padding: 6, borderRadius: 4, fontSize: 10,
-                          fontFamily: "'JetBrains Mono',monospace", fontWeight: isActive ? 700 : 400,
-                          background: riskBg(score),
-                          color: riskColor(score),
-                          border: isActive ? `2px solid ${riskColor(score)}` : "2px solid transparent",
-                          cursor: "pointer",
-                          transition: "all 0.15s",
-                        }}
-                        onClick={() => { setW(w); setP(p); }}
-                      >
-                        {score.toFixed(0)}
-                      </div>
-                    );
-                  })}
-                </>
-              ))}
-            </div>
-            <div style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "center", marginTop: 4 }}>
-              Kliknij komorke aby wybrac W i P (Z={Z})
-            </div>
+
+            {/* Z Level Panel (interactive) */}
+            <ZLevelPanel value={Z} onChange={setZ} />
           </div>
 
           <SectionHeader number={"\u2460"} label="Identyfikacja ryzyka" />

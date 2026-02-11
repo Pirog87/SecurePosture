@@ -21,5 +21,8 @@ venv/
 .DS_Store
 Thumbs.db
 
+# SQLite
+*.db
+
 # Node (frontend)
 node_modules/

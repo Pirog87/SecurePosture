@@ -63,29 +63,29 @@ body {
   height:100vh; overflow-y:auto;
 }
 .sidebar-brand {
-  padding:20px; border-bottom:1px solid var(--border);
-  display:flex; align-items:center; gap:12px;
+  padding:14px 16px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:10px;
 }
 .sidebar-brand .shield {
-  width:36px; height:36px;
+  width:30px; height:30px;
   background:linear-gradient(135deg,var(--blue),var(--purple));
-  border-radius:8px; display:flex; align-items:center; justify-content:center;
-  font-size:18px;
+  border-radius:7px; display:flex; align-items:center; justify-content:center;
+  font-size:15px;
 }
-.sidebar-brand .brand-text h1 { font-size:15px; font-weight:700; letter-spacing:-0.02em; }
-.sidebar-brand .brand-text span { font-size:11px; color:var(--text-muted); }
+.sidebar-brand .brand-text h1 { font-size:14px; font-weight:700; letter-spacing:-0.02em; }
+.sidebar-brand .brand-text span { font-size:10px; color:var(--text-muted); }
 
-.sidebar-section { padding:16px 12px 4px; }
+.sidebar-section { padding:8px 8px 2px; }
 .sidebar-section-label {
-  font-size:10px; font-weight:700; text-transform:uppercase;
-  letter-spacing:0.08em; color:var(--text-muted); padding:0 8px; margin-bottom:6px;
+  font-size:9px; font-weight:700; text-transform:uppercase;
+  letter-spacing:0.08em; color:var(--text-muted); padding:0 8px; margin-bottom:2px;
 }
 .sidebar-item {
-  display:flex; align-items:center; gap:10px;
-  padding:9px 12px; border-radius:var(--radius-sm);
-  font-size:13px; color:var(--text-secondary);
+  display:flex; align-items:center; gap:8px;
+  padding:5px 10px; border-radius:var(--radius-sm);
+  font-size:12px; color:var(--text-secondary);
   cursor:pointer; transition:var(--transition);
-  border:1px solid transparent; margin-bottom:2px;
+  border:1px solid transparent; margin-bottom:0;
   text-decoration:none;
 }
 .sidebar-item:hover { background:var(--bg-card); color:var(--text-primary); }
@@ -93,7 +93,7 @@ body {
   background:var(--blue-dim); color:var(--blue);
   border-color:rgba(59,130,246,0.2);
 }
-.sidebar-item .icon { font-size:16px; width:20px; text-align:center; }
+.sidebar-item .icon { font-size:14px; width:18px; text-align:center; }
 .sidebar-item .badge {
   margin-left:auto; font-size:10px; font-weight:600;
   padding:2px 7px; border-radius:10px;

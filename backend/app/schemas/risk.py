@@ -8,6 +8,16 @@ class RiskSafeguardRef(BaseModel):
     safeguard_name: str | None = None
 
 
+class LinkedActionRef(BaseModel):
+    """Action linked to this risk via action_links table."""
+    action_id: int
+    title: str
+    status_name: str | None = None
+    owner: str | None = None
+    due_date: date | None = None
+    is_overdue: bool = False
+
+
 class RiskOut(BaseModel):
     id: int
 
@@ -75,6 +85,7 @@ class RiskOut(BaseModel):
     updated_at: datetime
 
     safeguards: list[RiskSafeguardRef] = []
+    linked_actions: list[LinkedActionRef] = []
 
     model_config = {"from_attributes": True}
 

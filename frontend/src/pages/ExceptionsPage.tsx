@@ -76,6 +76,14 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
   );
 }
 
+/* ─── Sort/Filter types ─── */
+type SortField = "ref_id" | "title" | "policy_title" | "org_unit_name" | "risk_score" | "status_name" | "expiry_date";
+type SortDir = "asc" | "desc";
+
+/* ─── Error style for invalid fields ─── */
+const errorBorder = "1px solid var(--red)";
+const errorShadow = "0 0 0 3px var(--red-dim)";
+
 /* ═══════════════════════════════════════════════════════════════════
    ExceptionsPage — main component
    ═══════════════════════════════════════════════════════════════════ */
@@ -86,8 +94,19 @@ export default function ExceptionsPage() {
   const [saving, setSaving] = useState(false);
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [selected, setSelected] = useState<ExceptionRecord | null>(null);
+  const [editingException, setEditingException] = useState<ExceptionRecord | null>(null);
 
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
+
+  // Sort & filter state
+  const [sortField, setSortField] = useState<SortField>("expiry_date");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [filterRef, setFilterRef] = useState("");
+  const [filterTitle, setFilterTitle] = useState("");
+  const [filterPolicy, setFilterPolicy] = useState("");
+  const [filterOrgUnit, setFilterOrgUnit] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
 
   const load = () => {
     api.get<ExceptionRecord[]>("/api/v1/exceptions").then(setExceptions).catch(() => {}).finally(() => setLoading(false));
@@ -129,7 +148,13 @@ export default function ExceptionsPage() {
 
   const openAddForm = async () => {
     await loadLookups();
-    setEditExc(null);
+    setEditingException(null);
+    setShowForm(true);
+  };
+
+  const openEditForm = async (ex: ExceptionRecord) => {
+    await loadLookups();
+    setEditingException(ex);
     setShowForm(true);
   };
 
@@ -143,17 +168,101 @@ export default function ExceptionsPage() {
 
   const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
 
+  // Sort & filter
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  };
+
+  const filteredAndSorted = useMemo(() => {
+    let result = [...exceptions];
+
+    // Apply filters
+    if (filterRef) result = result.filter(e => (e.ref_id ?? "").toLowerCase().includes(filterRef.toLowerCase()));
+    if (filterTitle) result = result.filter(e => e.title.toLowerCase().includes(filterTitle.toLowerCase()));
+    if (filterPolicy) result = result.filter(e => (e.policy_title ?? "").toLowerCase().includes(filterPolicy.toLowerCase()));
+    if (filterOrgUnit) result = result.filter(e => {
+      const path = orgPathMap.get(e.org_unit_id) ?? e.org_unit_name ?? "";
+      return path.toLowerCase().includes(filterOrgUnit.toLowerCase());
+    });
+    if (filterStatus) result = result.filter(e => (e.status_name ?? "").toLowerCase().includes(filterStatus.toLowerCase()));
+
+    // Apply sort
+    result.sort((a, b) => {
+      let cmp = 0;
+      const av = a[sortField];
+      const bv = b[sortField];
+      if (av == null && bv == null) cmp = 0;
+      else if (av == null) cmp = 1;
+      else if (bv == null) cmp = -1;
+      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+      else cmp = String(av).localeCompare(String(bv));
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+
+    return result;
+  }, [exceptions, filterRef, filterTitle, filterPolicy, filterOrgUnit, filterStatus, sortField, sortDir, orgPathMap]);
+
+  const SortableHeader = ({ field, label }: { field: SortField; label: string }) => (
+    <th
+      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+      onClick={() => handleSort(field)}
+    >
+      {label}
+      {sortField === field && (
+        <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>
+          {sortDir === "asc" ? "\u25B2" : "\u25BC"}
+        </span>
+      )}
+    </th>
+  );
+
   return (
     <div>
       {/* ─── Toolbar ─── */}
       <div className="toolbar">
         <div className="toolbar-left">
-          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{exceptions.length} wyjatkow</span>
+          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {filteredAndSorted.length}{filteredAndSorted.length !== exceptions.length ? ` / ${exceptions.length}` : ""} wyjatkow
+          </span>
+          <button
+            className="btn btn-sm"
+            style={{ fontSize: 11, color: showFilters ? "var(--blue)" : undefined }}
+            onClick={() => setShowFilters(f => !f)}
+          >
+            Filtry {showFilters ? "\u25B2" : "\u25BC"}
+          </button>
         </div>
         <div className="toolbar-right">
           <button className="btn btn-primary btn-sm" onClick={openAddForm}>+ Nowy wyjatek</button>
         </div>
       </div>
+
+      {/* ─── Filter row ─── */}
+      {showFilters && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <input className="form-control" style={{ width: 100, padding: "5px 8px", fontSize: 11 }}
+            placeholder="Ref..." value={filterRef} onChange={e => setFilterRef(e.target.value)} />
+          <input className="form-control" style={{ width: 160, padding: "5px 8px", fontSize: 11 }}
+            placeholder="Tytul..." value={filterTitle} onChange={e => setFilterTitle(e.target.value)} />
+          <input className="form-control" style={{ width: 140, padding: "5px 8px", fontSize: 11 }}
+            placeholder="Polityka..." value={filterPolicy} onChange={e => setFilterPolicy(e.target.value)} />
+          <input className="form-control" style={{ width: 140, padding: "5px 8px", fontSize: 11 }}
+            placeholder="Pion..." value={filterOrgUnit} onChange={e => setFilterOrgUnit(e.target.value)} />
+          <input className="form-control" style={{ width: 120, padding: "5px 8px", fontSize: 11 }}
+            placeholder="Status..." value={filterStatus} onChange={e => setFilterStatus(e.target.value)} />
+          {(filterRef || filterTitle || filterPolicy || filterOrgUnit || filterStatus) && (
+            <button className="btn btn-sm" style={{ fontSize: 11 }}
+              onClick={() => { setFilterRef(""); setFilterTitle(""); setFilterPolicy(""); setFilterOrgUnit(""); setFilterStatus(""); }}>
+              Wyczysc
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ─── Main grid ─── */}
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 14 }}>
@@ -161,23 +270,23 @@ export default function ExceptionsPage() {
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie...</div>
-          ) : exceptions.length === 0 ? (
+          ) : filteredAndSorted.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Brak wyjatkow w systemie.</div>
           ) : (
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Ref</th>
-                  <th>Tytul</th>
-                  <th>Polityka</th>
-                  <th>Pion</th>
-                  <th>Ryzyko odst.</th>
-                  <th>Status</th>
-                  <th>Wygasa</th>
+                  <SortableHeader field="ref_id" label="Ref" />
+                  <SortableHeader field="title" label="Tytul" />
+                  <SortableHeader field="policy_title" label="Polityka" />
+                  <SortableHeader field="org_unit_name" label="Pion" />
+                  <SortableHeader field="risk_score" label="Ryzyko odst." />
+                  <SortableHeader field="status_name" label="Status" />
+                  <SortableHeader field="expiry_date" label="Wygasa" />
                 </tr>
               </thead>
               <tbody>
-                {exceptions.map(ex => {
+                {filteredAndSorted.map(ex => {
                   const rs = ex.risk_score ?? 0;
                   return (
                     <tr
@@ -229,7 +338,10 @@ export default function ExceptionsPage() {
           <div className="card" style={{ position: "sticky", top: 0, alignSelf: "start", maxHeight: "calc(100vh - 100px)", overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div className="card-title" style={{ margin: 0 }}>Szczegoly Wyjatku</div>
-              <button className="btn btn-sm" onClick={() => setSelected(null)}>&#10005;</button>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button className="btn btn-sm" onClick={() => openEditForm(selected)} title="Edytuj">Edytuj</button>
+                <button className="btn btn-sm" onClick={() => setSelected(null)}>&#10005;</button>
+              </div>
             </div>
 
             {/* Risk score display */}
@@ -307,6 +419,13 @@ export default function ExceptionsPage() {
             <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
               <button
                 className="btn btn-sm"
+                style={{ flex: 1 }}
+                onClick={() => openEditForm(selected)}
+              >
+                Edytuj
+              </button>
+              <button
+                className="btn btn-sm"
                 style={{ flex: 1, color: "var(--red)" }}
                 onClick={async () => {
                   if (!confirm(`Archiwizowac wyjatek ${selected.ref_id}?`)) return;
@@ -324,17 +443,31 @@ export default function ExceptionsPage() {
       </div>
 
       {/* ─── Wizard Form Modal ─── */}
-      <Modal open={showForm} onClose={() => { setShowForm(false); }} title="Nowy wyjatek od polityki" wide>
+      <Modal
+        open={showForm}
+        onClose={() => { setShowForm(false); setEditingException(null); }}
+        title={editingException ? `Edycja wyjatku ${editingException.ref_id ?? ""}` : "Nowy wyjatek od polityki"}
+        wide
+      >
         {lookups ? (
           <ExceptionWizard
             lookups={lookups}
             flatUnits={flatUnits}
             saving={saving}
+            editingException={editingException}
             onSubmit={async (data) => {
               setSaving(true);
               try {
-                await api.post("/api/v1/exceptions/with-risk", data);
+                if (editingException) {
+                  // Update existing exception
+                  await api.put(`/api/v1/exceptions/${editingException.id}`, data);
+                } else {
+                  // Create new
+                  await api.post("/api/v1/exceptions/with-risk", data);
+                }
                 setShowForm(false);
+                setEditingException(null);
+                setSelected(null);
                 setLoading(true);
                 load();
               } catch (err) {
@@ -343,7 +476,7 @@ export default function ExceptionsPage() {
                 setSaving(false);
               }
             }}
-            onCancel={() => { setShowForm(false); }}
+            onCancel={() => { setShowForm(false); setEditingException(null); }}
           />
         ) : (
           <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Ladowanie danych formularza...</div>
@@ -357,29 +490,32 @@ export default function ExceptionsPage() {
 /* ═══════════════════════════════════════════════════════════════════
    ExceptionWizard — 2-step form with mandatory risk assessment
    ═══════════════════════════════════════════════════════════════════ */
-function ExceptionWizard({ lookups, flatUnits, saving, onSubmit, onCancel }: {
+function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmit, onCancel }: {
   lookups: Lookups;
   flatUnits: { id: number; name: string; depth: number }[];
   saving: boolean;
+  editingException: ExceptionRecord | null;
   onSubmit: (data: Record<string, unknown>) => void;
   onCancel: () => void;
 }) {
+  const isEdit = !!editingException;
   const [step, setStep] = useState(1);
+  const [triedNext, setTriedNext] = useState(false);
 
   // Step 1: Exception fields
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [policyId, setPolicyId] = useState<number | null>(null);
-  const [categoryId, setCategoryId] = useState<number | null>(null);
-  const [orgUnitId, setOrgUnitId] = useState<number | null>(null);
-  const [requestedBy, setRequestedBy] = useState("");
-  const [approvedBy, setApprovedBy] = useState("");
-  const [compensatingControls, setCompensatingControls] = useState("");
-  const [statusId, setStatusId] = useState<number | null>(null);
-  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10));
-  const [expiryDate, setExpiryDate] = useState("");
+  const [title, setTitle] = useState(editingException?.title ?? "");
+  const [description, setDescription] = useState(editingException?.description ?? "");
+  const [policyId, setPolicyId] = useState<number | null>(editingException?.policy_id ?? null);
+  const [categoryId, setCategoryId] = useState<number | null>(editingException?.category_id ?? null);
+  const [orgUnitId, setOrgUnitId] = useState<number | null>(editingException?.org_unit_id ?? null);
+  const [requestedBy, setRequestedBy] = useState(editingException?.requested_by ?? "");
+  const [approvedBy, setApprovedBy] = useState(editingException?.approved_by ?? "");
+  const [compensatingControls, setCompensatingControls] = useState(editingException?.compensating_controls ?? "");
+  const [statusId, setStatusId] = useState<number | null>(editingException?.status_id ?? null);
+  const [startDate, setStartDate] = useState(editingException?.start_date ?? new Date().toISOString().slice(0, 10));
+  const [expiryDate, setExpiryDate] = useState(editingException?.expiry_date ?? "");
 
-  // Step 2: Risk assessment
+  // Step 2: Risk assessment (only for new)
   const [riskAssetName, setRiskAssetName] = useState("");
   const [riskAreaId, setRiskAreaId] = useState<number | null>(null);
   const [riskThreatId, setRiskThreatId] = useState<number | null>(null);
@@ -399,37 +535,83 @@ function ExceptionWizard({ lookups, flatUnits, saving, onSubmit, onCancel }: {
   const lvBg = liveScore >= 221 ? "var(--red-dim)" : liveScore >= 31 ? "var(--orange-dim)" : "var(--green-dim)";
   const liveLabel = riskLabel(liveScore);
 
-  const canStep1 = title && description && policyId && orgUnitId && requestedBy && startDate && expiryDate;
+  // Expiry date max = start_date + 6 months
+  const maxExpiryDate = useMemo(() => {
+    if (!startDate) return "";
+    const d = new Date(startDate);
+    d.setMonth(d.getMonth() + 6);
+    return d.toISOString().slice(0, 10);
+  }, [startDate]);
+
+  const expiryTooFar = expiryDate && maxExpiryDate && expiryDate > maxExpiryDate;
+
+  // Validation
+  const step1Errors = {
+    title: !title,
+    description: !description,
+    policyId: !policyId,
+    orgUnitId: !orgUnitId,
+    requestedBy: !requestedBy,
+    startDate: !startDate,
+    expiryDate: !expiryDate || !!expiryTooFar,
+  };
+  const canStep1 = !Object.values(step1Errors).some(Boolean);
   const canStep2 = riskAssetName && W && P && Z;
 
+  const fieldStyle = (hasError: boolean): React.CSSProperties | undefined => {
+    if (!triedNext || !hasError) return undefined;
+    return { border: errorBorder, boxShadow: errorShadow };
+  };
+
+  const handleNext = () => {
+    setTriedNext(true);
+    if (canStep1) {
+      setStep(2);
+      setTriedNext(false);
+    }
+  };
+
   const handleSubmit = () => {
-    if (!canStep2) return;
-    onSubmit({
-      title,
-      description,
-      policy_id: policyId,
-      category_id: categoryId,
-      org_unit_id: orgUnitId,
-      requested_by: requestedBy,
-      approved_by: approvedBy || null,
-      compensating_controls: compensatingControls || null,
-      status_id: statusId,
-      start_date: startDate,
-      expiry_date: expiryDate,
-      vulnerability_id: null,
-      risk_asset_name: riskAssetName,
-      risk_security_area_id: riskAreaId,
-      risk_threat_id: riskThreatId,
-      risk_vulnerability_id: riskVulnId,
-      risk_consequence: riskConsequence || null,
-      risk_existing_controls: riskExistingControls || null,
-      risk_impact_level: W,
-      risk_probability_level: P,
-      risk_safeguard_rating: Z,
-      risk_owner: riskOwner || null,
-      risk_strategy_id: riskStrategyId,
-      risk_treatment_plan: riskTreatmentPlan || null,
-    });
+    if (isEdit) {
+      // Edit mode — send only updatable fields
+      onSubmit({
+        title,
+        description,
+        category_id: categoryId,
+        approved_by: approvedBy || null,
+        compensating_controls: compensatingControls || null,
+        status_id: statusId,
+        expiry_date: expiryDate,
+      });
+    } else {
+      if (!canStep2) return;
+      onSubmit({
+        title,
+        description,
+        policy_id: policyId,
+        category_id: categoryId,
+        org_unit_id: orgUnitId,
+        requested_by: requestedBy,
+        approved_by: approvedBy || null,
+        compensating_controls: compensatingControls || null,
+        status_id: statusId,
+        start_date: startDate,
+        expiry_date: expiryDate,
+        vulnerability_id: null,
+        risk_asset_name: riskAssetName,
+        risk_security_area_id: riskAreaId,
+        risk_threat_id: riskThreatId,
+        risk_vulnerability_id: riskVulnId,
+        risk_consequence: riskConsequence || null,
+        risk_existing_controls: riskExistingControls || null,
+        risk_impact_level: W,
+        risk_probability_level: P,
+        risk_safeguard_rating: Z,
+        risk_owner: riskOwner || null,
+        risk_strategy_id: riskStrategyId,
+        risk_treatment_plan: riskTreatmentPlan || null,
+      });
+    }
   };
 
   // Auto-fill risk asset name from exception title
@@ -438,6 +620,93 @@ function ExceptionWizard({ lookups, flatUnits, saving, onSubmit, onCancel }: {
       setRiskAssetName(title);
     }
   }, [step]);
+
+  // Edit mode: single step
+  if (isEdit) {
+    return (
+      <div>
+        <SectionHeader number={"\u2460"} label="Dane podstawowe wyjatku" />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <div className="form-group" style={{ gridColumn: "span 2" }}>
+            <label>Tytul wyjatku *</label>
+            <input className="form-control" value={title} onChange={e => setTitle(e.target.value)}
+              placeholder="np. Brak szyfrowania dyskow na stacjach roboczych w oddziale X" />
+          </div>
+          <div className="form-group">
+            <label>Polityka</label>
+            <input className="form-control" disabled value={lookups.policies.find(p => p.id === policyId)?.title ?? ""} />
+          </div>
+          <div className="form-group">
+            <label>Jednostka organizacyjna</label>
+            <input className="form-control" disabled value={flatUnits.find(u => u.id === orgUnitId)?.name ?? ""} />
+          </div>
+          <div className="form-group">
+            <label>Wnioskujacy</label>
+            <input className="form-control" disabled value={requestedBy} />
+          </div>
+          <div className="form-group">
+            <label>Zatwierdzajacy</label>
+            <input className="form-control" value={approvedBy} onChange={e => setApprovedBy(e.target.value)}
+              placeholder="Imie i nazwisko" />
+          </div>
+          <div className="form-group">
+            <label>Kategoria</label>
+            <select className="form-control" value={categoryId ?? ""} onChange={e => setCategoryId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">Brak</option>
+              {lookups.categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Status</label>
+            <select className="form-control" value={statusId ?? ""} onChange={e => setStatusId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">Brak</option>
+              {lookups.statuses.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Data rozpoczecia</label>
+            <input className="form-control" type="date" disabled value={startDate} />
+          </div>
+          <div className="form-group">
+            <label>Data wygasniecia *{maxExpiryDate && <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 400 }}> (max {maxExpiryDate})</span>}</label>
+            <input className="form-control" type="date" value={expiryDate}
+              max={maxExpiryDate}
+              style={expiryTooFar ? { border: errorBorder, boxShadow: errorShadow } : undefined}
+              onChange={e => setExpiryDate(e.target.value)} />
+            {expiryTooFar && (
+              <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>
+                Data wygasniecia nie moze byc wieksza niz 6 miesiecy od daty rozpoczecia ({maxExpiryDate}).
+              </div>
+            )}
+          </div>
+        </div>
+
+        <SectionHeader number={"\u2461"} label="Uzasadnienie i kompensacja" />
+        <div className="form-group">
+          <label>Uzasadnienie biznesowe *</label>
+          <textarea className="form-control" rows={3} value={description} onChange={e => setDescription(e.target.value)}
+            placeholder="Opisz powod wyjatku, wplyw na biznes, uzasadnienie..." />
+        </div>
+        <div className="form-group">
+          <label>Srodki kompensacyjne</label>
+          <textarea className="form-control" rows={3} value={compensatingControls} onChange={e => setCompensatingControls(e.target.value)}
+            placeholder="Opisz jakie dodatkowe srodki bezpieczenstwa zostana wdrozone..." />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button type="button" className="btn" onClick={onCancel}>Anuluj</button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={saving || !title || !description || !!expiryTooFar}
+            onClick={handleSubmit}
+          >
+            {saving ? "Zapisywanie..." : "Zapisz zmiany"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -481,27 +750,37 @@ function ExceptionWizard({ lookups, flatUnits, saving, onSubmit, onCancel }: {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div className="form-group" style={{ gridColumn: "span 2" }}>
               <label>Tytul wyjatku *</label>
-              <input className="form-control" required value={title} onChange={e => setTitle(e.target.value)}
+              <input className="form-control" value={title} onChange={e => setTitle(e.target.value)}
+                style={fieldStyle(step1Errors.title)}
                 placeholder="np. Brak szyfrowania dysków na stacjach roboczych w oddziale X" />
+              {triedNext && step1Errors.title && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
             </div>
             <div className="form-group">
               <label>Polityka *</label>
-              <select className="form-control" required value={policyId ?? ""} onChange={e => setPolicyId(e.target.value ? Number(e.target.value) : null)}>
+              <select className="form-control" value={policyId ?? ""}
+                style={fieldStyle(step1Errors.policyId)}
+                onChange={e => setPolicyId(e.target.value ? Number(e.target.value) : null)}>
                 <option value="">Wybierz polityk...</option>
                 {lookups.policies.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
               </select>
+              {triedNext && step1Errors.policyId && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
             </div>
             <div className="form-group">
               <label>Jednostka organizacyjna *</label>
-              <select className="form-control" required value={orgUnitId ?? ""} onChange={e => setOrgUnitId(e.target.value ? Number(e.target.value) : null)}>
+              <select className="form-control" value={orgUnitId ?? ""}
+                style={fieldStyle(step1Errors.orgUnitId)}
+                onChange={e => setOrgUnitId(e.target.value ? Number(e.target.value) : null)}>
                 <option value="">Wybierz...</option>
                 {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
               </select>
+              {triedNext && step1Errors.orgUnitId && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
             </div>
             <div className="form-group">
               <label>Wnioskujacy *</label>
-              <input className="form-control" required value={requestedBy} onChange={e => setRequestedBy(e.target.value)}
+              <input className="form-control" value={requestedBy} onChange={e => setRequestedBy(e.target.value)}
+                style={fieldStyle(step1Errors.requestedBy)}
                 placeholder="Imie i nazwisko" />
+              {triedNext && step1Errors.requestedBy && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
             </div>
             <div className="form-group">
               <label>Zatwierdzajacy</label>
@@ -524,19 +803,33 @@ function ExceptionWizard({ lookups, flatUnits, saving, onSubmit, onCancel }: {
             </div>
             <div className="form-group">
               <label>Data rozpoczecia *</label>
-              <input className="form-control" type="date" required value={startDate} onChange={e => setStartDate(e.target.value)} />
+              <input className="form-control" type="date" value={startDate}
+                style={fieldStyle(step1Errors.startDate)}
+                onChange={e => setStartDate(e.target.value)} />
+              {triedNext && step1Errors.startDate && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
             </div>
             <div className="form-group">
-              <label>Data wygasniecia *</label>
-              <input className="form-control" type="date" required value={expiryDate} onChange={e => setExpiryDate(e.target.value)} />
+              <label>Data wygasniecia *{maxExpiryDate && <span style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 400 }}> (max {maxExpiryDate})</span>}</label>
+              <input className="form-control" type="date" value={expiryDate}
+                max={maxExpiryDate}
+                style={fieldStyle(step1Errors.expiryDate)}
+                onChange={e => setExpiryDate(e.target.value)} />
+              {triedNext && !expiryDate && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
+              {expiryTooFar && (
+                <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>
+                  Data wygasniecia nie moze byc wieksza niz 6 miesiecy od daty rozpoczecia ({maxExpiryDate}).
+                </div>
+              )}
             </div>
           </div>
 
           <SectionHeader number={"\u2461"} label="Uzasadnienie i kompensacja" />
           <div className="form-group">
             <label>Uzasadnienie biznesowe *</label>
-            <textarea className="form-control" rows={3} required value={description} onChange={e => setDescription(e.target.value)}
+            <textarea className="form-control" rows={3} value={description} onChange={e => setDescription(e.target.value)}
+              style={fieldStyle(step1Errors.description)}
               placeholder="Opisz powod wyjatku, wplyw na biznes, uzasadnienie..." />
+            {triedNext && step1Errors.description && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
           </div>
           <div className="form-group">
             <label>Srodki kompensacyjne</label>
@@ -549,8 +842,7 @@ function ExceptionWizard({ lookups, flatUnits, saving, onSubmit, onCancel }: {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={!canStep1}
-              onClick={() => setStep(2)}
+              onClick={handleNext}
             >
               Dalej: Ocena ryzyka &rarr;
             </button>

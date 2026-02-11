@@ -22,6 +22,8 @@ import IncidentsPage from "./pages/IncidentsPage";
 import PoliciesPage from "./pages/PoliciesPage";
 import ExceptionsPage from "./pages/ExceptionsPage";
 import AuditsPage from "./pages/AuditsPage";
+import VendorsPage from "./pages/VendorsPage";
+import AwarenessPage from "./pages/AwarenessPage";
 
 export default function App() {
   return (
@@ -44,6 +46,8 @@ export default function App() {
           <Route path="policies" element={<PoliciesPage />} />
           <Route path="exceptions" element={<ExceptionsPage />} />
           <Route path="audits" element={<AuditsPage />} />
+          <Route path="vendors" element={<VendorsPage />} />
+          <Route path="awareness" element={<AwarenessPage />} />
           <Route path="cis" element={<CisListPage />} />
           <Route path="cis/assess" element={<CisAssessPage />} />
           <Route path="org-structure" element={<OrgStructurePage />} />

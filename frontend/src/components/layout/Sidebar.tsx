@@ -41,6 +41,13 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Dostawcy & Awareness",
+    items: [
+      { to: "/vendors", icon: "🏭", label: "Dostawcy (TPRM)" },
+      { to: "/awareness", icon: "🎓", label: "Awareness" },
+    ],
+  },
+  {
     title: "Framework Engine",
     items: [
       { to: "/frameworks", icon: "📐", label: "Frameworki" },

@@ -42,6 +42,10 @@ async def _entity_name(s, entity_type: str, entity_id: int) -> str | None:
     if entity_type == "asset":
         a = await s.get(Asset, entity_id)
         return a.name if a else None
+    if entity_type == "policy_exception":
+        from app.models.policy_exception import PolicyException
+        pe = await s.get(PolicyException, entity_id)
+        return pe.title if pe else None
     return f"{entity_type}#{entity_id}"
 
 

@@ -68,6 +68,7 @@ async def _exc_out(s: AsyncSession, ex: PolicyException) -> PolicyExceptionOut:
 async def list_exceptions(
     org_unit_id: int | None = Query(None),
     status_id: int | None = Query(None),
+    asset_id: int | None = Query(None),
     include_archived: bool = Query(False),
     s: AsyncSession = Depends(get_session),
 ):
@@ -78,6 +79,8 @@ async def list_exceptions(
         q = q.where(PolicyException.org_unit_id == org_unit_id)
     if status_id is not None:
         q = q.where(PolicyException.status_id == status_id)
+    if asset_id is not None:
+        q = q.where(PolicyException.asset_id == asset_id)
     q = q.order_by(PolicyException.expiry_date)
     excs = (await s.execute(q)).scalars().all()
     return [await _exc_out(s, ex) for ex in excs]
@@ -121,6 +124,7 @@ async def create_exception_with_risk(
     # 1. Create the deviation risk
     risk = Risk(
         org_unit_id=body.org_unit_id,
+        asset_id=body.asset_id,
         asset_name=body.risk_asset_name,
         security_area_id=body.risk_security_area_id,
         threat_id=body.risk_threat_id,

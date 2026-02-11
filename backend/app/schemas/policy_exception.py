@@ -62,6 +62,7 @@ class PolicyExceptionUpdate(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     category_id: int | None = None
+    asset_id: int | None = None
     approved_by: str | None = Field(None, max_length=100)
     risk_level_id: int | None = None
     compensating_controls: str | None = None

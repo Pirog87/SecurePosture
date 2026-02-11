@@ -1,9 +1,23 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import type { Asset, OrgUnitTreeNode, DictionaryTypeWithEntries } from "../types";
 import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
+
+/* Exception reference for asset detail */
+interface AssetExceptionRef {
+  id: number;
+  ref_id: string | null;
+  title: string;
+  status_name: string | null;
+  risk_score: number | null;
+  risk_level: string | null;
+  expiry_date: string;
+}
+
+function excRiskColor(R: number) { return R >= 221 ? "var(--red)" : R >= 31 ? "var(--orange)" : "var(--green)"; }
+function excRiskBg(R: number) { return R >= 221 ? "var(--red-dim)" : R >= 31 ? "var(--orange-dim)" : "var(--green-dim)"; }
 
 function critColor(name: string | null): string {
   if (!name) return "var(--text-muted)";
@@ -32,6 +46,10 @@ export default function AssetRegistryPage() {
   const [lookups, setLookups] = useState<FormLookups | null>(null);
   const [selected, setSelected] = useState<Asset | null>(null);
 
+  const [detailTab, setDetailTab] = useState<"info" | "exceptions">("info");
+  const [assetExceptions, setAssetExceptions] = useState<AssetExceptionRef[]>([]);
+  const [exceptionsLoading, setExceptionsLoading] = useState(false);
+
   const [filterOrg, setFilterOrg] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
@@ -50,6 +68,24 @@ export default function AssetRegistryPage() {
   }, []);
 
   const orgPathMap = useMemo(() => buildPathMap(orgTree), [orgTree]);
+
+  // Load exceptions for selected asset
+  const loadAssetExceptions = useCallback((assetId: number) => {
+    setExceptionsLoading(true);
+    api.get<AssetExceptionRef[]>(`/api/v1/exceptions?asset_id=${assetId}`)
+      .then(setAssetExceptions)
+      .catch(() => setAssetExceptions([]))
+      .finally(() => setExceptionsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (selected) {
+      loadAssetExceptions(selected.id);
+      setDetailTab("info");
+    } else {
+      setAssetExceptions([]);
+    }
+  }, [selected?.id]);
 
   const loadLookups = async (): Promise<FormLookups> => {
     if (lookups) return lookups;
@@ -269,10 +305,10 @@ export default function AssetRegistryPage() {
 
         {/* Detail Panel */}
         {selected && (
-          <div className="card" style={{ position: "sticky", top: 0, alignSelf: "start" }}>
+          <div className="card" style={{ position: "sticky", top: 0, alignSelf: "start", maxHeight: "calc(100vh - 100px)", overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div className="card-title" style={{ margin: 0 }}>Szczegóły aktywa</div>
-              <button className="btn btn-sm" onClick={() => setSelected(null)}>✕</button>
+              <button className="btn btn-sm" onClick={() => setSelected(null)}>&#10005;</button>
             </div>
 
             <div style={{ textAlign: "center", marginBottom: 16 }}>
@@ -284,67 +320,153 @@ export default function AssetRegistryPage() {
               )}
             </div>
 
-            <div style={{ fontSize: 12, lineHeight: 2 }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>ID</span>
-                <span style={{ fontFamily: "'JetBrains Mono',monospace" }}>A-{selected.id}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Kategoria</span>
-                <span>{selected.category_name ?? "—"}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Jednostka org.</span>
-                <span style={{ fontSize: 11 }}>{(selected.org_unit_id ? orgPathMap.get(selected.org_unit_id) : null) ?? selected.org_unit_name ?? "—"}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Właściciel</span>
-                <span>{selected.owner ?? "—"}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Lokalizacja</span>
-                <span>{selected.location ?? "—"}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Wrażliwość</span>
-                <span>{selected.sensitivity_name ?? "—"}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Krytyczność</span>
-                <span style={{ fontWeight: 500, color: critColor(selected.criticality_name) }}>{selected.criticality_name ?? "—"}</span>
-              </div>
-              {selected.parent_name && (
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--text-muted)" }}>Nadrzędny aktyw</span>
-                  <span>{selected.parent_name}</span>
-                </div>
-              )}
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Powiązane ryzyka</span>
-                <span
-                  style={{ fontFamily: "'JetBrains Mono',monospace", color: selected.risk_count > 0 ? "var(--red)" : "var(--text-muted)", cursor: selected.risk_count > 0 ? "pointer" : "default" }}
-                  onClick={() => { if (selected.risk_count > 0) navigate(`/risks?asset=${selected.id}`); }}
+            {/* Detail tabs */}
+            <div style={{ display: "flex", gap: 0, marginBottom: 14 }}>
+              {[
+                { key: "info" as const, label: "Informacje" },
+                { key: "exceptions" as const, label: `Wyjatki (${assetExceptions.length})` },
+              ].map(t => (
+                <div
+                  key={t.key}
+                  style={{
+                    flex: 1, textAlign: "center", padding: "6px 10px",
+                    background: detailTab === t.key ? "var(--blue-dim)" : "transparent",
+                    borderBottom: detailTab === t.key ? "2px solid var(--blue)" : "2px solid var(--border)",
+                    color: detailTab === t.key ? "var(--blue)" : "var(--text-muted)",
+                    fontWeight: detailTab === t.key ? 600 : 400,
+                    fontSize: 12, cursor: "pointer", transition: "all 0.2s",
+                  }}
+                  onClick={() => setDetailTab(t.key)}
                 >
-                  {selected.risk_count}
-                </span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Utworzono</span>
-                <span>{selected.created_at?.slice(0, 10)}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: "var(--text-muted)" }}>Zaktualizowano</span>
-                <span>{selected.updated_at?.slice(0, 10)}</span>
-              </div>
-              {selected.description && (
-                <div style={{ marginTop: 8 }}>
-                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Opis</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
-                    {selected.description}
-                  </div>
+                  {t.label}
                 </div>
-              )}
+              ))}
             </div>
+
+            {/* Tab: Info */}
+            {detailTab === "info" && (
+              <>
+                <div style={{ fontSize: 12, lineHeight: 2 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>ID</span>
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace" }}>A-{selected.id}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Kategoria</span>
+                    <span>{selected.category_name ?? "\u2014"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Jednostka org.</span>
+                    <span style={{ fontSize: 11 }}>{(selected.org_unit_id ? orgPathMap.get(selected.org_unit_id) : null) ?? selected.org_unit_name ?? "\u2014"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Wlasciciel</span>
+                    <span>{selected.owner ?? "\u2014"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Lokalizacja</span>
+                    <span>{selected.location ?? "\u2014"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Wrazliwosc</span>
+                    <span>{selected.sensitivity_name ?? "\u2014"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Krytycznosc</span>
+                    <span style={{ fontWeight: 500, color: critColor(selected.criticality_name) }}>{selected.criticality_name ?? "\u2014"}</span>
+                  </div>
+                  {selected.parent_name && (
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: "var(--text-muted)" }}>Nadrzedny aktyw</span>
+                      <span>{selected.parent_name}</span>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Powiazane ryzyka</span>
+                    <span
+                      style={{ fontFamily: "'JetBrains Mono',monospace", color: selected.risk_count > 0 ? "var(--red)" : "var(--text-muted)", cursor: selected.risk_count > 0 ? "pointer" : "default" }}
+                      onClick={() => { if (selected.risk_count > 0) navigate(`/risks?asset=${selected.id}`); }}
+                    >
+                      {selected.risk_count}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Utworzono</span>
+                    <span>{selected.created_at?.slice(0, 10)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ color: "var(--text-muted)" }}>Zaktualizowano</span>
+                    <span>{selected.updated_at?.slice(0, 10)}</span>
+                  </div>
+                  {selected.description && (
+                    <div style={{ marginTop: 8 }}>
+                      <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Opis</div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                        {selected.description}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* Tab: Exceptions */}
+            {detailTab === "exceptions" && (
+              <div>
+                {exceptionsLoading ? (
+                  <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>Ladowanie wyjatkow...</div>
+                ) : assetExceptions.length === 0 ? (
+                  <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
+                    Brak zarejestrowanych wyjatkow dla tego aktywa.
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {assetExceptions.map(ex => {
+                      const rs = ex.risk_score ?? 0;
+                      const isExpired = ex.expiry_date ? new Date(ex.expiry_date) < new Date() : false;
+                      return (
+                        <div
+                          key={ex.id}
+                          style={{
+                            padding: "10px 12px", borderRadius: 8,
+                            background: "rgba(255,255,255,0.02)",
+                            border: "1px solid var(--border)",
+                            borderLeft: ex.risk_score != null ? `3px solid ${excRiskColor(rs)}` : "3px solid var(--border)",
+                            cursor: "pointer",
+                          }}
+                          onClick={() => navigate(`/exceptions?highlight=${ex.id}`)}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>{ex.ref_id}</span>
+                            {ex.status_name && (
+                              <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)", fontSize: 10 }}>
+                                {ex.status_name}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4 }}>{ex.title}</div>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                            {ex.risk_score != null ? (
+                              <span className="score-badge" style={{ background: excRiskBg(rs), color: excRiskColor(rs), fontSize: 10 }}>
+                                R: {rs.toFixed(1)}
+                              </span>
+                            ) : (
+                              <span />
+                            )}
+                            <span style={{
+                              color: isExpired ? "var(--red)" : "var(--text-muted)",
+                              fontWeight: isExpired ? 600 : 400,
+                            }}>
+                              {isExpired ? "WYGASLY" : `do ${ex.expiry_date}`}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
               <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => openEditForm(selected)}>Edytuj</button>

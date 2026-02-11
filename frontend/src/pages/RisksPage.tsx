@@ -734,9 +734,8 @@ const TABS = [
   { key: "context", label: "Kontekst", num: "\u2460" },
   { key: "asset", label: "Aktywo", num: "\u2461" },
   { key: "scenario", label: "Scenariusz", num: "\u2462" },
-  { key: "analysis", label: "Analiza", num: "\u2463" },
-  { key: "treatment", label: "Postepowanie", num: "\u2464" },
-  { key: "acceptance", label: "Akceptacja", num: "\u2465" },
+  { key: "treatment", label: "Postepowanie", num: "\u2463" },
+  { key: "acceptance", label: "Akceptacja", num: "\u2464" },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -864,6 +863,81 @@ function RiskFormTabs({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: lvColor }}>{liveScore.toFixed(1)}</div>
           <span className="score-badge" style={{ background: `${lvColor}30`, color: lvColor, fontSize: 12 }}>{liveLabel}</span>
+        </div>
+      </div>
+
+      {/* ─── Risk matrix 3x3 + Z panel (always visible, like Exceptions) ─── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Macierz ryzyka (W &times; P)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "auto repeat(3, 1fr)", gap: 2, maxWidth: 280 }}>
+            <div />
+            {["P=1", "P=2", "P=3"].map(h => (
+              <div key={h} style={{ textAlign: "center", fontSize: 10, color: "var(--text-muted)", padding: 4 }}>{h}</div>
+            ))}
+            {[3, 2, 1].map(w => (
+              <div key={`row-${w}`} style={{ display: "contents" }}>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", padding: 4, display: "flex", alignItems: "center" }}>W={w}</div>
+                {[1, 2, 3].map(p => {
+                  const score = Math.exp(w) * p / Z;
+                  const isActive = w === W && p === P;
+                  return (
+                    <div
+                      key={`${w}-${p}`}
+                      style={{
+                        textAlign: "center", padding: 6, borderRadius: 4, fontSize: 10,
+                        fontFamily: "'JetBrains Mono',monospace", fontWeight: isActive ? 700 : 400,
+                        background: riskBg(score), color: riskColor(score),
+                        border: isActive ? `2px solid ${riskColor(score)}` : "2px solid transparent",
+                        cursor: "pointer", transition: "all 0.15s",
+                      }}
+                      onClick={() => { setW(w); setP(p); }}
+                    >
+                      {score.toFixed(0)}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "center", marginTop: 4 }}>
+            Kliknij komorke aby wybrac W i P
+          </div>
+        </div>
+
+        {/* Z Level Panel */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "center", marginBottom: 2 }}>
+            Ocena zabezpieczen (Z)
+          </div>
+          {([
+            { value: 0.10, label: "Brak zabezpieczen", color: "var(--red)" },
+            { value: 0.25, label: "Czesciowe", color: "var(--orange)" },
+            { value: 0.70, label: "Dobra jakosc", color: "var(--blue)" },
+            { value: 0.95, label: "Skuteczne, testowane", color: "var(--green)" },
+          ] as const).map(zl => {
+            const isActive = Math.abs(Z - zl.value) < 0.01;
+            return (
+              <div
+                key={zl.value}
+                style={{
+                  padding: "6px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 8,
+                  background: isActive ? `${zl.color}18` : "transparent",
+                  border: isActive ? `2px solid ${zl.color}` : "2px solid var(--border)",
+                  color: isActive ? zl.color : "var(--text-muted)",
+                  fontWeight: isActive ? 600 : 400, transition: "all 0.15s",
+                }}
+                onClick={() => setZ(zl.value)}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: isActive ? zl.color : "var(--border)", flexShrink: 0 }} />
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", minWidth: 30 }}>{zl.value.toFixed(2)}</span>
+                <span>{zl.label}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -1004,120 +1078,10 @@ function RiskFormTabs({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel
         </div>
       )}
 
-      {/* ═══ Tab: Analiza ═══ */}
-      {tab === "analysis" && (
-        <div>
-          <SectionHeader number="\u2463" label="Analiza ryzyka (ISO 27005 &sect;8.3)" />
-
-          {/* Risk matrix 3x3 + Z panel */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 20, marginBottom: 16 }}>
-            <div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Macierz ryzyka (W &times; P)
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "auto repeat(3, 1fr)", gap: 2, maxWidth: 280 }}>
-                <div />
-                {["P=1", "P=2", "P=3"].map(h => (
-                  <div key={h} style={{ textAlign: "center", fontSize: 10, color: "var(--text-muted)", padding: 4 }}>{h}</div>
-                ))}
-                {[3, 2, 1].map(w => (
-                  <div key={`row-${w}`} style={{ display: "contents" }}>
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", padding: 4, display: "flex", alignItems: "center" }}>W={w}</div>
-                    {[1, 2, 3].map(p => {
-                      const score = Math.exp(w) * p / Z;
-                      const isActive = w === W && p === P;
-                      return (
-                        <div
-                          key={`${w}-${p}`}
-                          style={{
-                            textAlign: "center", padding: 6, borderRadius: 4, fontSize: 10,
-                            fontFamily: "'JetBrains Mono',monospace", fontWeight: isActive ? 700 : 400,
-                            background: riskBg(score), color: riskColor(score),
-                            border: isActive ? `2px solid ${riskColor(score)}` : "2px solid transparent",
-                            cursor: "pointer", transition: "all 0.15s",
-                          }}
-                          onClick={() => { setW(w); setP(p); }}
-                        >
-                          {score.toFixed(0)}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "center", marginTop: 4 }}>
-                Kliknij komorke aby wybrac W i P
-              </div>
-            </div>
-
-            {/* Z Level Panel */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "center", marginBottom: 2 }}>
-                Ocena zabezpieczen (Z)
-              </div>
-              {([
-                { value: 0.10, label: "Brak zabezpieczen", color: "var(--red)" },
-                { value: 0.25, label: "Czesciowe", color: "var(--orange)" },
-                { value: 0.70, label: "Dobra jakosc", color: "var(--blue)" },
-                { value: 0.95, label: "Skuteczne, testowane", color: "var(--green)" },
-              ] as const).map(zl => {
-                const isActive = Math.abs(Z - zl.value) < 0.01;
-                return (
-                  <div
-                    key={zl.value}
-                    style={{
-                      padding: "6px 10px", borderRadius: 6, fontSize: 11, cursor: "pointer",
-                      display: "flex", alignItems: "center", gap: 8,
-                      background: isActive ? `${zl.color}18` : "transparent",
-                      border: isActive ? `2px solid ${zl.color}` : "2px solid var(--border)",
-                      color: isActive ? zl.color : "var(--text-muted)",
-                      fontWeight: isActive ? 600 : 400, transition: "all 0.15s",
-                    }}
-                    onClick={() => setZ(zl.value)}
-                  >
-                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: isActive ? zl.color : "var(--border)", flexShrink: 0 }} />
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", minWidth: 30 }}>{zl.value.toFixed(2)}</span>
-                    <span>{zl.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
-            <div className="form-group">
-              <label>Wplyw (W) *</label>
-              <select className="form-control" value={W} onChange={e => setW(Number(e.target.value))}>
-                <option value="1">1 -- Niski</option>
-                <option value="2">2 -- Sredni</option>
-                <option value="3">3 -- Wysoki</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Prawdopodobienstwo (P) *</label>
-              <select className="form-control" value={P} onChange={e => setP(Number(e.target.value))}>
-                <option value="1">1 -- Niskie</option>
-                <option value="2">2 -- Srednie</option>
-                <option value="3">3 -- Wysokie</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Ocena zabezpieczen (Z) *</label>
-              <select className="form-control" value={Z} onChange={e => setZ(Number(e.target.value))}>
-                <option value="0.10">0,10 -- Brak zabezpieczen</option>
-                <option value="0.25">0,25 -- Czesciowe</option>
-                <option value="0.70">0,70 -- Dobra jakosc</option>
-                <option value="0.95">0,95 -- Skuteczne, testowane</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ═══ Tab: Postepowanie ═══ */}
       {tab === "treatment" && (
         <div>
-          <SectionHeader number="\u2464" label="Postepowanie z ryzykiem (ISO 27005 &sect;8.5)" />
+          <SectionHeader number="\u2463" label="Postepowanie z ryzykiem (ISO 27005 &sect;8.5)" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div className="form-group">
               <label>Strategia</label>
@@ -1211,7 +1175,7 @@ function RiskFormTabs({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel
       {/* ═══ Tab: Akceptacja ═══ */}
       {tab === "acceptance" && (
         <div>
-          <SectionHeader number="\u2465" label="Akceptacja i monitorowanie (ISO 27005 &sect;8.6/&sect;9)" />
+          <SectionHeader number="\u2464" label="Akceptacja i monitorowanie (ISO 27005 &sect;8.6/&sect;9)" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div className="form-group">
               <label>Status</label>

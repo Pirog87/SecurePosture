@@ -238,7 +238,7 @@ CREATE TABLE org_units (
 -- Also serves as "Obszary raportowania" dictionary (single source)
 -- ═══════════════════════════════════════════════════════════════
 
-CREATE TABLE security_areas (
+CREATE TABLE security_domains (
     id              INT AUTO_INCREMENT PRIMARY KEY,
     name            VARCHAR(300) NOT NULL,
     description     TEXT,
@@ -248,7 +248,7 @@ CREATE TABLE security_areas (
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
-INSERT INTO security_areas (name, sort_order) VALUES
+INSERT INTO security_domains (name, sort_order) VALUES
     ('Stacje robocze', 1),
     ('Urządzenia mobilne', 2),
     ('Ochrona przed utratą/wyciekiem danych (DLP)', 3),
@@ -283,13 +283,13 @@ CREATE TABLE threats (
 CREATE TABLE vulnerabilities (
     id              INT AUTO_INCREMENT PRIMARY KEY,
     name            VARCHAR(400) NOT NULL,
-    security_area_id INT,                              -- → security_areas
+    security_area_id INT,                              -- → security_domains
     description     TEXT,
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
-    FOREIGN KEY (security_area_id) REFERENCES security_areas(id)
+    FOREIGN KEY (security_area_id) REFERENCES security_domains(id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE safeguards (
@@ -316,7 +316,7 @@ CREATE TABLE risks (
     asset_name      VARCHAR(400) NOT NULL,
     sensitivity_id  INT,                               -- → dictionary_entries (sensitivity)
     criticality_id  INT,                               -- → dictionary_entries (criticality)
-    security_area_id INT,                              -- → security_areas (reporting area)
+    security_area_id INT,                              -- → security_domains (reporting area)
     threat_id       INT,                               -- → threats
     vulnerability_id INT,                              -- → vulnerabilities
 
@@ -356,7 +356,7 @@ CREATE TABLE risks (
     FOREIGN KEY (asset_category_id) REFERENCES dictionary_entries(id),
     FOREIGN KEY (sensitivity_id) REFERENCES dictionary_entries(id),
     FOREIGN KEY (criticality_id) REFERENCES dictionary_entries(id),
-    FOREIGN KEY (security_area_id) REFERENCES security_areas(id),
+    FOREIGN KEY (security_area_id) REFERENCES security_domains(id),
     FOREIGN KEY (threat_id) REFERENCES threats(id),
     FOREIGN KEY (vulnerability_id) REFERENCES vulnerabilities(id),
     FOREIGN KEY (status_id) REFERENCES dictionary_entries(id),
@@ -629,7 +629,7 @@ SELECT
     SUM(CASE WHEN r.risk_level = 'medium' THEN 1 ELSE 0 END) AS medium_risks,
     SUM(CASE WHEN r.risk_level = 'low' THEN 1 ELSE 0 END) AS low_risks,
     ROUND(AVG(r.risk_score), 1) AS avg_risk_score
-FROM security_areas sa
+FROM security_domains sa
 LEFT JOIN risks r ON r.security_area_id = sa.id
 WHERE sa.is_active = TRUE
 GROUP BY sa.id, sa.name;

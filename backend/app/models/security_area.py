@@ -8,7 +8,7 @@ from .base import Base
 
 class SecurityArea(Base):
     """Security Area / Domain — configurable security areas for the CISO."""
-    __tablename__ = "security_areas"
+    __tablename__ = "security_domains"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
@@ -17,7 +17,7 @@ class SecurityArea(Base):
     icon: Mapped[str | None] = mapped_column(String(50))
     color: Mapped[str | None] = mapped_column(String(30))
     owner: Mapped[str | None] = mapped_column(String(200))
-    parent_id: Mapped[int | None] = mapped_column(ForeignKey("security_areas.id", ondelete="SET NULL"))
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("security_domains.id", ondelete="SET NULL"))
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     order_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -33,7 +33,7 @@ class DomainCisControl(Base):
     __tablename__ = "domain_cis_controls"
 
     domain_id: Mapped[int] = mapped_column(
-        ForeignKey("security_areas.id", ondelete="CASCADE"), primary_key=True,
+        ForeignKey("security_domains.id", ondelete="CASCADE"), primary_key=True,
     )
     cis_control_id: Mapped[int] = mapped_column(
         ForeignKey("cis_controls.id", ondelete="CASCADE"), primary_key=True,

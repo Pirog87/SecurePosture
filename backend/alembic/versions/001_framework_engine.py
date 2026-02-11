@@ -10,7 +10,7 @@ Creates: frameworks, framework_nodes, assessment_dimensions, dimension_levels,
 Migrates data from: cis_controls, cis_sub_controls, cis_assessments,
                      cis_assessment_answers → new universal tables.
 
-Adds columns to security_areas: code, icon, color, parent_id, order_id.
+Adds columns to security_domains: code, icon, color, parent_id, order_id.
 """
 from alembic import op
 import sqlalchemy as sa
@@ -23,16 +23,16 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # ── 1. Extend security_areas ──────────────────────────────────
-    op.add_column("security_areas", sa.Column("code", sa.String(50), unique=True, nullable=True))
-    op.add_column("security_areas", sa.Column("icon", sa.String(50), nullable=True))
-    op.add_column("security_areas", sa.Column("color", sa.String(7), nullable=True))
-    op.add_column("security_areas", sa.Column(
+    # ── 1. Extend security_domains ──────────────────────────────────
+    op.add_column("security_domains", sa.Column("code", sa.String(50), unique=True, nullable=True))
+    op.add_column("security_domains", sa.Column("icon", sa.String(50), nullable=True))
+    op.add_column("security_domains", sa.Column("color", sa.String(7), nullable=True))
+    op.add_column("security_domains", sa.Column(
         "parent_id", sa.Integer,
-        sa.ForeignKey("security_areas.id", ondelete="SET NULL"),
+        sa.ForeignKey("security_domains.id", ondelete="SET NULL"),
         nullable=True,
     ))
-    op.add_column("security_areas", sa.Column("order_id", sa.Integer, server_default="0", nullable=False))
+    op.add_column("security_domains", sa.Column("order_id", sa.Integer, server_default="0", nullable=False))
 
     # ── 2. Create: frameworks ─────────────────────────────────────
     op.create_table(
@@ -137,7 +137,7 @@ def upgrade() -> None:
         sa.Column("framework_node_id", sa.Integer,
                   sa.ForeignKey("framework_nodes.id", ondelete="CASCADE"), nullable=False),
         sa.Column("security_area_id", sa.Integer,
-                  sa.ForeignKey("security_areas.id", ondelete="CASCADE"), nullable=False),
+                  sa.ForeignKey("security_domains.id", ondelete="CASCADE"), nullable=False),
         sa.Column("source", sa.Enum("seed", "manual", "ai_suggested",
                                      name="mapping_source_enum"),
                   server_default="manual", nullable=False),
@@ -156,7 +156,7 @@ def upgrade() -> None:
         sa.Column("org_unit_id", sa.Integer,
                   sa.ForeignKey("org_units.id"), nullable=True),
         sa.Column("security_area_id", sa.Integer,
-                  sa.ForeignKey("security_areas.id"), nullable=True),
+                  sa.ForeignKey("security_domains.id"), nullable=True),
         sa.Column("title", sa.String(500), nullable=True),
         sa.Column("assessor", sa.String(200), nullable=True),
         sa.Column("assessment_date", sa.Date, nullable=False),
@@ -408,7 +408,7 @@ def upgrade() -> None:
                 AND a_new.ref_id = CONCAT('ASM-', LPAD(ca_old.id, 4, '0'))
         """), {"dim_id": dim_id, "fw_id": fw_id})
 
-    # 9i. Set security_areas codes for default 13 areas
+    # 9i. Set security_domains codes for default 13 areas
     area_codes = [
         (1, "WORKSTATIONS",         "monitor",   "#3B82F6"),
         (2, "MOBILE_DEVICES",       "smartphone","#8B5CF6"),
@@ -426,7 +426,7 @@ def upgrade() -> None:
     ]
     for sort_order, code, icon, color in area_codes:
         conn.execute(sa.text("""
-            UPDATE security_areas
+            UPDATE security_domains
             SET code = :code, icon = :icon, color = :color, order_id = :order_id
             WHERE sort_order = :sort_order
         """), {"code": code, "icon": icon, "color": color,
@@ -446,8 +446,8 @@ def downgrade() -> None:
     op.drop_table("framework_nodes")
     op.drop_table("frameworks")
 
-    op.drop_column("security_areas", "order_id")
-    op.drop_column("security_areas", "parent_id")
-    op.drop_column("security_areas", "color")
-    op.drop_column("security_areas", "icon")
-    op.drop_column("security_areas", "code")
+    op.drop_column("security_domains", "order_id")
+    op.drop_column("security_domains", "parent_id")
+    op.drop_column("security_domains", "color")
+    op.drop_column("security_domains", "icon")
+    op.drop_column("security_domains", "code")

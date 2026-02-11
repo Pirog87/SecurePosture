@@ -23,7 +23,7 @@ class Risk(Base):
     asset_name: Mapped[str] = mapped_column(String(400), nullable=False)
     sensitivity_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     criticality_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
-    security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_areas.id"))
+    security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_domains.id"))
     threat_id: Mapped[int | None] = mapped_column(ForeignKey("threats.id"))
     vulnerability_id: Mapped[int | None] = mapped_column(ForeignKey("vulnerabilities.id"))
     existing_controls: Mapped[str | None] = mapped_column(Text)

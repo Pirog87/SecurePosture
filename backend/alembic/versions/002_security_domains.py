@@ -5,8 +5,8 @@ Revises: 001_framework_engine
 Create Date: 2026-02-11
 
 Adds:
-  - security_areas.owner column
-  - domain_cis_controls table (M:N security_areas ↔ cis_controls)
+  - security_domains.owner column
+  - domain_cis_controls table (M:N security_domains ↔ cis_controls)
 """
 from alembic import op
 import sqlalchemy as sa
@@ -18,11 +18,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add owner column to security_areas
-    op.add_column("security_areas", sa.Column("owner", sa.String(200), nullable=True))
+    # Add owner column to security_domains
+    op.add_column("security_domains", sa.Column("owner", sa.String(200), nullable=True))
 
     # Widen color column (model uses String(30), migration had String(7))
-    op.alter_column("security_areas", "color",
+    op.alter_column("security_domains", "color",
                     existing_type=sa.String(7),
                     type_=sa.String(30),
                     existing_nullable=True)
@@ -31,7 +31,7 @@ def upgrade() -> None:
     op.create_table(
         "domain_cis_controls",
         sa.Column("domain_id", sa.Integer,
-                  sa.ForeignKey("security_areas.id", ondelete="CASCADE"),
+                  sa.ForeignKey("security_domains.id", ondelete="CASCADE"),
                   primary_key=True),
         sa.Column("cis_control_id", sa.Integer,
                   sa.ForeignKey("cis_controls.id", ondelete="CASCADE"),
@@ -42,8 +42,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("domain_cis_controls")
-    op.alter_column("security_areas", "color",
+    op.alter_column("security_domains", "color",
                     existing_type=sa.String(30),
                     type_=sa.String(7),
                     existing_nullable=True)
-    op.drop_column("security_areas", "owner")
+    op.drop_column("security_domains", "owner")

@@ -12,6 +12,7 @@ import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AssetGraphPage from "./pages/AssetGraphPage";
 import ActionsPage from "./pages/ActionsPage";
 import AuditPage from "./pages/AuditPage";
+import DomainDashboardPage from "./pages/DomainDashboardPage";
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<DashboardPage />} />
+          <Route path="domains" element={<DomainDashboardPage />} />
           <Route path="assets" element={<AssetRegistryPage />} />
           <Route path="assets/graph" element={<AssetGraphPage />} />
           <Route path="risks" element={<RisksPage />} />

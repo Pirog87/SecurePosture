@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
-import type { Risk, Asset, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries } from "../types";
+import type { Risk, Asset, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries, Action } from "../types";
 import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
 
@@ -93,7 +93,7 @@ export default function RisksPage() {
     if (lookups) return lookups;
     const [orgUnits, areas, threats, vulns, safeguards, assets] = await Promise.all([
       api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").catch(() => [] as OrgUnitTreeNode[]),
-      api.get<SecurityArea[]>("/api/v1/security-areas").catch(() => [] as SecurityArea[]),
+      api.get<SecurityArea[]>("/api/v1/domains").catch(() => [] as SecurityArea[]),
       api.get<Threat[]>("/api/v1/threats").catch(() => [] as Threat[]),
       api.get<Vulnerability[]>("/api/v1/vulnerabilities").catch(() => [] as Vulnerability[]),
       api.get<Safeguard[]>("/api/v1/safeguards").catch(() => [] as Safeguard[]),
@@ -306,7 +306,7 @@ export default function RisksPage() {
                   <th>Aktywo</th>
                   <th>Pion</th>
                   <th>Kategoria</th>
-                  <th>Obszar</th>
+                  <th>Domena</th>
                   <th>W</th>
                   <th>P</th>
                   <th>Z</th>
@@ -370,7 +370,7 @@ export default function RisksPage() {
 
             <div style={{ fontSize: 12, lineHeight: 2 }}>
               {/* --- Sekcja 1: Kontekst --- */}
-              <SectionHeader number="\u2460" label="Kontekst (ISO 31000 \u00A75.3)" />
+              <SectionHeader number="\u2460" label="Kontekst" />
               <DetailRow label="ID" value={<span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{selected.code || `R-${selected.id}`}</span>} />
               <DetailRow label="Pion" value={<span style={{ fontSize: 11 }}>{orgPathMap.get(selected.org_unit_id) ?? selected.org_unit_name}</span>} />
               <DetailRow label="Kategoria ryzyka" value={selected.risk_category_name} />
@@ -384,7 +384,7 @@ export default function RisksPage() {
               )}
 
               {/* --- Sekcja 2: Identyfikacja aktywa --- */}
-              <SectionHeader number="\u2461" label="Identyfikacja aktywa (ISO 27005 \u00A78.2)" />
+              <SectionHeader number="\u2461" label="Identyfikacja aktywa" />
               <DetailRow label="Aktywo" value={<span style={{ fontWeight: 500 }}>{selected.asset_name}</span>} />
               {selected.asset_id_name && (
                 <DetailRow label="Z rejestru" value={<span style={{ color: "var(--cyan)" }}>{selected.asset_id_name}</span>} />
@@ -395,7 +395,7 @@ export default function RisksPage() {
 
               {/* --- Sekcja 3: Scenariusz ryzyka --- */}
               <SectionHeader number="\u2462" label="Scenariusz ryzyka" />
-              <DetailRow label="Obszar" value={selected.security_area_name} />
+              <DetailRow label="Domena" value={selected.security_area_name} />
               <DetailRow label="Zagrozenie" value={selected.threat_name} />
               <DetailRow label="Podatnosc" value={selected.vulnerability_name} />
               {selected.existing_controls && (
@@ -417,7 +417,7 @@ export default function RisksPage() {
               )}
 
               {/* --- Sekcja 4: Analiza ryzyka --- */}
-              <SectionHeader number="\u2463" label="Analiza ryzyka (ISO 27005 \u00A78.3)" />
+              <SectionHeader number="\u2463" label="Analiza ryzyka" />
               <DetailRow label="Wplyw (W)" value={selected.impact_level} />
               <DetailRow label="Prawdopodobienstwo (P)" value={selected.probability_level} />
               <DetailRow label="Zabezpieczenia (Z)" value={selected.safeguard_rating} />
@@ -428,7 +428,7 @@ export default function RisksPage() {
               } />
 
               {/* --- Sekcja 5: Postepowanie z ryzykiem --- */}
-              <SectionHeader number="\u2464" label="Postepowanie z ryzykiem (ISO 27005 \u00A78.5)" />
+              <SectionHeader number="\u2464" label="Postepowanie z ryzykiem" />
               <DetailRow label="Strategia" value={selected.strategy_name} />
               {selected.treatment_plan && (
                 <div style={{ marginTop: 4 }}>
@@ -488,7 +488,7 @@ export default function RisksPage() {
               )}
 
               {/* --- Sekcja 6: Akceptacja i monitorowanie --- */}
-              <SectionHeader number="\u2465" label="Akceptacja i monitorowanie (ISO 27005 \u00A78.6/\u00A79)" />
+              <SectionHeader number="\u2465" label="Akceptacja i monitorowanie" />
               <DetailRow label="Status" value={
                 selected.status_name ? (
                   <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{selected.status_name}</span>
@@ -535,6 +535,34 @@ export default function RisksPage() {
                   </div>
                 </div>
               )}
+
+              {/* --- Powiazane dzialania --- */}
+              {selected.linked_actions && selected.linked_actions.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <SectionHeader number="" label="Powiazane dzialania" />
+                  {selected.linked_actions.map(a => (
+                    <div key={a.action_id} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      padding: "6px 8px", borderRadius: 6, marginBottom: 4,
+                      background: a.is_overdue ? "rgba(239,68,68,0.06)" : "rgba(255,255,255,0.02)",
+                      border: a.is_overdue ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(42,53,84,0.15)",
+                    }}>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 500 }}>{a.title}</div>
+                        <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                          {a.owner && <span>{a.owner}</span>}
+                          {a.due_date && <span> | {a.due_date.slice(0, 10)}{a.is_overdue && " (po terminie!)"}</span>}
+                        </div>
+                      </div>
+                      {a.status_name && (
+                        <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)", fontSize: 10 }}>
+                          {a.status_name}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Actions */}
@@ -569,7 +597,125 @@ export default function RisksPage() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   RiskForm — ISO 27005/31000 structured form with live calculators
+   ActionSearch — searchable action picker for linking to risks
+   ═══════════════════════════════════════════════════════════════════ */
+function ActionSearch({ riskId, existingLinks }: { riskId: number | null; existingLinks: { action_id: number; title: string }[] }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Action[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [linked, setLinked] = useState<{ action_id: number; title: string }[]>(existingLinks);
+
+  useEffect(() => {
+    if (query.length < 2) { setResults([]); return; }
+    const timer = setTimeout(() => {
+      setSearching(true);
+      api.get<Action[]>("/api/v1/actions")
+        .then(all => {
+          const q = query.toLowerCase();
+          setResults(all.filter(a =>
+            a.title.toLowerCase().includes(q) ||
+            (a.owner ?? "").toLowerCase().includes(q) ||
+            (a.description ?? "").toLowerCase().includes(q)
+          ).slice(0, 10));
+        })
+        .catch(() => {})
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const linkAction = async (action: Action) => {
+    if (!riskId) return;
+    if (linked.some(l => l.action_id === action.id)) return;
+    try {
+      // Get the action, update its links to include this risk
+      const full = await api.get<Action>(`/api/v1/actions/${action.id}`);
+      const existingEntityLinks = full.links.map(l => ({ entity_type: l.entity_type, entity_id: l.entity_id }));
+      existingEntityLinks.push({ entity_type: "risk", entity_id: riskId });
+      await api.put(`/api/v1/actions/${action.id}`, { links: existingEntityLinks });
+      setLinked([...linked, { action_id: action.id, title: action.title }]);
+      setQuery("");
+      setResults([]);
+    } catch (err) {
+      alert("Blad wiazania: " + err);
+    }
+  };
+
+  const unlinkAction = async (actionId: number) => {
+    if (!riskId) return;
+    try {
+      const full = await api.get<Action>(`/api/v1/actions/${actionId}`);
+      const updatedLinks = full.links
+        .filter(l => !(l.entity_type === "risk" && l.entity_id === riskId))
+        .map(l => ({ entity_type: l.entity_type, entity_id: l.entity_id }));
+      await api.put(`/api/v1/actions/${actionId}`, { links: updatedLinks });
+      setLinked(linked.filter(l => l.action_id !== actionId));
+    } catch (err) {
+      alert("Blad odlaczania: " + err);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <label style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4, display: "block" }}>
+        Powiazane dzialania ({linked.length})
+      </label>
+      {linked.map(l => (
+        <div key={l.action_id} style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "4px 8px", background: "rgba(59,130,246,0.06)", borderRadius: 4, marginBottom: 4,
+          fontSize: 12,
+        }}>
+          <span>{l.title}</span>
+          <button type="button" className="btn btn-sm" style={{ padding: "0 6px", fontSize: 10, color: "var(--red)" }}
+            onClick={() => unlinkAction(l.action_id)}>&#10005;</button>
+        </div>
+      ))}
+      {riskId && (
+        <div style={{ position: "relative" }}>
+          <input
+            className="form-control"
+            style={{ fontSize: 12 }}
+            placeholder="Szukaj dzialania po tytule, wlascicielu..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+          {searching && <span style={{ position: "absolute", right: 8, top: 8, fontSize: 10, color: "var(--text-muted)" }}>...</span>}
+          {results.length > 0 && (
+            <div style={{
+              position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+              background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
+              maxHeight: 200, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            }}>
+              {results.map(a => (
+                <div key={a.id} style={{
+                  padding: "8px 12px", cursor: "pointer", fontSize: 12,
+                  borderBottom: "1px solid rgba(42,53,84,0.15)",
+                  opacity: linked.some(l => l.action_id === a.id) ? 0.4 : 1,
+                }}
+                  onClick={() => linkAction(a)}
+                >
+                  <div style={{ fontWeight: 500 }}>{a.title}</div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                    {a.owner && <span>{a.owner}</span>}
+                    {a.status_name && <span> | {a.status_name}</span>}
+                    {a.due_date && <span> | {a.due_date.slice(0, 10)}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {!riskId && (
+        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Zapisz ryzyko najpierw, aby moc wiazac dzialania</span>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RiskForm — structured form with live calculators
    ═══════════════════════════════════════════════════════════════════ */
 function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: {
   editRisk: Risk | null;
@@ -623,7 +769,7 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
       </div>
 
       {/* ═══ Sekcja 1: Kontekst (ISO 31000 §5.3) ═══ */}
-      <SectionHeader number={"\u2460"} label="Kontekst (ISO 31000 \u00A75.3)" />
+      <SectionHeader number={"\u2460"} label="Kontekst" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div className="form-group">
           <label>Jednostka organizacyjna *</label>
@@ -646,7 +792,7 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
       </div>
 
       {/* ═══ Sekcja 2: Identyfikacja aktywa (ISO 27005 §8.2) ═══ */}
-      <SectionHeader number={"\u2461"} label="Identyfikacja aktywa (ISO 27005 \u00A78.2)" />
+      <SectionHeader number={"\u2461"} label="Identyfikacja aktywa" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div className="form-group">
           <label>Powiazany aktyw (z rejestru)</label>
@@ -686,7 +832,7 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
       <SectionHeader number={"\u2462"} label="Scenariusz ryzyka" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div className="form-group">
-          <label>Obszar raportowania</label>
+          <label>Domena bezpieczenstwa</label>
           <select name="security_area_id" className="form-control" defaultValue={editRisk?.security_area_id ?? ""}>
             <option value="">Wybierz...</option>
             {lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -724,7 +870,7 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
       </div>
 
       {/* ═══ Sekcja 4: Analiza ryzyka (ISO 27005 §8.3) ═══ */}
-      <SectionHeader number={"\u2463"} label="Analiza ryzyka (ISO 27005 \u00A78.3)" />
+      <SectionHeader number={"\u2463"} label="Analiza ryzyka" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
         <div className="form-group">
           <label>Wplyw (W) *</label>
@@ -754,7 +900,7 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
       </div>
 
       {/* ═══ Sekcja 5: Postepowanie z ryzykiem (ISO 27005 §8.5) ═══ */}
-      <SectionHeader number={"\u2464"} label="Postepowanie z ryzykiem (ISO 27005 \u00A78.5)" />
+      <SectionHeader number={"\u2464"} label="Postepowanie z ryzykiem" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div className="form-group">
           <label>Strategia</label>
@@ -784,6 +930,12 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
           <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Ctrl+klik aby wybrac wiele</span>
         </div>
       </div>
+
+      {/* Action Search (only when editing) */}
+      <ActionSearch
+        riskId={editRisk?.id ?? null}
+        existingLinks={(editRisk?.linked_actions ?? []).map(a => ({ action_id: a.action_id, title: a.title }))}
+      />
 
       {/* Residual Risk -- Target Components */}
       <div style={{
@@ -834,7 +986,7 @@ function RiskForm({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: 
       <input type="hidden" name="residual_risk" value={residualScore.toFixed(2)} />
 
       {/* ═══ Sekcja 6: Akceptacja i monitorowanie (ISO 27005 §8.6/§9) ═══ */}
-      <SectionHeader number={"\u2465"} label="Akceptacja i monitorowanie (ISO 27005 \u00A78.6/\u00A79)" />
+      <SectionHeader number={"\u2465"} label="Akceptacja i monitorowanie" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div className="form-group">
           <label>Status</label>

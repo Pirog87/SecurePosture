@@ -7,7 +7,7 @@ risk_level:  high >=221, medium 31-220, low <31
 Residual R = EXP(target_W) x target_P / target_Z
 """
 import math
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
@@ -15,14 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.database import get_session
+from app.models.action import Action, ActionLink
 from app.models.asset import Asset
 from app.models.catalog import Safeguard, Threat, Vulnerability
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk, RiskSafeguard
-from app.models.security_area import SecurityArea
+from app.models.security_area import SecurityDomain as SecurityArea
 from app.schemas.risk import (
-    RiskAcceptRequest, RiskCreate, RiskOut, RiskSafeguardRef, RiskUpdate,
+    LinkedActionRef, RiskAcceptRequest, RiskCreate, RiskOut, RiskSafeguardRef, RiskUpdate,
 )
 
 router = APIRouter(prefix="/api/v1/risks", tags=["Analiza ryzyka"])
@@ -112,7 +113,40 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         created_at=risk.created_at,
         updated_at=risk.updated_at,
         safeguards=[RiskSafeguardRef(safeguard_id=sid, safeguard_name=sn) for sid, sn in sg_rows],
+        linked_actions=await _get_linked_actions(s, risk.id),
     )
+
+
+async def _get_linked_actions(s: AsyncSession, risk_id: int) -> list[LinkedActionRef]:
+    """Get actions linked to this risk via action_links table."""
+    q = (
+        select(
+            Action.id,
+            Action.title,
+            Action.owner,
+            Action.due_date,
+            DictionaryEntry.label.label("status_name"),
+        )
+        .join(ActionLink, ActionLink.action_id == Action.id)
+        .join(DictionaryEntry, Action.status_id == DictionaryEntry.id, isouter=True)
+        .where(ActionLink.entity_type == "risk")
+        .where(ActionLink.entity_id == risk_id)
+        .where(Action.is_active.is_(True))
+        .order_by(Action.due_date.asc().nulls_last())
+    )
+    rows = (await s.execute(q)).all()
+    today = date.today()
+    return [
+        LinkedActionRef(
+            action_id=r.id,
+            title=r.title,
+            status_name=r.status_name,
+            owner=r.owner,
+            due_date=r.due_date,
+            is_overdue=r.due_date is not None and r.due_date < today,
+        )
+        for r in rows
+    ]
 
 
 def _calc_residual(tw: int | None, tp: int | None, tz: float | None) -> float | None:

@@ -1,10 +1,18 @@
 """
-Framework import service — parses CISO Assistant Excel/YAML files
-and creates Framework + FrameworkNodes + Dimensions + Levels.
+Framework Import Service — parses CISO Assistant Excel/YAML files.
+
+Supports:
+  - Excel v2 format (tabs: library_content + framework nodes)
+  - YAML native format
+  - Default dimension creation when framework has no scale defined
 """
+from __future__ import annotations
+
 import io
+import logging
 from datetime import datetime
 from decimal import Decimal
+from typing import Any, BinaryIO
 
 import yaml
 from openpyxl import load_workbook
@@ -12,214 +20,61 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.framework import (
-    AssessmentDimension,
-    DimensionLevel,
-    Framework,
-    FrameworkNode,
+    AssessmentDimension, DimensionLevel, Framework, FrameworkNode,
 )
 
+log = logging.getLogger(__name__)
 
-# ═══════════════════ Default scale (fallback) ═══════════════════
+
+# ─────────────────────────────────────────────
+# Default scale (used when framework has none)
+# ─────────────────────────────────────────────
 
 DEFAULT_DIMENSION = {
     "dimension_key": "compliance_level",
     "name": "Compliance Level",
     "name_pl": "Poziom zgodności",
     "levels": [
-        {"level_order": 0, "value": "0.00", "label": "Not implemented",  "label_pl": "Niezaimplementowane", "color": "#EF4444"},
-        {"level_order": 1, "value": "0.33", "label": "Partially implemented", "label_pl": "Częściowo",        "color": "#EAB308"},
-        {"level_order": 2, "value": "0.66", "label": "Largely implemented",  "label_pl": "W dużej mierze",    "color": "#22C55E"},
-        {"level_order": 3, "value": "1.00", "label": "Fully implemented",    "label_pl": "W pełni",           "color": "#16A34A"},
+        {"order": 0, "value": 0.00, "label": "Not implemented", "label_pl": "Niezaimplementowane", "color": "#EF4444"},
+        {"order": 1, "value": 0.33, "label": "Partially implemented", "label_pl": "Częściowo", "color": "#EAB308"},
+        {"order": 2, "value": 0.66, "label": "Largely implemented", "label_pl": "W dużej mierze", "color": "#22C55E"},
+        {"order": 3, "value": 1.00, "label": "Fully implemented", "label_pl": "W pełni", "color": "#16A34A"},
     ],
 }
 
 
-# ═══════════════════ Excel Parser ═══════════════════
-
-async def import_from_excel(
-    session: AsyncSession,
-    file_bytes: bytes,
-    filename: str = "",
-    imported_by: str = "system",
-) -> Framework:
-    """Parse a CISO Assistant Excel (.xlsx) file and insert framework."""
-    wb = load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
-
-    # ── Read library_content tab ──
-    if "library_content" not in wb.sheetnames:
-        raise ValueError("Excel file missing 'library_content' tab")
-    lc = wb["library_content"]
-
-    meta: dict[str, str] = {}
-    for row in lc.iter_rows(min_row=1, max_col=2, values_only=True):
-        if row[0] and row[1]:
-            meta[str(row[0]).strip()] = str(row[1]).strip()
-
-    urn = meta.get("framework_urn", meta.get("library_urn", ""))
-    ref_id = meta.get("framework_ref_id", meta.get("ref_id", ""))
-    name = meta.get("framework_name", meta.get("library_name", filename))
-
-    if not urn:
-        raise ValueError("Cannot determine framework URN from library_content")
-
-    # Check for duplicate URN
-    existing = (await session.execute(
-        select(Framework).where(Framework.urn == urn)
-    )).scalar_one_or_none()
-    if existing:
-        raise ValueError(f"Framework with URN '{urn}' already exists (id={existing.id})")
-
-    fw = Framework(
-        urn=urn,
-        ref_id=ref_id or urn.split(":")[-1],
-        name=name,
-        description=meta.get("framework_description", meta.get("library_description", "")),
-        version=meta.get("library_version", ""),
-        provider=meta.get("library_provider", ""),
-        packager=meta.get("library_packager", "intuitem"),
-        copyright=meta.get("library_copyright", ""),
-        source_format="ciso_assistant_excel",
-        locale=meta.get("library_locale", "en"),
-        imported_at=datetime.utcnow(),
-        imported_by=imported_by,
-    )
-
-    # Parse implementation_groups_definition if present
-    ig_def = meta.get("implementation_groups_definition")
-    if ig_def:
-        try:
-            fw.implementation_groups_definition = yaml.safe_load(ig_def)
-        except Exception:
-            pass
-
-    session.add(fw)
-    await session.flush()
-
-    # ── Read requirement nodes tab ──
-    # Tab name = ref_id of the framework, or second sheet
-    node_tab_name = ref_id or (wb.sheetnames[1] if len(wb.sheetnames) > 1 else None)
-    if node_tab_name and node_tab_name in wb.sheetnames:
-        ws = wb[node_tab_name]
-    elif len(wb.sheetnames) > 1:
-        ws = wb[wb.sheetnames[1]]
-    else:
-        raise ValueError("Cannot find requirement nodes tab in Excel file")
-
-    # Read header row
-    headers: list[str] = []
-    for cell in next(ws.iter_rows(min_row=1, max_row=1, values_only=True)):
-        headers.append(str(cell).strip().lower() if cell else "")
-
-    def col(name: str, row_vals: tuple) -> str | None:
-        if name in headers:
-            idx = headers.index(name)
-            val = row_vals[idx] if idx < len(row_vals) else None
-            return str(val).strip() if val is not None else None
-        return None
-
-    # Track parent stack by depth
-    parent_stack: dict[int, FrameworkNode] = {}
-    order_counter: dict[int, int] = {}
-    total_nodes = 0
-    total_assessable = 0
-
-    for row_vals in ws.iter_rows(min_row=2, values_only=True):
-        depth_str = col("depth", row_vals)
-        if not depth_str:
-            continue
-        try:
-            depth = int(float(depth_str))
-        except (ValueError, TypeError):
-            continue
-
-        node_ref_id = col("ref_id", row_vals) or ""
-        node_name = col("name", row_vals) or col("description", row_vals) or node_ref_id
-        if not node_name:
-            continue
-
-        assessable_str = col("assessable", row_vals)
-        assessable = assessable_str and str(assessable_str).lower() in ("true", "1", "yes", "x")
-
-        # Determine parent
-        parent = parent_stack.get(depth - 1)
-
-        # Order within depth group
-        order_counter[depth] = order_counter.get(depth, 0) + 1
-
-        node_urn = col("urn", row_vals) or ""
-        if not node_urn and fw.urn:
-            node_urn = f"{fw.urn}:{node_ref_id}" if node_ref_id else ""
-
-        node = FrameworkNode(
-            framework_id=fw.id,
-            parent_id=parent.id if parent else None,
-            urn=node_urn or None,
-            ref_id=node_ref_id or None,
-            name=node_name,
-            description=col("description", row_vals),
-            depth=depth,
-            order_id=order_counter[depth],
-            assessable=bool(assessable),
-            implementation_groups=col("implementation_groups", row_vals),
-            annotation=col("annotation", row_vals),
-            typical_evidence=col("typical_evidence", row_vals),
-        )
-        session.add(node)
-        await session.flush()
-
-        parent_stack[depth] = node
-        total_nodes += 1
-        if assessable:
-            total_assessable += 1
-
-    fw.total_nodes = total_nodes
-    fw.total_assessable = total_assessable
-
-    # ── Create default dimension if none defined ──
-    score_def = meta.get("score_definition")
-    if score_def:
-        try:
-            _create_dimensions_from_score_def(session, fw, yaml.safe_load(score_def))
-        except Exception:
-            _create_default_dimension(session, fw)
-    else:
-        _create_default_dimension(session, fw)
-
-    await session.flush()
-    wb.close()
-    return fw
-
-
-def _create_default_dimension(session: AsyncSession, fw: Framework) -> None:
+async def _create_default_dimensions(s: AsyncSession, fw: Framework) -> int:
+    """Create the default single-dimension scale for a framework."""
+    d = DEFAULT_DIMENSION
     dim = AssessmentDimension(
         framework_id=fw.id,
-        dimension_key=DEFAULT_DIMENSION["dimension_key"],
-        name=DEFAULT_DIMENSION["name"],
-        name_pl=DEFAULT_DIMENSION["name_pl"],
+        dimension_key=d["dimension_key"],
+        name=d["name"],
+        name_pl=d["name_pl"],
         order_id=1,
         weight=Decimal("1.00"),
     )
-    session.add(dim)
-    # We need to flush to get dim.id, but this is called inside an already-flushed context
-    # so we add levels directly referencing the dimension object
-    for lvl in DEFAULT_DIMENSION["levels"]:
-        session.add(DimensionLevel(
-            dimension=dim,
-            level_order=lvl["level_order"],
-            value=Decimal(lvl["value"]),
-            label=lvl["label"],
-            label_pl=lvl["label_pl"],
-            color=lvl["color"],
+    s.add(dim)
+    await s.flush()
+
+    for lvl_data in d["levels"]:
+        s.add(DimensionLevel(
+            dimension_id=dim.id,
+            level_order=lvl_data["order"],
+            value=Decimal(str(lvl_data["value"])),
+            label=lvl_data["label"],
+            label_pl=lvl_data["label_pl"],
+            color=lvl_data["color"],
         ))
 
+    return 1  # 1 dimension created
 
-def _create_dimensions_from_score_def(
-    session: AsyncSession, fw: Framework, score_def: list | dict,
-) -> None:
-    """Parse score_definition from library_content into dimensions+levels."""
-    if isinstance(score_def, dict):
-        score_def = [score_def]
 
+async def _create_dimensions_from_score_def(
+    s: AsyncSession, fw: Framework, score_def: list[dict]
+) -> int:
+    """Create dimensions + levels from a CISO Assistant score definition."""
+    count = 0
     for idx, dim_def in enumerate(score_def):
         dim = AssessmentDimension(
             framework_id=fw.id,
@@ -227,128 +82,308 @@ def _create_dimensions_from_score_def(
             name=dim_def.get("name", f"Dimension {idx+1}"),
             name_pl=dim_def.get("name_pl"),
             order_id=idx + 1,
-            weight=Decimal(str(dim_def.get("weight", "1.00"))),
+            weight=Decimal(str(dim_def.get("weight", 1.0))),
         )
-        session.add(dim)
-        for lvl_idx, lvl_def in enumerate(dim_def.get("levels", [])):
-            session.add(DimensionLevel(
-                dimension=dim,
+        s.add(dim)
+        await s.flush()
+
+        for lvl_idx, lvl_data in enumerate(dim_def.get("levels", [])):
+            s.add(DimensionLevel(
+                dimension_id=dim.id,
                 level_order=lvl_idx,
-                value=Decimal(str(lvl_def.get("value", 0))),
-                label=lvl_def.get("label", ""),
-                label_pl=lvl_def.get("label_pl"),
-                color=lvl_def.get("color"),
+                value=Decimal(str(lvl_data.get("value", 0))),
+                label=lvl_data.get("label", ""),
+                label_pl=lvl_data.get("label_pl"),
+                color=lvl_data.get("color"),
             ))
+        count += 1
+    return count
 
-    if not score_def:
-        _create_default_dimension(session, fw)
 
+# ═══════════════════════════════════════════════
+# EXCEL PARSER (CISO Assistant v2 format)
+# ═══════════════════════════════════════════════
 
-# ═══════════════════ YAML Parser ═══════════════════
-
-async def import_from_yaml(
-    session: AsyncSession,
-    file_bytes: bytes,
-    filename: str = "",
-    imported_by: str = "system",
+async def import_from_excel(
+    s: AsyncSession, file: BinaryIO, imported_by: str = "admin"
 ) -> Framework:
-    """Parse a CISO Assistant YAML file and insert framework."""
-    data = yaml.safe_load(file_bytes)
+    """Import framework from CISO Assistant Excel v2 format."""
+    wb = load_workbook(file, read_only=True, data_only=True)
 
-    if not isinstance(data, dict):
-        raise ValueError("Invalid YAML structure — expected a mapping at top level")
+    # 1. Read library_content metadata tab
+    meta = _read_excel_metadata(wb)
 
-    urn = data.get("urn", "")
-    ref_id = data.get("ref_id", "")
-    name = data.get("name", filename)
+    # 2. Check for duplicate URN
+    fw_urn = meta.get("framework_urn")
+    if fw_urn:
+        existing = (await s.execute(
+            select(Framework).where(Framework.urn == fw_urn)
+        )).scalar_one_or_none()
+        if existing:
+            raise ValueError(f"Framework with URN '{fw_urn}' already exists (id={existing.id})")
 
-    if not urn:
-        raise ValueError("YAML missing required 'urn' field")
-
-    existing = (await session.execute(
-        select(Framework).where(Framework.urn == urn)
-    )).scalar_one_or_none()
-    if existing:
-        raise ValueError(f"Framework with URN '{urn}' already exists (id={existing.id})")
-
+    # 3. Create Framework record
     fw = Framework(
-        urn=urn,
-        ref_id=ref_id or urn.split(":")[-1],
-        name=name,
-        description=data.get("description", ""),
-        version=data.get("version", ""),
-        provider=data.get("provider", ""),
-        packager=data.get("packager", "intuitem"),
-        copyright=data.get("copyright", ""),
-        source_format="ciso_assistant_yaml",
-        locale=data.get("locale", "en"),
+        urn=fw_urn,
+        ref_id=meta.get("framework_ref_id") or meta.get("ref_id"),
+        name=meta.get("framework_name") or meta.get("library_name", "Unnamed Framework"),
+        description=meta.get("framework_description") or meta.get("library_description"),
+        version=meta.get("library_version"),
+        provider=meta.get("library_provider"),
+        packager=meta.get("library_packager"),
+        copyright=meta.get("library_copyright"),
+        source_format="ciso_assistant_excel",
+        locale=meta.get("library_locale", "en"),
+        implementation_groups_definition=meta.get("implementation_groups_definition"),
         imported_at=datetime.utcnow(),
         imported_by=imported_by,
     )
+    s.add(fw)
+    await s.flush()
 
-    ig = data.get("implementation_groups_definition")
-    if ig and isinstance(ig, dict):
-        fw.implementation_groups_definition = ig
+    # 4. Read nodes from framework tab
+    tab_name = meta.get("framework_ref_id") or meta.get("ref_id")
+    nodes_data = _read_excel_nodes(wb, tab_name)
 
-    session.add(fw)
-    await session.flush()
+    # 5. Insert nodes
+    total, assessable = await _insert_nodes(s, fw, nodes_data)
+    fw.total_nodes = total
+    fw.total_assessable = assessable
 
-    # Parse nodes
-    nodes = data.get("requirement_nodes", data.get("children", []))
-    total_nodes, total_assessable = await _insert_yaml_nodes(session, fw.id, nodes, parent_id=None)
-    fw.total_nodes = total_nodes
-    fw.total_assessable = total_assessable
-
-    # Dimensions
-    score_def = data.get("scores", data.get("score_definition"))
-    if score_def:
-        _create_dimensions_from_score_def(session, fw, score_def)
+    # 6. Create dimensions
+    score_def = meta.get("score_definition")
+    if score_def and isinstance(score_def, list):
+        dims_count = await _create_dimensions_from_score_def(s, fw, score_def)
     else:
-        _create_default_dimension(session, fw)
+        dims_count = await _create_default_dimensions(s, fw)
 
-    await session.flush()
+    wb.close()
     return fw
 
 
-async def _insert_yaml_nodes(
-    session: AsyncSession,
-    framework_id: int,
-    nodes: list[dict],
-    parent_id: int | None,
-    depth: int = 1,
-) -> tuple[int, int]:
-    total = 0
-    assessable_count = 0
+def _read_excel_metadata(wb) -> dict[str, Any]:
+    """Read the library_content tab for metadata."""
+    meta = {}
 
-    for order, node_data in enumerate(nodes, start=1):
-        assessable = node_data.get("assessable", False)
-        node = FrameworkNode(
-            framework_id=framework_id,
-            parent_id=parent_id,
-            urn=node_data.get("urn"),
-            ref_id=node_data.get("ref_id"),
-            name=node_data.get("name", node_data.get("description", "")),
-            description=node_data.get("description"),
-            depth=node_data.get("depth", depth),
-            order_id=order,
-            assessable=bool(assessable),
-            implementation_groups=node_data.get("implementation_groups"),
-            annotation=node_data.get("annotation"),
-            typical_evidence=node_data.get("typical_evidence"),
-        )
-        session.add(node)
-        await session.flush()
+    if "library_content" not in wb.sheetnames:
+        # Try first sheet as fallback
+        return meta
 
-        total += 1
-        if assessable:
-            assessable_count += 1
+    ws = wb["library_content"]
 
-        children = node_data.get("children", [])
+    for row in ws.iter_rows(min_row=1, max_col=2, values_only=True):
+        if row[0] and row[1]:
+            key = str(row[0]).strip().lower()
+            val = row[1]
+            # Normalize keys
+            key = key.replace(" ", "_")
+            meta[key] = val
+
+    # Parse JSON fields
+    for json_key in ("implementation_groups_definition", "score_definition"):
+        if json_key in meta and isinstance(meta[json_key], str):
+            import json
+            try:
+                meta[json_key] = json.loads(meta[json_key])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    return meta
+
+
+def _read_excel_nodes(wb, tab_name: str | None) -> list[dict]:
+    """Read the framework nodes from the named tab."""
+    # Find the right tab
+    ws = None
+    if tab_name and tab_name in wb.sheetnames:
+        ws = wb[tab_name]
+    else:
+        # Try tabs that aren't 'library_content'
+        for name in wb.sheetnames:
+            if name.lower() != "library_content":
+                ws = wb[name]
+                break
+
+    if ws is None:
+        return []
+
+    # Read header row
+    headers = []
+    for cell in next(ws.iter_rows(min_row=1, max_row=1, values_only=True)):
+        headers.append(str(cell).strip().lower() if cell else "")
+
+    nodes = []
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        row_dict = {}
+        for i, val in enumerate(row):
+            if i < len(headers) and headers[i]:
+                row_dict[headers[i]] = val
+        if row_dict.get("ref_id") or row_dict.get("name"):
+            nodes.append(row_dict)
+
+    return nodes
+
+
+# ═══════════════════════════════════════════════
+# YAML PARSER (CISO Assistant native format)
+# ═══════════════════════════════════════════════
+
+async def import_from_yaml(
+    s: AsyncSession, file: BinaryIO, imported_by: str = "admin"
+) -> Framework:
+    """Import framework from CISO Assistant YAML format."""
+    content = file.read()
+    if isinstance(content, bytes):
+        content = content.decode("utf-8")
+    data = yaml.safe_load(content)
+
+    if not data:
+        raise ValueError("Empty YAML file")
+
+    # Handle both library wrapper and direct framework format
+    fw_data = data
+    if "objects" in data:
+        # Library wrapper format
+        for obj in data["objects"]:
+            if obj.get("type") == "framework":
+                fw_data = obj
+                break
+
+    # Check for duplicate URN
+    fw_urn = fw_data.get("urn")
+    if fw_urn:
+        existing = (await s.execute(
+            select(Framework).where(Framework.urn == fw_urn)
+        )).scalar_one_or_none()
+        if existing:
+            raise ValueError(f"Framework with URN '{fw_urn}' already exists (id={existing.id})")
+
+    # Create Framework record
+    fw = Framework(
+        urn=fw_urn,
+        ref_id=fw_data.get("ref_id"),
+        name=fw_data.get("name", "Unnamed Framework"),
+        description=fw_data.get("description"),
+        version=fw_data.get("version") or data.get("version"),
+        provider=fw_data.get("provider") or data.get("provider"),
+        packager=fw_data.get("packager") or data.get("packager"),
+        copyright=fw_data.get("copyright") or data.get("copyright"),
+        source_format="ciso_assistant_yaml",
+        locale=fw_data.get("locale") or data.get("locale", "en"),
+        implementation_groups_definition=fw_data.get("implementation_groups_definition"),
+        imported_at=datetime.utcnow(),
+        imported_by=imported_by,
+    )
+    s.add(fw)
+    await s.flush()
+
+    # Parse nodes
+    req_nodes = fw_data.get("requirement_nodes", [])
+    nodes_data = _flatten_yaml_nodes(req_nodes)
+
+    total, assessable = await _insert_nodes(s, fw, nodes_data)
+    fw.total_nodes = total
+    fw.total_assessable = assessable
+
+    # Create dimensions
+    score_def = fw_data.get("scores") or fw_data.get("score_definition")
+    if score_def and isinstance(score_def, list):
+        await _create_dimensions_from_score_def(s, fw, score_def)
+    else:
+        await _create_default_dimensions(s, fw)
+
+    return fw
+
+
+def _flatten_yaml_nodes(nodes: list[dict], depth: int = 1) -> list[dict]:
+    """Flatten hierarchical YAML nodes into a flat list with depth info."""
+    result = []
+    for node in nodes:
+        flat = {
+            "urn": node.get("urn"),
+            "ref_id": node.get("ref_id"),
+            "name": node.get("name", ""),
+            "description": node.get("description"),
+            "depth": node.get("depth", depth),
+            "assessable": node.get("assessable", False),
+            "implementation_groups": node.get("implementation_groups"),
+            "annotation": node.get("annotation"),
+            "typical_evidence": node.get("typical_evidence"),
+            "threats": node.get("threats"),
+            "reference_controls": node.get("reference_controls"),
+        }
+        result.append(flat)
+
+        children = node.get("children", [])
         if children:
-            child_total, child_assess = await _insert_yaml_nodes(
-                session, framework_id, children, node.id, depth + 1,
-            )
-            total += child_total
-            assessable_count += child_assess
+            result.extend(_flatten_yaml_nodes(children, depth + 1))
 
-    return total, assessable_count
+    return result
+
+
+# ═══════════════════════════════════════════════
+# SHARED: Insert nodes from flat list
+# ═══════════════════════════════════════════════
+
+async def _insert_nodes(
+    s: AsyncSession, fw: Framework, nodes_data: list[dict]
+) -> tuple[int, int]:
+    """Insert framework nodes. Returns (total, assessable) counts."""
+    if not nodes_data:
+        return (0, 0)
+
+    total = 0
+    assessable = 0
+
+    # Track parent stack by depth for auto-parenting
+    parent_stack: dict[int, int] = {}  # depth → node_id
+
+    for idx, nd in enumerate(nodes_data):
+        depth = int(nd.get("depth", 1))
+        is_assessable = bool(nd.get("assessable", False))
+
+        # Determine parent
+        parent_id = None
+        if depth > 1:
+            # Find parent at depth-1
+            parent_id = parent_stack.get(depth - 1)
+
+        ig = nd.get("implementation_groups")
+        if ig and isinstance(ig, list):
+            ig = ",".join(str(x) for x in ig)
+
+        threats = nd.get("threats")
+        if threats and isinstance(threats, str):
+            threats = None  # Only store if dict/list
+
+        ref_controls = nd.get("reference_controls")
+        if ref_controls and isinstance(ref_controls, str):
+            ref_controls = None
+
+        node = FrameworkNode(
+            framework_id=fw.id,
+            parent_id=parent_id,
+            urn=nd.get("urn"),
+            ref_id=str(nd["ref_id"]) if nd.get("ref_id") else None,
+            name=str(nd.get("name", "")),
+            name_pl=nd.get("name_pl"),
+            description=nd.get("description"),
+            description_pl=nd.get("description_pl"),
+            depth=depth,
+            order_id=idx + 1,
+            assessable=is_assessable,
+            implementation_groups=ig,
+            annotation=nd.get("annotation"),
+            threats=threats if isinstance(threats, (dict, list)) else None,
+            reference_controls=ref_controls if isinstance(ref_controls, (dict, list)) else None,
+            typical_evidence=nd.get("typical_evidence"),
+        )
+        s.add(node)
+        await s.flush()  # Get the ID
+
+        parent_stack[depth] = node.id
+        total += 1
+        if is_assessable:
+            assessable += 1
+
+    return (total, assessable)

@@ -116,10 +116,13 @@ class FrameworkNode(Base):
     # relationships
     framework: Mapped["Framework"] = relationship(back_populates="nodes")
     parent: Mapped["FrameworkNode | None"] = relationship(
-        remote_side="FrameworkNode.id", backref="children",
+        remote_side="FrameworkNode.id", foreign_keys=[parent_id],
     )
-    security_area_mappings: Mapped[list["FrameworkNodeSecurityArea"]] = relationship(
-        back_populates="framework_node", cascade="all, delete-orphan",
+    children: Mapped[list["FrameworkNode"]] = relationship(
+        back_populates="parent", foreign_keys=[parent_id],
+    )
+    area_mappings: Mapped[list["FrameworkNodeSecurityArea"]] = relationship(
+        back_populates="node", cascade="all, delete-orphan",
     )
 
 
@@ -144,7 +147,7 @@ class FrameworkNodeSecurityArea(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     # relationships
-    framework_node: Mapped["FrameworkNode"] = relationship(back_populates="security_area_mappings")
+    node: Mapped["FrameworkNode"] = relationship(back_populates="area_mappings")
     security_area: Mapped["SecurityArea"] = relationship()
 
 

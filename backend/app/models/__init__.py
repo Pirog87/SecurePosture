@@ -9,6 +9,10 @@ from .risk import Risk, RiskSafeguard, RiskReview, RiskReviewConfig
 from .cis import CisControl, CisSubControl, CisAttackMapping, CisAssessment, CisAssessmentAnswer
 from .action import Action, ActionLink, ActionHistory
 from .audit import AuditLog
+from .framework import (
+    Framework, FrameworkNode, AssessmentDimension, DimensionLevel,
+    FrameworkNodeSecurityArea, Assessment, AssessmentAnswer,
+)
 
 __all__ = [
     "Base",
@@ -22,4 +26,6 @@ __all__ = [
     "Action", "ActionLink", "ActionHistory",
     "CisControl", "CisSubControl", "CisAttackMapping", "CisAssessment", "CisAssessmentAnswer",
     "AuditLog",
+    "Framework", "FrameworkNode", "AssessmentDimension", "DimensionLevel",
+    "FrameworkNodeSecurityArea", "Assessment", "AssessmentAnswer",
 ]

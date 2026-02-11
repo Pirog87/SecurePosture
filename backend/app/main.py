@@ -15,6 +15,8 @@ from app.routers.risk import router as risk_router
 from app.routers.risk_review import router as risk_review_router
 from app.routers.domain import router as domain_router
 from app.routers.security_area import router as security_area_router
+from app.routers.framework import router as framework_router
+from app.routers.assessment import router as assessment_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -42,6 +44,8 @@ app.include_router(risk_router)
 app.include_router(risk_review_router)
 app.include_router(action_router)
 app.include_router(cis_router)
+app.include_router(framework_router)
+app.include_router(assessment_router)
 app.include_router(audit_router)
 
 

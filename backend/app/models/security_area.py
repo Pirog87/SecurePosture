@@ -7,21 +7,24 @@ from .base import Base
 
 
 class SecurityDomain(Base):
-    """Security Domain — central unifying concept for risk areas + CIS controls."""
+    """Security Domain — configurable security areas for the CISO."""
     __tablename__ = "security_domains"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    code: Mapped[str | None] = mapped_column(String(50), unique=True)
     icon: Mapped[str | None] = mapped_column(String(50))
     color: Mapped[str | None] = mapped_column(String(30))
     owner: Mapped[str | None] = mapped_column(String(200))
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("security_domains.id", ondelete="SET NULL"))
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     cis_mappings: Mapped[list["DomainCisControl"]] = relationship(back_populates="domain")
+    parent: Mapped["SecurityDomain | None"] = relationship(remote_side="SecurityDomain.id")
 
 
 class DomainCisControl(Base):

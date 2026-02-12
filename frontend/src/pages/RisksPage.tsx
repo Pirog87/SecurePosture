@@ -62,6 +62,7 @@ export default function RisksPage() {
   const [searchParams] = useSearchParams();
   const [risks, setRisks] = useState<Risk[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editRisk, setEditRisk] = useState<Risk | null>(null);
   const [saving, setSaving] = useState(false);
@@ -82,6 +83,7 @@ export default function RisksPage() {
   const [filterOwner, setFilterOwner] = useState("");
 
   const loadRisks = () => {
+    setError(null);
     api.get<Risk[]>("/api/v1/risks").then(data => {
       setRisks(data);
       const highlightId = searchParams.get("highlight");
@@ -89,7 +91,10 @@ export default function RisksPage() {
         const found = data.find(r => r.id === Number(highlightId));
         if (found) setSelected(found);
       }
-    }).catch(() => {}).finally(() => setLoading(false));
+    }).catch((err) => {
+      setError(String(err));
+      console.error("loadRisks failed:", err);
+    }).finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -258,6 +263,12 @@ export default function RisksPage() {
 
   return (
     <div>
+      {error && (
+        <div className="card" style={{ background: "#3a1a1a", borderColor: "#e74c3c", marginBottom: 16, padding: 16 }}>
+          <strong style={{ color: "#e74c3c" }}>Blad ladowania ryzyk:</strong>
+          <pre style={{ margin: "8px 0 0", fontSize: 12, color: "#ff6b6b", whiteSpace: "pre-wrap" }}>{error}</pre>
+        </div>
+      )}
       {/* ─── Toolbar ─── */}
       <div className="toolbar">
         <div className="toolbar-left">

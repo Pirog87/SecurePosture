@@ -759,7 +759,7 @@ function ActionSearchWithCreate({ riskId, existingLinks, lookups, orgTree, strat
     if (linked.some(l => l.action_id === action.id)) return;
     try {
       const full = await api.get<Action>(`/api/v1/actions/${action.id}`);
-      const existingEntityLinks = full.links.map(l => ({ entity_type: l.entity_type, entity_id: l.entity_id }));
+      const existingEntityLinks = (full.links ?? []).map(l => ({ entity_type: l.entity_type, entity_id: l.entity_id }));
       existingEntityLinks.push({ entity_type: "risk", entity_id: riskId });
       await api.put(`/api/v1/actions/${action.id}`, { links: existingEntityLinks });
       setLinked([...linked, { action_id: action.id, title: action.title }]);
@@ -774,7 +774,7 @@ function ActionSearchWithCreate({ riskId, existingLinks, lookups, orgTree, strat
     if (!riskId) return;
     try {
       const full = await api.get<Action>(`/api/v1/actions/${actionId}`);
-      const updatedLinks = full.links
+      const updatedLinks = (full.links ?? [])
         .filter(l => !(l.entity_type === "risk" && l.entity_id === riskId))
         .map(l => ({ entity_type: l.entity_type, entity_id: l.entity_id }));
       await api.put(`/api/v1/actions/${actionId}`, { links: updatedLinks });
@@ -1759,7 +1759,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, orgTree, saving, onSubmit
             setCriticalityId(asset.criticality_id);
             api.get<Asset[]>("/api/v1/assets").then(all => {
               setLookups(prev => prev ? { ...prev, assets: all } : prev);
-            }).catch(() => {});
+            }).catch(err => console.error("Asset refresh failed:", err));
           }}
         />
       )}

@@ -84,7 +84,7 @@ const COLUMNS: ColumnDef<Action>[] = [
   { key: "status_name", header: "Status", format: r => r.status_name ?? "" },
   { key: "due_date", header: "Termin", format: r => r.due_date?.slice(0, 10) ?? "" },
   { key: "responsible", header: "Odpowiedzialny", format: r => r.responsible ?? r.owner ?? "" },
-  { key: "links", header: "Powiązania", format: r => String(r.links.length) },
+  { key: "links", header: "Powiązania", format: r => String(r.links?.length ?? 0) },
   { key: "description", header: "Opis", format: r => r.description ?? "", defaultVisible: false },
   { key: "owner", header: "Właściciel", format: r => r.owner ?? "", defaultVisible: false },
   { key: "source_name", header: "Źródło", format: r => r.source_name ?? "", defaultVisible: false },
@@ -278,7 +278,17 @@ export default function ActionsPage() {
     setLoading(true);
     setLoadError(null);
     api.get<Action[]>("/api/v1/actions")
-      .then(data => { setActions(data); setLoadError(null); })
+      .then(data => {
+        // Ensure array fields are always arrays (defensive)
+        const safe = (data ?? []).map(a => ({
+          ...a,
+          links: a.links ?? [],
+          history: a.history ?? [],
+          attachments: a.attachments ?? [],
+        }));
+        setActions(safe);
+        setLoadError(null);
+      })
       .catch((err) => { console.error("Failed to load actions:", err); setLoadError(String(err)); })
       .finally(() => setLoading(false));
   }, []);
@@ -432,7 +442,7 @@ export default function ActionsPage() {
               const days = daysUntil(row.due_date);
               return <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono',monospace", color: row.is_overdue ? "var(--red)" : days != null && days <= 7 ? "var(--orange)" : "var(--text-secondary)" }}>{row.due_date.slice(0, 10)}{row.is_overdue && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--red)" }}>!</span>}</span>;
             }
-            if (colKey === "links") return row.links.length > 0 ? <span className="score-badge" style={{ background: "var(--cyan-dim)", color: "var(--cyan)" }}>{row.links.length}</span> : <span style={{ fontSize: 12, color: "var(--text-muted)" }}>0</span>;
+            if (colKey === "links") return (row.links?.length ?? 0) > 0 ? <span className="score-badge" style={{ background: "var(--cyan-dim)", color: "var(--cyan)" }}>{row.links.length}</span> : <span style={{ fontSize: 12, color: "var(--text-muted)" }}>0</span>;
             return undefined;
           }}
           renderHeaderExtra={colKey => {
@@ -480,10 +490,10 @@ export default function ActionsPage() {
               )}
 
               {/* Linked entities */}
-              {selected.links.length > 0 && (
+              {(selected.links?.length ?? 0) > 0 && (
                 <div style={{ marginTop: 10 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Powiązane obiekty ({selected.links.length})</div>
-                  {selected.links.map(l => (
+                  {(selected.links ?? []).map(l => (
                     <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", borderRadius: 6, marginBottom: 3, background: l.entity_type === "risk" ? "rgba(239,68,68,0.06)" : "rgba(59,130,246,0.06)", border: `1px solid ${l.entity_type === "risk" ? "rgba(239,68,68,0.15)" : "rgba(59,130,246,0.15)"}` }}>
                       <div>
                         <span style={{ fontSize: 9, color: "var(--text-muted)", textTransform: "uppercase", marginRight: 4 }}>
@@ -502,11 +512,11 @@ export default function ActionsPage() {
               )}
 
               {/* Last 5 history entries */}
-              {selected.history.length > 0 && (
+              {(selected.history?.length ?? 0) > 0 && (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Ostatnie zmiany</div>
                   <div style={{ maxHeight: 160, overflowY: "auto" }}>
-                    {selected.history.slice(0, 5).map(h => (
+                    {(selected.history ?? []).slice(0, 5).map(h => (
                       <div key={h.id} style={{ fontSize: 11, padding: "4px 0", borderBottom: "1px solid rgba(42,53,84,0.15)" }}>
                         <span style={{ color: "var(--text-muted)" }}>{h.created_at?.slice(0, 16).replace("T", " ")}</span>
                         {" "}<span style={{ color: "var(--blue)" }}>{FIELD_LABELS[h.field_name] ?? h.field_name}</span>
@@ -515,7 +525,7 @@ export default function ActionsPage() {
                         {h.change_reason && <div style={{ fontSize: 10, color: "var(--text-muted)", fontStyle: "italic", marginLeft: 8 }}>Powód: {h.change_reason}</div>}
                       </div>
                     ))}
-                    {selected.history.length > 5 && <div style={{ fontSize: 10, color: "var(--text-muted)", padding: "4px 0", textAlign: "center" }}>...i {selected.history.length - 5} więcej</div>}
+                    {(selected.history?.length ?? 0) > 5 && <div style={{ fontSize: 10, color: "var(--text-muted)", padding: "4px 0", textAlign: "center" }}>...i {selected.history.length - 5} więcej</div>}
                   </div>
                 </div>
               )}
@@ -599,14 +609,14 @@ function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSav
 
   // ── Form state (Tab 2: Links) ──
   const [linkedRiskIds, setLinkedRiskIds] = useState<number[]>(
-    () => editAction?.links.filter(l => l.entity_type === "risk").map(l => l.entity_id) ?? []
+    () => (editAction?.links ?? []).filter(l => l.entity_type === "risk").map(l => l.entity_id)
   );
 
   // ── Form state (Tab 3: Effectiveness) ──
   const [implementationNotes, setImplementationNotes] = useState(editAction?.implementation_notes ?? "");
   const [effectivenessRating, setEffectivenessRating] = useState<number | null>(editAction?.effectiveness_rating ?? null);
   const [effectivenessNotes, setEffectivenessNotes] = useState(editAction?.effectiveness_notes ?? "");
-  const [attachments, setAttachments] = useState<ActionAttachment[]>(editAction?.attachments ?? []);
+  const [attachments, setAttachments] = useState<ActionAttachment[]>(() => editAction?.attachments ?? []);
 
   // ── Change reason modal ──
   const [showReasonModal, setShowReasonModal] = useState(false);
@@ -615,7 +625,7 @@ function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSav
 
   // Non-risk links from the original action (preserve them)
   const otherLinks = useMemo(() =>
-    editAction?.links.filter(l => l.entity_type !== "risk") ?? [],
+    (editAction?.links ?? []).filter(l => l.entity_type !== "risk"),
     [editAction]
   );
 
@@ -744,7 +754,7 @@ function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSav
         {isEdit && <span style={tabStyle("comments")} onClick={() => setTab("comments")}>Komentarze</span>}
         {isEdit && <span style={tabStyle("history")} onClick={() => setTab("history")}>
           Historia
-          {editAction?.history.length ? <span style={{ marginLeft: 4, fontSize: 10, color: "var(--text-muted)" }}>({editAction.history.length})</span> : null}
+          {editAction?.history?.length ? <span style={{ marginLeft: 4, fontSize: 10, color: "var(--text-muted)" }}>({editAction.history.length})</span> : null}
         </span>}
       </div>
 
@@ -833,7 +843,7 @@ function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSav
 
       {/* ══════════ Tab 5: History ══════════ */}
       {tab === "history" && editAction && (
-        <HistoryTab history={editAction.history} />
+        <HistoryTab history={editAction.history ?? []} />
       )}
 
       {/* ── Footer buttons ── */}

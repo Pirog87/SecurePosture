@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { api } from "../services/api";
 import type {
   Asset, AssetCategoryTreeNode, CategoryFieldDefinition,
@@ -15,6 +15,22 @@ import { useColumnVisibility } from "../hooks/useColumnVisibility";
 import { useTableFeatures } from "../hooks/useTableFeatures";
 import DataTable from "../components/DataTable";
 import StatsCards from "../components/StatsCards";
+
+/* Icon name → emoji map (same as AssetCategoryTree) */
+const CAT_ICON: Record<string, string> = {
+  HardDrive: "\uD83D\uDDA5\uFE0F", Server: "\uD83D\uDDA5\uFE0F", Monitor: "\uD83D\uDDA5\uFE0F", Laptop: "\uD83D\uDCBB",
+  Smartphone: "\uD83D\uDCF1", Printer: "\uD83D\uDDA8\uFE0F", Database: "\uD83D\uDDC4\uFE0F",
+  Network: "\uD83C\uDF10", Globe: "\uD83C\uDF10", Router: "\uD83D\uDD0C", Shield: "\uD83D\uDEE1\uFE0F",
+  Code: "\uD83D\uDCBB", Layers: "\uD83D\uDCDA", AppWindow: "\uD83D\uDCF1", Cloud: "\u2601\uFE0F", Settings: "\u2699\uFE0F",
+  Users: "\uD83D\uDC65", User: "\uD83D\uDC64", UsersGroup: "\uD83D\uDC65", Briefcase: "\uD83D\uDCBC",
+  FileText: "\uD83D\uDCC4", File: "\uD83D\uDCC4", Table: "\uD83D\uDCCA", Key: "\uD83D\uDD11",
+  Building: "\uD83C\uDFE2", MapPin: "\uD83D\uDCCD", Door: "\uD83D\uDEAA",
+  Workflow: "\u2699\uFE0F", GitBranch: "\uD83D\uDD00", Headphones: "\uD83C\uDFA7",
+};
+function catIcon(name: string | null): string {
+  if (!name) return "\uD83D\uDCC1";
+  return CAT_ICON[name] ?? "\uD83D\uDCC1";
+}
 
 function critColor(name: string | null): string {
   if (!name) return "var(--text-muted)";
@@ -858,7 +874,7 @@ export default function AssetsPage() {
                           value={cat.id}
                           disabled={cat.is_abstract}
                         >
-                          {depth > 0 ? "\u2003".repeat(depth) : ""}{cat.is_abstract ? `▸ ${cat.name}` : `${cat.icon ?? "·"} ${cat.name}`}
+                          {depth > 0 ? "\u2003".repeat(depth) : ""}{cat.is_abstract ? `▸ ${cat.name}` : `${catIcon(cat.icon)} ${cat.name}`}
                         </option>
                       ))}
                     </select>
@@ -1062,6 +1078,7 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
   const [linkedRisks, setLinkedRisks] = useState<Risk[]>([]);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<"list" | "search" | "create">("list");
+  const [previewRisk, setPreviewRisk] = useState<Risk | null>(null);
 
   // Search state
   const [allRisks, setAllRisks] = useState<Risk[]>([]);
@@ -1072,6 +1089,11 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
   // Create form state
   const [createSaving, setCreateSaving] = useState(false);
   const [securityAreas, setSecurityAreas] = useState<{ id: number; name: string }[]>([]);
+
+  // Use ref to avoid infinite loop — onRiskCountChange is an inline function from parent
+  const countRef = useRef(onRiskCountChange);
+  countRef.current = onRiskCountChange;
+
   // Load linked risks
   const loadLinkedRisks = useCallback(() => {
     setLoading(true);
@@ -1079,11 +1101,11 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
       .then(risks => {
         const linked = risks.filter(r => r.asset_id === asset.id);
         setLinkedRisks(linked);
-        onRiskCountChange(linked.length);
+        countRef.current(linked.length);
       })
       .catch(() => setLinkedRisks([]))
       .finally(() => setLoading(false));
-  }, [asset.id, onRiskCountChange]);
+  }, [asset.id]);
 
   useEffect(() => { loadLinkedRisks(); }, [loadLinkedRisks]);
 
@@ -1204,6 +1226,108 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
     return <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>Ladowanie ryzyk...</div>;
   }
 
+  // Risk preview sub-view
+  if (previewRisk) {
+    const r = previewRisk;
+    const lvlLabel = r.risk_level === "high" ? "WYSOKI" : r.risk_level === "medium" ? "SREDNI" : "NISKI";
+    const rows: [string, string | null | undefined][] = [
+      ["Kod", r.code],
+      ["Domena bezp.", r.security_area_name],
+      ["Kategoria ryzyka", r.risk_category_name],
+      ["Jednostka org.", r.org_unit_name],
+      ["Wlasciciel", r.owner],
+      ["Status", r.status_name],
+      ["Strategia", r.strategy_name],
+      ["Wplyw (W)", String(r.impact_level)],
+      ["Prawdopodobienstwo (P)", String(r.probability_level)],
+      ["Zabezpieczenia (Z)", String(r.safeguard_rating)],
+      ["Wynik ryzyka", r.risk_score?.toFixed(1)],
+      ["Poziom ryzyka", lvlLabel],
+      ["Wrazliwosc aktywa", r.sensitivity_name],
+      ["Krytycznosc aktywa", r.criticality_name],
+      ["Termin postepowania", r.treatment_deadline?.slice(0, 10)],
+      ["Ryzyko rezydualne", r.residual_risk != null ? String(r.residual_risk) : null],
+      ["Zaakceptowane przez", r.accepted_by],
+      ["Data akceptacji", r.accepted_at?.slice(0, 10)],
+      ["Zidentyfikowano", r.identified_at?.slice(0, 10)],
+      ["Nastepny przeglad", r.next_review_date?.slice(0, 10)],
+    ];
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <button className="btn btn-sm" style={{ fontSize: 10 }} onClick={() => setPreviewRisk(null)}>← Wstecz do listy</button>
+        </div>
+        <div style={{ textAlign: "center", marginBottom: 12 }}>
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>R-{r.id}</span>
+          <span className="score-badge" style={{ marginLeft: 8, background: riskLevelBg(r.risk_level), color: riskLevelColor(r.risk_level), fontSize: 11 }}>
+            {lvlLabel} {r.risk_score?.toFixed(0)}
+          </span>
+        </div>
+        <div style={{ fontSize: 12, lineHeight: 2 }}>
+          {rows.map(([label, value]) => value ? (
+            <div key={label} style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(42,53,84,0.08)" }}>
+              <span style={{ color: "var(--text-muted)", fontSize: 11 }}>{label}</span>
+              <span style={{ fontWeight: 500, fontSize: 11, textAlign: "right", maxWidth: "60%" }}>{value}</span>
+            </div>
+          ) : null)}
+        </div>
+        {r.consequence_description && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Opis konsekwencji</div>
+            <div style={{ fontSize: 11, background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.consequence_description}</div>
+          </div>
+        )}
+        {r.existing_controls && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Istniejace zabezpieczenia</div>
+            <div style={{ fontSize: 11, background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.existing_controls}</div>
+          </div>
+        )}
+        {r.planned_actions && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Planowane dzialania</div>
+            <div style={{ fontSize: 11, background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.planned_actions}</div>
+          </div>
+        )}
+        {r.acceptance_justification && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Uzasadnienie akceptacji</div>
+            <div style={{ fontSize: 11, background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.acceptance_justification}</div>
+          </div>
+        )}
+        {r.threats.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Zagrozenia ({r.threats.length})</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {r.threats.map(t => <span key={t.threat_id} className="score-badge" style={{ fontSize: 10, background: "var(--red-dim, rgba(239,68,68,0.1))", color: "var(--red)" }}>{t.threat_name}</span>)}
+            </div>
+          </div>
+        )}
+        {r.vulnerabilities.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Podatnosci ({r.vulnerabilities.length})</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {r.vulnerabilities.map(v => <span key={v.vulnerability_id} className="score-badge" style={{ fontSize: 10, background: "var(--orange-dim, rgba(249,115,22,0.1))", color: "var(--orange)" }}>{v.vulnerability_name}</span>)}
+            </div>
+          </div>
+        )}
+        {r.safeguards.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Zabezpieczenia ({r.safeguards.length})</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {r.safeguards.map(sg => <span key={sg.safeguard_id} className="score-badge" style={{ fontSize: 10, background: "var(--green-dim, rgba(34,197,94,0.1))", color: "var(--green)" }}>{sg.safeguard_name}</span>)}
+            </div>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
+          <button className="btn btn-sm" style={{ flex: 1, color: "var(--red)" }} onClick={() => { setPreviewRisk(null); handleUnlinkRisk(r); }}>
+            Odlacz ryzyko
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       {/* Mode: List linked risks */}
@@ -1217,10 +1341,14 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
               {linkedRisks.map(risk => (
                 <div key={risk.id} style={{
-                  padding: "8px 10px", borderRadius: 6,
+                  padding: "8px 10px", borderRadius: 6, cursor: "pointer",
                   background: "rgba(255,255,255,0.02)",
-                  border: "1px solid var(--border)", fontSize: 12,
-                }}>
+                  border: "1px solid var(--border)", fontSize: 12, transition: "border-color 0.2s",
+                }}
+                  onClick={() => setPreviewRisk(risk)}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--blue)")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
+                >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>R-{risk.id}</span>
@@ -1235,7 +1363,7 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
                       </span>
                     </div>
                     <button
-                      onClick={() => handleUnlinkRisk(risk)}
+                      onClick={(e) => { e.stopPropagation(); handleUnlinkRisk(risk); }}
                       style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", fontSize: 12, padding: "0 2px", opacity: 0.5 }}
                       title="Odlacz ryzyko"
                     >

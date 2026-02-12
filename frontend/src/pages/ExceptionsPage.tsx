@@ -957,8 +957,8 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
                   <SectionHeader number={"\u2460"} label="Identyfikacja ryzyka" />
                   <DetailRow label="Aktywo" value={editRisk.asset_name} />
                   <DetailRow label="Domena" value={editRisk.security_area_name} />
-                  <DetailRow label="Zagrozenie" value={editRisk.threat_name} />
-                  <DetailRow label="Podatnosc" value={editRisk.vulnerability_name} />
+                  <DetailRow label="Zagrozenie" value={editRisk.threats?.map(t => t.threat_name).join(", ") ?? ""} />
+                  <DetailRow label="Podatnosc" value={editRisk.vulnerabilities?.map(v => v.vulnerability_name).join(", ") ?? ""} />
                   {editRisk.consequence_description && (
                     <div style={{ marginTop: 4, marginBottom: 8 }}>
                       <span style={{ color: "var(--text-muted)" }}>Konsekwencje:</span>

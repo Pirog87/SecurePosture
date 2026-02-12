@@ -150,7 +150,7 @@ async def _get_linked_actions(s: AsyncSession, risk_id: int) -> list[LinkedActio
         .order_by(case((Action.due_date.is_(None), 1), else_=0), Action.due_date.asc())
     )
     rows = (await s.execute(q)).all()
-    today = date.today()
+    now = datetime.utcnow()
     return [
         LinkedActionRef(
             action_id=r.id,
@@ -158,7 +158,7 @@ async def _get_linked_actions(s: AsyncSession, risk_id: int) -> list[LinkedActio
             status_name=r.status_name,
             owner=r.owner,
             due_date=r.due_date,
-            is_overdue=r.due_date is not None and r.due_date < today,
+            is_overdue=r.due_date is not None and r.due_date < now,
         )
         for r in rows
     ]

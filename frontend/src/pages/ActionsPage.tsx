@@ -276,7 +276,11 @@ export default function ActionsPage() {
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
 
   const loadActions = useCallback(() => {
-    api.get<Action[]>("/api/v1/actions").then(setActions).catch(() => {}).finally(() => setLoading(false));
+    setLoading(true);
+    api.get<Action[]>("/api/v1/actions")
+      .then(setActions)
+      .catch((err) => { console.error("Failed to load actions:", err); })
+      .finally(() => setLoading(false));
   }, []);
 
   const loadKpi = useCallback(() => {
@@ -284,11 +288,15 @@ export default function ActionsPage() {
   }, []);
 
   useEffect(() => {
-    loadActions();
-    loadKpi();
+    // Run auto-overdue FIRST, then load actions after it completes
+    // This avoids DB write-lock race condition that causes blank page
+    api.post("/api/v1/actions/auto-overdue", {})
+      .catch(() => {})
+      .finally(() => {
+        loadActions();
+        loadKpi();
+      });
     api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(setOrgTree).catch(() => {});
-    // Auto-overdue on page load
-    api.post("/api/v1/actions/auto-overdue", {}).catch(() => {});
   }, [loadActions, loadKpi]);
 
   const orgPathMap = useMemo(() => buildPathMap(orgTree), [orgTree]);

@@ -58,8 +58,6 @@ const FIELD_LABELS: Record<string, string> = {
   effectiveness_notes: "Notatki skuteczności", implementation_notes: "Notatki wdrożenia",
 };
 
-const TRACKED_FIELDS = ["title", "description", "owner", "responsible", "due_date", "status_id", "priority_id"];
-
 /* ═══════════════════════════════════════════════════════════
    Types
    ═══════════════════════════════════════════════════════════ */

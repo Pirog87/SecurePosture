@@ -17,13 +17,6 @@ import { useTableFeatures } from "../hooks/useTableFeatures";
 import DataTable from "../components/DataTable";
 import StatsCards from "../components/StatsCards";
 
-/* ── Exception reference ── */
-interface AssetExceptionRef {
-  id: number; ref_id: string | null; title: string;
-  status_name: string | null; risk_score: number | null;
-  risk_level: string | null; expiry_date: string;
-}
-
 function critColor(name: string | null): string {
   if (!name) return "var(--text-muted)";
   const l = name.toLowerCase();
@@ -60,8 +53,6 @@ export default function AssetsPage() {
 
   // ── Dynamic fields ──
   const [categoryFields, setCategoryFields] = useState<CategoryFieldDefinition[]>([]);
-  const [customAttrs, setCustomAttrs] = useState<Record<string, unknown>>({});
-
   // ── Relationships for detail ──
   const [assetRelations, setAssetRelations] = useState<AssetRelationship[]>([]);
 
@@ -386,14 +377,6 @@ export default function AssetsPage() {
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  };
-
-  const toggleBulkAll = () => {
-    if (bulkIds.size === table.filtered.length) {
-      setBulkIds(new Set());
-    } else {
-      setBulkIds(new Set(table.filtered.map(a => a.id)));
-    }
   };
 
   const handleBulkArchive = async () => {

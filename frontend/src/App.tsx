@@ -9,7 +9,6 @@ import CisAssessPage from "./pages/CisAssessPage";
 import CatalogsPage from "./pages/CatalogsPage";
 import DictionariesPage from "./pages/DictionariesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
-import AssetGraphPage from "./pages/AssetGraphPage";
 import AssetsPage from "./pages/AssetsPage";
 import ActionsPage from "./pages/ActionsPage";
 import AuditPage from "./pages/AuditPage";

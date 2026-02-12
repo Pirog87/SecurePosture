@@ -706,11 +706,10 @@ function PlannedSafeguardPicker({ lookups, setLookups, assetId, plannedSafeguard
    ActionSearchWithCreate — search + inline create actions for risk
    ═══════════════════════════════════════════════════════════════════ */
 
-function ActionSearchWithCreate({ riskId, existingLinks, lookups, flatUnits, orgTree, strategyId }: {
+function ActionSearchWithCreate({ riskId, existingLinks, lookups, orgTree, strategyId }: {
   riskId: number | null;
   existingLinks: { action_id: number; title: string }[];
   lookups: FormLookups;
-  flatUnits: { id: number; name: string; depth: number }[];
   orgTree: OrgUnitTreeNode[];
   strategyId: number | null;
 }) {
@@ -1165,11 +1164,10 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
    AssetTab — searchable asset picker + inline asset creation
    ═══════════════════════════════════════════════════════════════════ */
 
-function AssetTab({ assetId, assetName, lookups, flatUnits, orgTree, onSelectAsset, onClearAsset, onAssetCreated }: {
+function AssetTab({ assetId, assetName, lookups, orgTree, onSelectAsset, onClearAsset, onAssetCreated }: {
   assetId: number | null;
   assetName: string;
   lookups: FormLookups;
-  flatUnits: { id: number; name: string; depth: number }[];
   orgTree: OrgUnitTreeNode[];
   onSelectAsset: (asset: Asset) => void;
   onClearAsset: () => void;
@@ -1740,7 +1738,6 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, orgTree, savin
           assetId={assetId}
           assetName={assetName}
           lookups={lookups}
-          flatUnits={flatUnits}
           orgTree={orgTree}
           onSelectAsset={(asset) => {
             setAssetId(asset.id);
@@ -1852,7 +1849,6 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, orgTree, savin
             riskId={editRisk?.id ?? null}
             existingLinks={(editRisk?.linked_actions ?? []).map(a => ({ action_id: a.action_id, title: a.title }))}
             lookups={lookups}
-            flatUnits={flatUnits}
             orgTree={orgTree}
             strategyId={strategyId}
           />

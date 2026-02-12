@@ -9,7 +9,7 @@ import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
 import { useTableFeatures } from "../hooks/useTableFeatures";
 import DataTable from "../components/DataTable";
-import StatsCards, { type StatCard } from "../components/StatsCards";
+import StatsCards from "../components/StatsCards";
 
 /* Exception reference for asset detail */
 interface AssetExceptionRef {

@@ -3,7 +3,7 @@ import { api } from "../services/api";
 import type {
   Asset, AssetCategoryTreeNode, CategoryFieldDefinition,
   AssetRelationship, RelationshipType, OrgUnitTreeNode, DictionaryTypeWithEntries,
-  AuditLogEntry, AuditLogPage, Risk,
+  AuditLogEntry, AuditLogPage, Risk, Threat, Vulnerability, Safeguard, Action,
 } from "../types";
 import { buildPathMap } from "../utils/orgTree";
 import Modal from "../components/Modal";
@@ -1077,7 +1077,7 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
 }) {
   const [linkedRisks, setLinkedRisks] = useState<Risk[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mode, setMode] = useState<"list" | "search" | "create">("list");
+  const [mode, setMode] = useState<"list" | "search" | "create" | "link_action">("list");
   const [previewRisk, setPreviewRisk] = useState<Risk | null>(null);
 
   // Search state
@@ -1089,6 +1089,24 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
   // Create form state
   const [createSaving, setCreateSaving] = useState(false);
   const [securityAreas, setSecurityAreas] = useState<{ id: number; name: string }[]>([]);
+  const [catalogThreats, setCatalogThreats] = useState<Threat[]>([]);
+  const [catalogVulns, setCatalogVulns] = useState<Vulnerability[]>([]);
+  const [catalogSafeguards, setCatalogSafeguards] = useState<Safeguard[]>([]);
+  // Create form controlled state
+  const [cW, setCW] = useState(2);
+  const [cP, setCP] = useState(2);
+  const [cZ, setCZ] = useState(0.25);
+  const [cThreatIds, setCThreatIds] = useState<number[]>([]);
+  const [cVulnIds, setCVulnIds] = useState<number[]>([]);
+  const [cSafeguardIds, setCSafeguardIds] = useState<number[]>([]);
+  // Post-creation action linking
+  const [createdRiskId, setCreatedRiskId] = useState<number | null>(null);
+  const [actionQuery, setActionQuery] = useState("");
+  const [actionResults, setActionResults] = useState<Action[]>([]);
+  const [actionSearching, setActionSearching] = useState(false);
+  const [linkedActionIds, setLinkedActionIds] = useState<number[]>([]);
+  const [showNewAction, setShowNewAction] = useState(false);
+  const [newActionSaving, setNewActionSaving] = useState(false);
 
   // Use ref to avoid infinite loop — onRiskCountChange is an inline function from parent
   const countRef = useRef(onRiskCountChange);
@@ -1175,21 +1193,25 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
     e.preventDefault();
     setCreateSaving(true);
     const fd = new FormData(e.currentTarget);
-    const body = {
-      org_unit_id: asset.org_unit_id || Number(fd.get("org_unit_id")),
+    const body: Record<string, unknown> = {
+      org_unit_id: asset.org_unit_id || Number(fd.get("org_unit_id")) || null,
       asset_id: asset.id,
       asset_name: asset.name,
       security_area_id: Number(fd.get("security_area_id")),
-      impact_level: Number(fd.get("impact_level")),
-      probability_level: Number(fd.get("probability_level")),
-      safeguard_rating: Number(fd.get("safeguard_rating")),
+      impact_level: cW,
+      probability_level: cP,
+      safeguard_rating: cZ,
       consequence_description: (fd.get("consequence_description") as string) || null,
       existing_controls: (fd.get("existing_controls") as string) || null,
       owner: (fd.get("owner") as string) || asset.owner || null,
+      threat_ids: cThreatIds,
+      vulnerability_ids: cVulnIds,
+      safeguard_ids: cSafeguardIds,
     };
     try {
-      await api.post("/api/v1/risks", body);
-      setMode("list");
+      const created = await api.post<Risk>("/api/v1/risks", body);
+      setCreatedRiskId(created.id);
+      setMode("link_action");
       loadLinkedRisks();
       setAllRisks([]);
     } catch (err) {
@@ -1197,6 +1219,58 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
     } finally {
       setCreateSaving(false);
     }
+  };
+
+  // Action search for post-creation linking
+  useEffect(() => {
+    if (mode !== "link_action" || actionQuery.length < 2) { setActionResults([]); return; }
+    const timer = setTimeout(() => {
+      setActionSearching(true);
+      api.get<Action[]>("/api/v1/actions")
+        .then(all => {
+          const q = actionQuery.toLowerCase();
+          setActionResults((all ?? []).filter(a =>
+            a.title.toLowerCase().includes(q) ||
+            (a.owner ?? "").toLowerCase().includes(q)
+          ).slice(0, 8));
+        })
+        .catch(() => {})
+        .finally(() => setActionSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [actionQuery, mode]);
+
+  const linkActionToRisk = async (action: Action) => {
+    if (!createdRiskId) return;
+    try {
+      const full = await api.get<Action>(`/api/v1/actions/${action.id}`);
+      const links = (full.links ?? []).map(l => ({ entity_type: l.entity_type, entity_id: l.entity_id }));
+      links.push({ entity_type: "risk", entity_id: createdRiskId });
+      await api.put(`/api/v1/actions/${action.id}`, { links });
+      setLinkedActionIds(prev => [...prev, action.id]);
+      setActionQuery("");
+      setActionResults([]);
+    } catch (err) { alert("Blad: " + err); }
+  };
+
+  const createAndLinkAction = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!createdRiskId) return;
+    setNewActionSaving(true);
+    const fd = new FormData(e.currentTarget);
+    try {
+      const created = await api.post<Action>("/api/v1/actions", {
+        title: fd.get("title"),
+        description: (fd.get("description") as string) || null,
+        owner: (fd.get("action_owner") as string) || null,
+        due_date: (fd.get("due_date") as string) || null,
+        org_unit_id: asset.org_unit_id || null,
+        links: [{ entity_type: "risk", entity_id: createdRiskId }],
+      });
+      setLinkedActionIds(prev => [...prev, created.id]);
+      setShowNewAction(false);
+    } catch (err) { alert("Blad: " + err); }
+    finally { setNewActionSaving(false); }
   };
 
   const riskLevelColor = (level: string) => {
@@ -1211,16 +1285,34 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
     return "var(--green-dim, rgba(34,197,94,0.15))";
   };
 
-  // Load security areas for create form
+  // Load security areas + catalogs for create form
   const openCreateMode = async () => {
     setMode("create");
+    setCW(2); setCP(2); setCZ(0.25);
+    setCThreatIds([]); setCVulnIds([]); setCSafeguardIds([]);
+    setCreatedRiskId(null); setLinkedActionIds([]); setShowNewAction(false);
     if (securityAreas.length === 0) {
       try {
         const areas = await api.get<{ id: number; name: string }[]>("/api/v1/security-areas");
         setSecurityAreas(areas);
       } catch { /* ignore */ }
     }
+    // Load catalogs in parallel
+    if (catalogThreats.length === 0) {
+      api.get<Threat[]>("/api/v1/threats").then(setCatalogThreats).catch(() => {});
+    }
+    if (catalogVulns.length === 0) {
+      api.get<Vulnerability[]>("/api/v1/vulnerabilities").then(setCatalogVulns).catch(() => {});
+    }
+    if (catalogSafeguards.length === 0) {
+      api.get<Safeguard[]>("/api/v1/safeguards").then(setCatalogSafeguards).catch(() => {});
+    }
   };
+
+  // Risk score + color helpers for matrix
+  const riskScoreCalc = (w: number, p: number, z: number) => Math.exp(w) * p / z;
+  const riskScoreColor = (R: number) => R >= 221 ? "var(--red)" : R >= 31 ? "var(--orange)" : "var(--green)";
+  const riskScoreBg = (R: number) => R >= 221 ? "var(--red-dim, rgba(239,68,68,0.15))" : R >= 31 ? "var(--orange-dim, rgba(249,115,22,0.15))" : "var(--green-dim, rgba(34,197,94,0.15))";
 
   if (loading) {
     return <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>Ladowanie ryzyk...</div>;
@@ -1481,95 +1573,372 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
         </div>
       )}
 
-      {/* Mode: Create new risk */}
-      {mode === "create" && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600 }}>Nowe ryzyko dla: {asset.name}</div>
-            <button className="btn btn-sm" style={{ fontSize: 10 }} onClick={() => setMode("list")}>Wstecz</button>
-          </div>
+      {/* Mode: Create new risk (enhanced) */}
+      {mode === "create" && (() => {
+        const liveScore = riskScoreCalc(cW, cP, cZ);
+        const lvColor = riskScoreColor(liveScore);
+        const lvLabel = liveScore >= 221 ? "WYSOKI" : liveScore >= 31 ? "SREDNI" : "NISKI";
+        return (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 600 }}>Nowe ryzyko dla: {asset.name}</div>
+              <button className="btn btn-sm" style={{ fontSize: 10 }} onClick={() => setMode("list")}>Wstecz</button>
+            </div>
 
-          <form onSubmit={handleCreateRisk}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <div className="form-group">
-                <label style={{ fontSize: 11 }}>Domena bezpieczenstwa *</label>
-                <select name="security_area_id" className="form-control" required style={{ fontSize: 12 }}>
-                  <option value="">Wybierz...</option>
-                  {securityAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
-              </div>
+            {/* Live score preview */}
+            <div style={{ textAlign: "center", marginBottom: 12 }}>
+              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 22, fontWeight: 700, color: lvColor }}>{liveScore.toFixed(1)}</span>
+              <span className="score-badge" style={{ background: `${lvColor}30`, color: lvColor, fontSize: 11, marginLeft: 8 }}>{lvLabel}</span>
+            </div>
 
-              {!asset.org_unit_id && (
-                <div className="form-group">
-                  <label style={{ fontSize: 11 }}>Jednostka organizacyjna *</label>
-                  <select name="org_unit_id" className="form-control" required style={{ fontSize: 12 }}>
-                    <option value="">Wybierz...</option>
-                    {(() => {
-                      const flat: { id: number; name: string; depth: number }[] = [];
-                      const walk = (nodes: OrgUnitTreeNode[], d: number) => {
-                        for (const n of nodes) { flat.push({ id: n.id, name: n.name, depth: d }); walk(n.children, d + 1); }
-                      };
-                      walk(orgTree, 0);
-                      return flat.map(u => (
-                        <option key={u.id} value={u.id}>{"\u00A0\u00A0".repeat(u.depth)}{u.name}</option>
-                      ));
-                    })()}
-                  </select>
+            {/* Risk matrix (W x P) + Z selector */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 16, marginBottom: 14 }}>
+              {/* 3x3 matrix */}
+              <div>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "center", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  Macierz ryzyka (W &times; P)
                 </div>
-              )}
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                <div className="form-group">
-                  <label style={{ fontSize: 11 }}>Wplyw (W) *</label>
-                  <select name="impact_level" className="form-control" required style={{ fontSize: 12 }}>
-                    <option value="1">1 - Niski</option>
-                    <option value="2">2 - Sredni</option>
-                    <option value="3">3 - Wysoki</option>
-                  </select>
+                <div style={{ display: "grid", gridTemplateColumns: "auto repeat(3, 1fr)", gap: 2, maxWidth: 220 }}>
+                  <div />
+                  {["P=1", "P=2", "P=3"].map(h => (
+                    <div key={h} style={{ textAlign: "center", fontSize: 9, color: "var(--text-muted)", padding: 3 }}>{h}</div>
+                  ))}
+                  {[3, 2, 1].map(w => (
+                    <div key={`row-${w}`} style={{ display: "contents" }}>
+                      <div style={{ fontSize: 9, color: "var(--text-muted)", padding: 3, display: "flex", alignItems: "center" }}>W={w}</div>
+                      {[1, 2, 3].map(p => {
+                        const score = riskScoreCalc(w, p, cZ);
+                        const isActive = w === cW && p === cP;
+                        return (
+                          <div
+                            key={`${w}-${p}`}
+                            style={{
+                              textAlign: "center", padding: 5, borderRadius: 4, fontSize: 9,
+                              fontFamily: "'JetBrains Mono',monospace", fontWeight: isActive ? 700 : 400,
+                              background: riskScoreBg(score), color: riskScoreColor(score),
+                              border: isActive ? `2px solid ${riskScoreColor(score)}` : "2px solid transparent",
+                              cursor: "pointer", transition: "all 0.15s",
+                            }}
+                            onClick={() => { setCW(w); setCP(p); }}
+                          >
+                            {score.toFixed(0)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
-                <div className="form-group">
-                  <label style={{ fontSize: 11 }}>Prawdop. (P) *</label>
-                  <select name="probability_level" className="form-control" required style={{ fontSize: 12 }}>
-                    <option value="1">1 - Niski</option>
-                    <option value="2">2 - Sredni</option>
-                    <option value="3">3 - Wysoki</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label style={{ fontSize: 11 }}>Zabezp. (Z) *</label>
-                  <select name="safeguard_rating" className="form-control" required style={{ fontSize: 12 }}>
-                    <option value="0.10">0.10 - Brak</option>
-                    <option value="0.25">0.25 - Slabe</option>
-                    <option value="0.50">0.50 - Srednie</option>
-                    <option value="0.70">0.70 - Dobre</option>
-                    <option value="0.95">0.95 - Bardzo dobre</option>
-                  </select>
+                <div style={{ fontSize: 9, color: "var(--text-muted)", textAlign: "center", marginTop: 3 }}>
+                  Kliknij komorke aby wybrac W i P
                 </div>
               </div>
 
-              <div className="form-group">
-                <label style={{ fontSize: 11 }}>Wlasciciel ryzyka</label>
-                <input name="owner" className="form-control" defaultValue={asset.owner || ""} style={{ fontSize: 12 }} placeholder="np. Jan Kowalski" />
-              </div>
-
-              <div className="form-group">
-                <label style={{ fontSize: 11 }}>Opis konsekwencji</label>
-                <textarea name="consequence_description" className="form-control" rows={2} style={{ fontSize: 12 }} placeholder="Co moze sie stac w przypadku materializacji ryzyka?" />
-              </div>
-
-              <div className="form-group">
-                <label style={{ fontSize: 11 }}>Istniejace zabezpieczenia</label>
-                <textarea name="existing_controls" className="form-control" rows={2} style={{ fontSize: 12 }} placeholder="Jakie zabezpieczenia juz istnieja?" />
-              </div>
-
-              <div style={{ display: "flex", gap: 6 }}>
-                <button type="submit" className="btn btn-sm btn-primary" style={{ flex: 1 }} disabled={createSaving}>
-                  {createSaving ? "Tworzenie..." : "Utworz ryzyko i polacz"}
-                </button>
-                <button type="button" className="btn btn-sm" onClick={() => setMode("list")}>Anuluj</button>
+              {/* Z level selector */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <div style={{ fontSize: 9, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", textAlign: "center", marginBottom: 2 }}>
+                  Ocena zabezpieczen (Z)
+                </div>
+                {([
+                  { value: 0.10, label: "Brak zabezpieczen", color: "var(--red)" },
+                  { value: 0.25, label: "Czesciowe", color: "var(--orange)" },
+                  { value: 0.70, label: "Dobra jakosc", color: "var(--blue)" },
+                  { value: 0.95, label: "Skuteczne, testowane", color: "var(--green)" },
+                ] as const).map(zl => {
+                  const isActive = Math.abs(cZ - zl.value) < 0.01;
+                  return (
+                    <div
+                      key={zl.value}
+                      style={{
+                        padding: "4px 8px", borderRadius: 5, fontSize: 10, cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: 6,
+                        background: isActive ? `${zl.color}18` : "transparent",
+                        border: isActive ? `2px solid ${zl.color}` : "2px solid var(--border)",
+                        color: isActive ? zl.color : "var(--text-muted)",
+                        fontWeight: isActive ? 600 : 400, transition: "all 0.15s",
+                      }}
+                      onClick={() => setCZ(zl.value)}
+                    >
+                      <span style={{ width: 7, height: 7, borderRadius: "50%", background: isActive ? zl.color : "var(--border)", flexShrink: 0 }} />
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", minWidth: 28, fontSize: 10 }}>{zl.value.toFixed(2)}</span>
+                      <span style={{ fontSize: 10 }}>{zl.label}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          </form>
+
+            <form onSubmit={handleCreateRisk}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Domena bezpieczenstwa *</label>
+                  <select name="security_area_id" className="form-control" required style={{ fontSize: 12 }}>
+                    <option value="">Wybierz...</option>
+                    {securityAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                </div>
+
+                {!asset.org_unit_id && (
+                  <div className="form-group">
+                    <label style={{ fontSize: 11 }}>Jednostka organizacyjna *</label>
+                    <select name="org_unit_id" className="form-control" required style={{ fontSize: 12 }}>
+                      <option value="">Wybierz...</option>
+                      {(() => {
+                        const flat: { id: number; name: string; depth: number }[] = [];
+                        const walk = (nodes: OrgUnitTreeNode[], d: number) => {
+                          for (const n of nodes) { flat.push({ id: n.id, name: n.name, depth: d }); walk(n.children, d + 1); }
+                        };
+                        walk(orgTree, 0);
+                        return flat.map(u => (
+                          <option key={u.id} value={u.id}>{"\u00A0\u00A0".repeat(u.depth)}{u.name}</option>
+                        ));
+                      })()}
+                    </select>
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Wlasciciel ryzyka</label>
+                  <input name="owner" className="form-control" defaultValue={asset.owner || ""} style={{ fontSize: 12 }} placeholder="np. Jan Kowalski" />
+                </div>
+
+                {/* Threats TagMultiSelect */}
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Zagrozenia</label>
+                  {cThreatIds.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                      {cThreatIds.map(id => {
+                        const t = catalogThreats.find(x => x.id === id);
+                        return (
+                          <span key={id} style={{
+                            display: "inline-flex", alignItems: "center", gap: 3,
+                            background: "var(--red-dim, rgba(239,68,68,0.1))", color: "var(--red)",
+                            border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12,
+                            padding: "2px 8px", fontSize: 10, fontWeight: 500,
+                          }}>
+                            {t?.name ?? `#${id}`}
+                            <span style={{ cursor: "pointer", fontWeight: 700, fontSize: 12 }}
+                              onClick={() => setCThreatIds(prev => prev.filter(x => x !== id))}>&times;</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <select
+                    className="form-control" style={{ fontSize: 11 }}
+                    value="" onChange={e => { const v = Number(e.target.value); if (v && !cThreatIds.includes(v)) setCThreatIds(prev => [...prev, v]); }}
+                  >
+                    <option value="">+ Dodaj zagrozenie...</option>
+                    {catalogThreats.filter(t => !cThreatIds.includes(t.id)).map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Vulnerabilities TagMultiSelect */}
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Podatnosci</label>
+                  {cVulnIds.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                      {cVulnIds.map(id => {
+                        const v = catalogVulns.find(x => x.id === id);
+                        return (
+                          <span key={id} style={{
+                            display: "inline-flex", alignItems: "center", gap: 3,
+                            background: "var(--orange-dim, rgba(249,115,22,0.1))", color: "var(--orange)",
+                            border: "1px solid rgba(249,115,22,0.3)", borderRadius: 12,
+                            padding: "2px 8px", fontSize: 10, fontWeight: 500,
+                          }}>
+                            {v?.name ?? `#${id}`}
+                            <span style={{ cursor: "pointer", fontWeight: 700, fontSize: 12 }}
+                              onClick={() => setCVulnIds(prev => prev.filter(x => x !== id))}>&times;</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <select
+                    className="form-control" style={{ fontSize: 11 }}
+                    value="" onChange={e => { const v = Number(e.target.value); if (v && !cVulnIds.includes(v)) setCVulnIds(prev => [...prev, v]); }}
+                  >
+                    <option value="">+ Dodaj podatnosc...</option>
+                    {catalogVulns.filter(v => !cVulnIds.includes(v.id)).map(v => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Safeguards TagMultiSelect */}
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Zabezpieczenia (katalog)</label>
+                  {cSafeguardIds.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 6 }}>
+                      {cSafeguardIds.map(id => {
+                        const s = catalogSafeguards.find(x => x.id === id);
+                        return (
+                          <span key={id} style={{
+                            display: "inline-flex", alignItems: "center", gap: 3,
+                            background: "var(--green-dim, rgba(34,197,94,0.1))", color: "var(--green)",
+                            border: "1px solid rgba(34,197,94,0.3)", borderRadius: 12,
+                            padding: "2px 8px", fontSize: 10, fontWeight: 500,
+                          }}>
+                            {s?.name ?? `#${id}`}
+                            <span style={{ cursor: "pointer", fontWeight: 700, fontSize: 12 }}
+                              onClick={() => setCSafeguardIds(prev => prev.filter(x => x !== id))}>&times;</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <select
+                    className="form-control" style={{ fontSize: 11 }}
+                    value="" onChange={e => { const v = Number(e.target.value); if (v && !cSafeguardIds.includes(v)) setCSafeguardIds(prev => [...prev, v]); }}
+                  >
+                    <option value="">+ Dodaj zabezpieczenie...</option>
+                    {catalogSafeguards.filter(s => !cSafeguardIds.includes(s.id)).map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Opis konsekwencji</label>
+                  <textarea name="consequence_description" className="form-control" rows={2} style={{ fontSize: 12 }} placeholder="Co moze sie stac w przypadku materializacji ryzyka?" />
+                </div>
+
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Istniejace zabezpieczenia (opis)</label>
+                  <textarea name="existing_controls" className="form-control" rows={2} style={{ fontSize: 12 }} placeholder="Jakie zabezpieczenia juz istnieja?" />
+                </div>
+
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button type="submit" className="btn btn-sm btn-primary" style={{ flex: 1 }} disabled={createSaving}>
+                    {createSaving ? "Tworzenie..." : "Utworz ryzyko i polacz"}
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={() => setMode("list")}>Anuluj</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        );
+      })()}
+
+      {/* Mode: Post-creation — link mitigating actions */}
+      {mode === "link_action" && createdRiskId && (
+        <div>
+          <div style={{ textAlign: "center", marginBottom: 14 }}>
+            <div style={{ fontSize: 28, marginBottom: 4 }}>&#10003;</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--green)" }}>Ryzyko R-{createdRiskId} utworzone!</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+              Dodaj dzialanie mitygujace lub wroc do listy ryzyk.
+            </div>
+          </div>
+
+          {/* Linked actions list */}
+          {linkedActionIds.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Powiazane dzialania ({linkedActionIds.length})</div>
+              {linkedActionIds.map(aid => (
+                <div key={aid} style={{
+                  padding: "4px 8px", background: "rgba(59,130,246,0.06)", borderRadius: 4, marginBottom: 3,
+                  fontSize: 11, display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  <span style={{ color: "var(--blue)" }}>A-{aid}</span>
+                  <span style={{ color: "var(--green)", fontSize: 10 }}>&#10003; powiazane</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Search existing action */}
+          {!showNewAction && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <div style={{ flex: 1, position: "relative" }}>
+                  <input
+                    className="form-control"
+                    style={{ fontSize: 12 }}
+                    placeholder="Szukaj istniejacego dzialania po tytule..."
+                    value={actionQuery}
+                    onChange={e => setActionQuery(e.target.value)}
+                  />
+                  {actionSearching && <span style={{ position: "absolute", right: 8, top: 8, fontSize: 10, color: "var(--text-muted)" }}>...</span>}
+                  {actionResults.length > 0 && (
+                    <div style={{
+                      position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+                      background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
+                      maxHeight: 180, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                    }}>
+                      {actionResults.map(a => (
+                        <div key={a.id} style={{
+                          padding: "7px 10px", cursor: "pointer", fontSize: 11,
+                          borderBottom: "1px solid rgba(42,53,84,0.12)",
+                          opacity: linkedActionIds.includes(a.id) ? 0.4 : 1,
+                        }}
+                          onClick={() => !linkedActionIds.includes(a.id) && linkActionToRisk(a)}
+                          onMouseEnter={e => (e.currentTarget.style.background = "rgba(59,130,246,0.08)")}
+                          onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                        >
+                          <div style={{ fontWeight: 500 }}>{a.title}</div>
+                          <div style={{ fontSize: 9, color: "var(--text-muted)" }}>
+                            {a.owner && <span>{a.owner}</span>}
+                            {a.status_name && <span> | {a.status_name}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button type="button" className="btn btn-sm btn-primary" style={{ fontSize: 11, whiteSpace: "nowrap" }}
+                  onClick={() => { setShowNewAction(true); setActionQuery(""); setActionResults([]); }}>
+                  + Nowe
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Inline new action form */}
+          {showNewAction && (
+            <form onSubmit={createAndLinkAction} style={{
+              background: "rgba(59,130,246,0.04)", border: "1px solid rgba(59,130,246,0.2)",
+              borderRadius: 8, padding: 12, marginBottom: 10,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontWeight: 600, fontSize: 12, color: "var(--blue)" }}>Nowe dzialanie</span>
+                <button type="button" className="btn btn-sm" style={{ fontSize: 10 }} onClick={() => setShowNewAction(false)}>Anuluj</button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Tytul dzialania *</label>
+                  <input name="title" className="form-control" required style={{ fontSize: 12 }} placeholder="np. Wdrozenie MFA" />
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div className="form-group">
+                    <label style={{ fontSize: 11 }}>Wlasciciel</label>
+                    <input name="action_owner" className="form-control" style={{ fontSize: 12 }} placeholder="np. Jan Kowalski" />
+                  </div>
+                  <div className="form-group">
+                    <label style={{ fontSize: 11 }}>Termin</label>
+                    <input type="date" name="due_date" className="form-control" style={{ fontSize: 12 }} />
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Opis</label>
+                  <textarea name="description" className="form-control" rows={2} style={{ fontSize: 12 }} placeholder="Opis dzialania..." />
+                </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 8 }}>
+                <button type="button" className="btn btn-sm" onClick={() => setShowNewAction(false)}>Anuluj</button>
+                <button type="submit" className="btn btn-sm btn-primary" disabled={newActionSaving}>
+                  {newActionSaving ? "Tworzenie..." : "Utworz i powiaz"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          <button type="button" className="btn btn-sm" style={{ width: "100%", marginTop: 6 }}
+            onClick={() => { setMode("list"); setCreatedRiskId(null); }}>
+            Zakoncz — wroc do listy ryzyk
+          </button>
         </div>
       )}
     </div>

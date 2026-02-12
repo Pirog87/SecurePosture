@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 
 /**
  * Generic hook that centralises:
@@ -174,7 +174,9 @@ export function useTableFeatures<T>(opts: UseTableFeaturesOpts<T>): UseTableFeat
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const safePage = Math.min(page, totalPages);
   // auto-correct page if it exceeds after filter change
-  if (safePage !== page) setPageRaw(safePage);
+  useEffect(() => {
+    if (safePage !== page) setPageRaw(safePage);
+  }, [safePage, page]);
 
   const pageData = useMemo(
     () => filtered.slice((safePage - 1) * pageSize, safePage * pageSize),

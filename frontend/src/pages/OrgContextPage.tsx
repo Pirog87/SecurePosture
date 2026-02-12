@@ -757,8 +757,12 @@ export default function OrgContextPage() {
             visibleColumns={issueVisCols}
             onToggleColumn={toggleIssueCol}
             data={filteredIssues}
-            filenamePrefix="kontekst-czynniki"
-            actions={<button className="btn btn-sm btn-primary" onClick={() => setShowIssueForm(true)}>+ Dodaj czynnik</button>}
+            filteredCount={filteredIssues.length}
+            totalCount={issues.length}
+            unitLabel="czynników"
+            exportFilename="kontekst-czynniki"
+            primaryLabel="Dodaj czynnik"
+            onPrimaryAction={() => setShowIssueForm(true)}
           />
           <table className="data-table" style={{ marginTop: 8 }}>
             <thead>
@@ -820,8 +824,12 @@ export default function OrgContextPage() {
             visibleColumns={oblVisCols}
             onToggleColumn={toggleOblCol}
             data={filteredObligations}
-            filenamePrefix="kontekst-zobowiazania"
-            actions={<button className="btn btn-sm btn-primary" onClick={() => setShowOblForm(true)}>+ Dodaj zobowiązanie</button>}
+            filteredCount={filteredObligations.length}
+            totalCount={obligations.length}
+            unitLabel="zobowiązań"
+            exportFilename="kontekst-zobowiazania"
+            primaryLabel="Dodaj zobowiązanie"
+            onPrimaryAction={() => setShowOblForm(true)}
           />
           <table className="data-table" style={{ marginTop: 8 }}>
             <thead>
@@ -881,8 +889,12 @@ export default function OrgContextPage() {
             visibleColumns={stkVisCols}
             onToggleColumn={toggleStkCol}
             data={filteredStakeholders}
-            filenamePrefix="kontekst-interesariusze"
-            actions={<button className="btn btn-sm btn-primary" onClick={() => setShowStkForm(true)}>+ Dodaj interesariusza</button>}
+            filteredCount={filteredStakeholders.length}
+            totalCount={stakeholders.length}
+            unitLabel="interesariuszy"
+            exportFilename="kontekst-interesariusze"
+            primaryLabel="Dodaj interesariusza"
+            onPrimaryAction={() => setShowStkForm(true)}
           />
           <table className="data-table" style={{ marginTop: 8 }}>
             <thead>
@@ -1006,8 +1018,12 @@ export default function OrgContextPage() {
           visibleColumns={revVisCols}
           onToggleColumn={toggleRevCol}
           data={reviews}
-          filenamePrefix="kontekst-przeglądy"
-          actions={<button className="btn btn-sm btn-primary" onClick={() => setShowReviewForm(true)}>+ Dodaj przegląd</button>}
+          filteredCount={reviews.length}
+          totalCount={reviews.length}
+          unitLabel="przeglądów"
+          exportFilename="kontekst-przeglady"
+          primaryLabel="Dodaj przegląd"
+          onPrimaryAction={() => setShowReviewForm(true)}
         />
         <table className="data-table" style={{ marginTop: 8 }}>
           <thead>

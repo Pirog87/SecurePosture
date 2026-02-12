@@ -11,7 +11,7 @@ from app.models.asset_category import AssetCategory, CategoryFieldDefinition, Re
 from app.schemas.asset_category import (
     AssetCategoryCreate, AssetCategoryOut, AssetCategoryTreeNode, AssetCategoryUpdate,
     FieldDefinitionCreate, FieldDefinitionOut, FieldDefinitionUpdate,
-    RelationshipTypeOut,
+    RelationshipTypeCreate, RelationshipTypeOut, RelationshipTypeUpdate,
 )
 
 router = APIRouter(prefix="/api/v1/asset-categories", tags=["CMDB Kategorie"])
@@ -223,7 +223,48 @@ async def delete_field(field_id: int, s: AsyncSession = Depends(get_session)):
 # ═══════════════════ RELATIONSHIP TYPES ═══════════════════
 
 @router.get("/relationship-types/all", response_model=list[RelationshipTypeOut], summary="Typy relacji")
-async def list_relationship_types(s: AsyncSession = Depends(get_session)):
-    q = select(RelationshipType).where(RelationshipType.is_active.is_(True)).order_by(RelationshipType.sort_order)
+async def list_relationship_types(
+    include_inactive: bool = Query(False),
+    s: AsyncSession = Depends(get_session),
+):
+    q = select(RelationshipType).order_by(RelationshipType.sort_order)
+    if not include_inactive:
+        q = q.where(RelationshipType.is_active.is_(True))
     types = (await s.execute(q)).scalars().all()
     return [RelationshipTypeOut.model_validate(t) for t in types]
+
+
+@router.post("/relationship-types", response_model=RelationshipTypeOut, status_code=201, summary="Utwórz typ relacji")
+async def create_relationship_type(body: RelationshipTypeCreate, s: AsyncSession = Depends(get_session)):
+    existing = (await s.execute(
+        select(RelationshipType).where(RelationshipType.code == body.code)
+    )).scalar_one_or_none()
+    if existing:
+        raise HTTPException(409, f"Typ relacji z kodem '{body.code}' juz istnieje")
+    rt = RelationshipType(**body.model_dump())
+    s.add(rt)
+    await s.commit()
+    await s.refresh(rt)
+    return RelationshipTypeOut.model_validate(rt)
+
+
+@router.put("/relationship-types/{rt_id}", response_model=RelationshipTypeOut, summary="Edytuj typ relacji")
+async def update_relationship_type(rt_id: int, body: RelationshipTypeUpdate, s: AsyncSession = Depends(get_session)):
+    rt = await s.get(RelationshipType, rt_id)
+    if not rt:
+        raise HTTPException(404, "Typ relacji nie istnieje")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(rt, k, v)
+    await s.commit()
+    await s.refresh(rt)
+    return RelationshipTypeOut.model_validate(rt)
+
+
+@router.delete("/relationship-types/{rt_id}", summary="Dezaktywuj typ relacji")
+async def deactivate_relationship_type(rt_id: int, s: AsyncSession = Depends(get_session)):
+    rt = await s.get(RelationshipType, rt_id)
+    if not rt:
+        raise HTTPException(404, "Typ relacji nie istnieje")
+    rt.is_active = False
+    await s.commit()
+    return {"status": "deactivated", "id": rt_id}

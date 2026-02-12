@@ -1176,6 +1176,7 @@ function AssetTab({ assetId, assetName, lookups, flatUnits, orgTree, onSelectAss
   onAssetCreated: (asset: Asset) => void;
 }) {
   const [search, setSearch] = useState("");
+  const [cmdbCategoryFilter, setCmdbCategoryFilter] = useState<string>("");
   const [showNewForm, setShowNewForm] = useState(false);
   const [creating, setCreating] = useState(false);
 
@@ -1192,14 +1193,32 @@ function AssetTab({ assetId, assetName, lookups, flatUnits, orgTree, onSelectAss
 
   const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
 
-  const filtered = search.length >= 1
+  // Get unique CMDB category names for filtering
+  const cmdbCategories = useMemo(() => {
+    const cats = new Map<string, number>();
+    for (const a of lookups.assets) {
+      const name = a.asset_category_name || a.category_name;
+      if (name) cats.set(name, (cats.get(name) || 0) + 1);
+    }
+    return [...cats.entries()].sort((a, b) => b[1] - a[1]);
+  }, [lookups.assets]);
+
+  const filtered = search.length >= 1 || cmdbCategoryFilter
     ? lookups.assets.filter(a => {
-        const q = search.toLowerCase();
-        return a.name.toLowerCase().includes(q)
-          || (a.org_unit_name ?? "").toLowerCase().includes(q)
-          || (a.owner ?? "").toLowerCase().includes(q)
-          || (a.category_name ?? "").toLowerCase().includes(q);
-      }).slice(0, 12)
+        if (cmdbCategoryFilter) {
+          const catName = a.asset_category_name || a.category_name;
+          if (catName !== cmdbCategoryFilter) return false;
+        }
+        if (search.length >= 1) {
+          const q = search.toLowerCase();
+          return a.name.toLowerCase().includes(q)
+            || (a.org_unit_name ?? "").toLowerCase().includes(q)
+            || (a.owner ?? "").toLowerCase().includes(q)
+            || (a.category_name ?? "").toLowerCase().includes(q)
+            || (a.asset_category_name ?? "").toLowerCase().includes(q);
+        }
+        return true;
+      }).slice(0, 20)
     : [];
 
   const handleCreateAsset = async () => {
@@ -1272,11 +1291,24 @@ function AssetTab({ assetId, assetName, lookups, flatUnits, orgTree, onSelectAss
           {!showNewForm && (
             <div style={{ position: "relative", marginBottom: 12 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {cmdbCategories.length > 0 && (
+                  <select
+                    className="form-control"
+                    style={{ fontSize: 11, width: 180, padding: "5px 8px" }}
+                    value={cmdbCategoryFilter}
+                    onChange={e => setCmdbCategoryFilter(e.target.value)}
+                  >
+                    <option value="">Kategoria CMDB...</option>
+                    {cmdbCategories.map(([name, count]) => (
+                      <option key={name} value={name}>{name} ({count})</option>
+                    ))}
+                  </select>
+                )}
                 <div style={{ flex: 1, position: "relative" }}>
                   <input
                     className="form-control"
                     style={{ fontSize: 12 }}
-                    placeholder="Szukaj aktywa po nazwie, jednostce, wlascicielu, kategorii..."
+                    placeholder="Szukaj aktywa po nazwie, jednostce, wlascicielu..."
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                   />
@@ -1305,7 +1337,12 @@ function AssetTab({ assetId, assetName, lookups, flatUnits, orgTree, onSelectAss
                     >
                       <div style={{ fontWeight: 500, marginBottom: 2 }}>{a.name}</div>
                       <div style={{ fontSize: 10, color: "var(--text-muted)", display: "flex", gap: 10 }}>
-                        {a.category_name && <span>{a.category_name}</span>}
+                        {a.asset_category_name && (
+                          <span className="score-badge" style={{ background: (a.asset_category_color || "var(--purple)") + "20", color: a.asset_category_color || "var(--purple)", fontSize: 9, padding: "1px 5px" }}>
+                            {a.asset_category_name}
+                          </span>
+                        )}
+                        {!a.asset_category_name && a.category_name && <span>{a.category_name}</span>}
                         {a.org_unit_name && <span>{a.org_unit_name}</span>}
                         {a.owner && <span>{a.owner}</span>}
                         {a.sensitivity_name && <span>W: {a.sensitivity_name}</span>}

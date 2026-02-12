@@ -110,6 +110,26 @@ class FieldDefinitionOut(FieldDefinitionBase):
 
 # ── Relationship Type ──
 
+class RelationshipTypeCreate(BaseModel):
+    code: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=200)
+    name_reverse: str | None = Field(None, max_length=200)
+    color: str | None = Field(None, max_length=7)
+    icon: str | None = Field(None, max_length=50)
+    description: str | None = None
+    sort_order: int = 0
+
+
+class RelationshipTypeUpdate(BaseModel):
+    name: str | None = Field(None, max_length=200)
+    name_reverse: str | None = Field(None, max_length=200)
+    color: str | None = Field(None, max_length=7)
+    icon: str | None = Field(None, max_length=50)
+    description: str | None = None
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
 class RelationshipTypeOut(BaseModel):
     id: int
     code: str

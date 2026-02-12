@@ -23,6 +23,10 @@ from app.models.cis import (
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk, RiskReviewConfig
+from app.models.asset import Asset
+from app.models.asset_category import AssetCategory
+from app.models.incident import Incident
+from app.models.vulnerability import VulnerabilityRecord
 from app.models.security_area import SecurityDomain as SecurityArea
 from app.schemas.dashboard import (
     AttackCapability,
@@ -673,13 +677,37 @@ async def get_executive_summary(
         for r in top_rows
     ]
 
+    # CMDB KPIs
+    total_assets = (await s.execute(
+        select(func.count()).select_from(Asset).where(Asset.is_active.is_(True))
+    )).scalar() or 0
+    assets_with_category = (await s.execute(
+        select(func.count()).select_from(Asset).where(
+            Asset.is_active.is_(True), Asset.asset_category_id.isnot(None)
+        )
+    )).scalar() or 0
+    cmdb_coverage_pct = round(assets_with_category / max(total_assets, 1) * 100) if total_assets > 0 else 0
+
+    # Vulnerability KPIs
+    open_vulns = (await s.execute(
+        select(func.count()).select_from(VulnerabilityRecord).where(VulnerabilityRecord.is_active.is_(True))
+    )).scalar() or 0
+
+    # Incident KPIs
+    open_incidents = (await s.execute(
+        select(func.count()).select_from(Incident).where(Incident.is_active.is_(True))
+    )).scalar() or 0
+
     # KPIs
     kpis = [
         ExecutiveKPI(label="Ryzyka ogółem", value=counts.total, color="#3b82f6"),
         ExecutiveKPI(label="Ryzyka krytyczne", value=counts.high, color="#ef4444"),
         ExecutiveKPI(label="Średni score ryzyka", value=round(avg_score, 1) if avg_score else 0, color="#f97316"),
+        ExecutiveKPI(label="Aktywa (CMDB)", value=total_assets, color="#8b5cf6"),
+        ExecutiveKPI(label="CMDB Coverage", value=cmdb_coverage_pct, unit="%", color="#8b5cf6"),
+        ExecutiveKPI(label="Otwarte podatności", value=open_vulns, color="#ea580c" if open_vulns > 5 else "#22c55e"),
+        ExecutiveKPI(label="Otwarte incydenty", value=open_incidents, color="#ef4444" if open_incidents > 0 else "#22c55e"),
         ExecutiveKPI(label="CIS Maturity Rating", value=cis_maturity or 0, unit="/5.0", color="#8b5cf6"),
-        ExecutiveKPI(label="CIS % Risk Addressed", value=cis_pct or 0, unit="%", color="#8b5cf6"),
         ExecutiveKPI(label="Security Posture", value=posture.score, unit="/100", color="#22c55e"),
         ExecutiveKPI(label="Przeterminowane przeglądy", value=len(overdue), color="#ef4444" if overdue else "#22c55e"),
     ]

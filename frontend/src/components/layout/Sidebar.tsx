@@ -68,6 +68,12 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Raporty",
+    items: [
+      { to: "/reports", icon: "📈", label: "Generuj raporty" },
+    ],
+  },
+  {
     title: "Konfiguracja",
     items: [
       { to: "/assets/admin", icon: "⚙️", label: "CMDB Admin" },

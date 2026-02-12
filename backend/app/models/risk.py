@@ -31,6 +31,7 @@ class Risk(Base):
     org_unit_id: Mapped[int] = mapped_column(ForeignKey("org_units.id"), nullable=False)
     risk_category_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     risk_source: Mapped[str | None] = mapped_column(Text)
+    identification_source_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
 
     # ── ISO 27005 §8.2 Identyfikacja ryzyka ──
     asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"))
@@ -39,10 +40,7 @@ class Risk(Base):
     sensitivity_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     criticality_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_domains.id"))
-    threat_id: Mapped[int | None] = mapped_column(ForeignKey("threats.id"))
-    vulnerability_id: Mapped[int | None] = mapped_column(ForeignKey("vulnerabilities.id"))
     existing_controls: Mapped[str | None] = mapped_column(Text)
-    control_effectiveness_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     consequence_description: Mapped[str | None] = mapped_column(Text)
 
     # ── ISO 27005 §8.3 Analiza ryzyka ──
@@ -66,6 +64,7 @@ class Risk(Base):
     owner: Mapped[str | None] = mapped_column(String(200))
     planned_actions: Mapped[str | None] = mapped_column(Text)
     treatment_plan: Mapped[str | None] = mapped_column(Text)
+    planned_safeguard_id: Mapped[int | None] = mapped_column(ForeignKey("safeguards.id"))
     treatment_deadline: Mapped[datetime | None] = mapped_column(Date)
     treatment_resources: Mapped[str | None] = mapped_column(Text)
     residual_risk: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
@@ -100,6 +99,22 @@ class Risk(Base):
     from .org_unit import OrgUnit
     from .security_area import SecurityArea
     from .dictionary import DictionaryEntry
+
+
+class RiskThreat(Base):
+    __tablename__ = "risk_threats"
+
+    risk_id: Mapped[int] = mapped_column(ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True)
+    threat_id: Mapped[int] = mapped_column(ForeignKey("threats.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class RiskVulnerability(Base):
+    __tablename__ = "risk_vulnerabilities"
+
+    risk_id: Mapped[int] = mapped_column(ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True)
+    vulnerability_id: Mapped[int] = mapped_column(ForeignKey("vulnerabilities.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class RiskSafeguard(Base):

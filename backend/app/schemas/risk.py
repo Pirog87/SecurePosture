@@ -3,6 +3,16 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 
+class RiskThreatRef(BaseModel):
+    threat_id: int
+    threat_name: str | None = None
+
+
+class RiskVulnerabilityRef(BaseModel):
+    vulnerability_id: int
+    vulnerability_name: str | None = None
+
+
 class RiskSafeguardRef(BaseModel):
     safeguard_id: int
     safeguard_name: str | None = None
@@ -27,6 +37,8 @@ class RiskOut(BaseModel):
     risk_category_id: int | None = None
     risk_category_name: str | None = None
     risk_source: str | None = None
+    identification_source_id: int | None = None
+    identification_source_name: str | None = None
 
     # Identyfikacja (ISO 27005 §8.2)
     asset_id: int | None = None
@@ -40,13 +52,7 @@ class RiskOut(BaseModel):
     criticality_name: str | None = None
     security_area_id: int | None = None
     security_area_name: str | None = None
-    threat_id: int | None = None
-    threat_name: str | None = None
-    vulnerability_id: int | None = None
-    vulnerability_name: str | None = None
     existing_controls: str | None = None
-    control_effectiveness_id: int | None = None
-    control_effectiveness_name: str | None = None
     consequence_description: str | None = None
 
     # Analiza (ISO 27005 §8.3)
@@ -64,6 +70,8 @@ class RiskOut(BaseModel):
     owner: str | None = None
     planned_actions: str | None = None
     treatment_plan: str | None = None
+    planned_safeguard_id: int | None = None
+    planned_safeguard_name: str | None = None
     treatment_deadline: date | None = None
     treatment_resources: str | None = None
     residual_risk: float | None = None
@@ -84,6 +92,8 @@ class RiskOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    threats: list[RiskThreatRef] = []
+    vulnerabilities: list[RiskVulnerabilityRef] = []
     safeguards: list[RiskSafeguardRef] = []
     linked_actions: list[LinkedActionRef] = []
 
@@ -95,6 +105,7 @@ class RiskCreate(BaseModel):
     org_unit_id: int
     risk_category_id: int | None = None
     risk_source: str | None = None
+    identification_source_id: int | None = None
 
     # Identyfikacja
     asset_id: int | None = None
@@ -103,10 +114,7 @@ class RiskCreate(BaseModel):
     sensitivity_id: int | None = None
     criticality_id: int | None = None
     security_area_id: int | None = None
-    threat_id: int | None = None
-    vulnerability_id: int | None = None
     existing_controls: str | None = None
-    control_effectiveness_id: int | None = None
     consequence_description: str | None = None
 
     # Analiza
@@ -120,6 +128,7 @@ class RiskCreate(BaseModel):
     owner: str | None = Field(None, max_length=200)
     planned_actions: str | None = None
     treatment_plan: str | None = None
+    planned_safeguard_id: int | None = None
     treatment_deadline: date | None = None
     treatment_resources: str | None = None
     residual_risk: float | None = None
@@ -134,6 +143,8 @@ class RiskCreate(BaseModel):
     # Monitorowanie
     next_review_date: date | None = None
 
+    threat_ids: list[int] = []
+    vulnerability_ids: list[int] = []
     safeguard_ids: list[int] = []
 
 
@@ -142,6 +153,7 @@ class RiskUpdate(BaseModel):
     org_unit_id: int | None = None
     risk_category_id: int | None = None
     risk_source: str | None = None
+    identification_source_id: int | None = None
 
     # Identyfikacja
     asset_id: int | None = None
@@ -150,10 +162,7 @@ class RiskUpdate(BaseModel):
     sensitivity_id: int | None = None
     criticality_id: int | None = None
     security_area_id: int | None = None
-    threat_id: int | None = None
-    vulnerability_id: int | None = None
     existing_controls: str | None = None
-    control_effectiveness_id: int | None = None
     consequence_description: str | None = None
 
     # Analiza
@@ -167,6 +176,7 @@ class RiskUpdate(BaseModel):
     owner: str | None = Field(None, max_length=200)
     planned_actions: str | None = None
     treatment_plan: str | None = None
+    planned_safeguard_id: int | None = None
     treatment_deadline: date | None = None
     treatment_resources: str | None = None
     residual_risk: float | None = None
@@ -182,6 +192,8 @@ class RiskUpdate(BaseModel):
     next_review_date: date | None = None
     is_active: bool | None = None
 
+    threat_ids: list[int] | None = None
+    vulnerability_ids: list[int] | None = None
     safeguard_ids: list[int] | None = None
 
 

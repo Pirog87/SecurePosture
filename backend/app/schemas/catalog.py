@@ -10,6 +10,8 @@ class ThreatOut(BaseModel):
     name: str
     category_id: int | None = None
     category_name: str | None = None
+    asset_type_id: int | None = None
+    asset_type_name: str | None = None
     description: str | None = None
     is_active: bool = True
     created_at: datetime
@@ -20,12 +22,14 @@ class ThreatOut(BaseModel):
 class ThreatCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=400)
     category_id: int | None = None
+    asset_type_id: int | None = None
     description: str | None = None
 
 
 class ThreatUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=400)
     category_id: int | None = None
+    asset_type_id: int | None = None
     description: str | None = None
     is_active: bool | None = None
 
@@ -37,6 +41,8 @@ class VulnerabilityOut(BaseModel):
     name: str
     security_area_id: int | None = None
     security_area_name: str | None = None
+    asset_type_id: int | None = None
+    asset_type_name: str | None = None
     description: str | None = None
     is_active: bool = True
     created_at: datetime
@@ -47,12 +53,14 @@ class VulnerabilityOut(BaseModel):
 class VulnerabilityCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=400)
     security_area_id: int | None = None
+    asset_type_id: int | None = None
     description: str | None = None
 
 
 class VulnerabilityUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=400)
     security_area_id: int | None = None
+    asset_type_id: int | None = None
     description: str | None = None
     is_active: bool | None = None
 
@@ -64,6 +72,8 @@ class SafeguardOut(BaseModel):
     name: str
     type_id: int | None = None
     type_name: str | None = None
+    asset_type_id: int | None = None
+    asset_type_name: str | None = None
     description: str | None = None
     is_active: bool = True
     created_at: datetime
@@ -74,11 +84,13 @@ class SafeguardOut(BaseModel):
 class SafeguardCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=400)
     type_id: int | None = None
+    asset_type_id: int | None = None
     description: str | None = None
 
 
 class SafeguardUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=400)
     type_id: int | None = None
+    asset_type_id: int | None = None
     description: str | None = None
     is_active: bool | None = None

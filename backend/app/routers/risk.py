@@ -20,10 +20,11 @@ from app.models.asset import Asset
 from app.models.catalog import Safeguard, Threat, Vulnerability
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
-from app.models.risk import Risk, RiskSafeguard
+from app.models.risk import Risk, RiskThreat, RiskVulnerability, RiskSafeguard
 from app.models.security_area import SecurityDomain as SecurityArea
 from app.schemas.risk import (
-    LinkedActionRef, RiskAcceptRequest, RiskCreate, RiskOut, RiskSafeguardRef, RiskUpdate,
+    LinkedActionRef, RiskAcceptRequest, RiskCreate, RiskOut,
+    RiskThreatRef, RiskVulnerabilityRef, RiskSafeguardRef, RiskUpdate,
 )
 
 router = APIRouter(prefix="/api/v1/risks", tags=["Analiza ryzyka"])
@@ -42,10 +43,24 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
     org = await s.get(OrgUnit, risk.org_unit_id)
     asset = await s.get(Asset, risk.asset_id) if risk.asset_id else None
     area = await s.get(SecurityArea, risk.security_area_id) if risk.security_area_id else None
-    threat = await s.get(Threat, risk.threat_id) if risk.threat_id else None
-    vuln = await s.get(Vulnerability, risk.vulnerability_id) if risk.vulnerability_id else None
 
-    # safeguards
+    # threats (M2M)
+    th_q = (
+        select(RiskThreat.threat_id, Threat.name)
+        .join(Threat, RiskThreat.threat_id == Threat.id)
+        .where(RiskThreat.risk_id == risk.id)
+    )
+    th_rows = (await s.execute(th_q)).all()
+
+    # vulnerabilities (M2M)
+    vl_q = (
+        select(RiskVulnerability.vulnerability_id, Vulnerability.name)
+        .join(Vulnerability, RiskVulnerability.vulnerability_id == Vulnerability.id)
+        .where(RiskVulnerability.risk_id == risk.id)
+    )
+    vl_rows = (await s.execute(vl_q)).all()
+
+    # safeguards (M2M)
     sg_q = (
         select(RiskSafeguard.safeguard_id, Safeguard.name)
         .join(Safeguard, RiskSafeguard.safeguard_id == Safeguard.id)
@@ -61,6 +76,8 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         risk_category_id=risk.risk_category_id,
         risk_category_name=await _de_label(risk.risk_category_id),
         risk_source=risk.risk_source,
+        identification_source_id=risk.identification_source_id,
+        identification_source_name=await _de_label(risk.identification_source_id),
         # Identyfikacja
         asset_id=risk.asset_id,
         asset_id_name=asset.name if asset else None,
@@ -73,13 +90,7 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         criticality_name=await _de_label(risk.criticality_id),
         security_area_id=risk.security_area_id,
         security_area_name=area.name if area else None,
-        threat_id=risk.threat_id,
-        threat_name=threat.name if threat else None,
-        vulnerability_id=risk.vulnerability_id,
-        vulnerability_name=vuln.name if vuln else None,
         existing_controls=risk.existing_controls,
-        control_effectiveness_id=risk.control_effectiveness_id,
-        control_effectiveness_name=await _de_label(risk.control_effectiveness_id),
         consequence_description=risk.consequence_description,
         # Analiza
         impact_level=risk.impact_level,
@@ -95,6 +106,8 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         owner=risk.owner,
         planned_actions=risk.planned_actions,
         treatment_plan=risk.treatment_plan,
+        planned_safeguard_id=risk.planned_safeguard_id,
+        planned_safeguard_name=(await s.get(Safeguard, risk.planned_safeguard_id)).name if risk.planned_safeguard_id else None,
         treatment_deadline=risk.treatment_deadline,
         treatment_resources=risk.treatment_resources,
         residual_risk=float(risk.residual_risk) if risk.residual_risk is not None else None,
@@ -112,6 +125,8 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         is_active=risk.is_active,
         created_at=risk.created_at,
         updated_at=risk.updated_at,
+        threats=[RiskThreatRef(threat_id=tid, threat_name=tn) for tid, tn in th_rows],
+        vulnerabilities=[RiskVulnerabilityRef(vulnerability_id=vid, vulnerability_name=vn) for vid, vn in vl_rows],
         safeguards=[RiskSafeguardRef(safeguard_id=sid, safeguard_name=sn) for sid, sn in sg_rows],
         linked_actions=await _get_linked_actions(s, risk.id),
     )
@@ -154,6 +169,18 @@ def _calc_residual(tw: int | None, tp: int | None, tz: float | None) -> float | 
     if tw is not None and tp is not None and tz is not None and tz > 0:
         return math.exp(tw) * tp / tz
     return None
+
+
+async def _sync_threats(s: AsyncSession, risk_id: int, threat_ids: list[int]):
+    await s.execute(delete(RiskThreat).where(RiskThreat.risk_id == risk_id))
+    for tid in threat_ids:
+        s.add(RiskThreat(risk_id=risk_id, threat_id=tid))
+
+
+async def _sync_vulnerabilities(s: AsyncSession, risk_id: int, vulnerability_ids: list[int]):
+    await s.execute(delete(RiskVulnerability).where(RiskVulnerability.risk_id == risk_id))
+    for vid in vulnerability_ids:
+        s.add(RiskVulnerability(risk_id=risk_id, vulnerability_id=vid))
 
 
 async def _sync_safeguards(s: AsyncSession, risk_id: int, safeguard_ids: list[int]):
@@ -206,7 +233,7 @@ async def get_risk(risk_id: int, s: AsyncSession = Depends(get_session)):
 
 @router.post("", response_model=RiskOut, status_code=201, summary="Utworz ryzyko")
 async def create_risk(body: RiskCreate, s: AsyncSession = Depends(get_session)):
-    data = body.model_dump(exclude={"safeguard_ids"})
+    data = body.model_dump(exclude={"threat_ids", "vulnerability_ids", "safeguard_ids"})
     # Auto-calculate residual risk from target components
     calc = _calc_residual(data.get("target_impact"), data.get("target_probability"), data.get("target_safeguard"))
     if calc is not None:
@@ -216,6 +243,10 @@ async def create_risk(body: RiskCreate, s: AsyncSession = Depends(get_session)):
     s.add(risk)
     await s.flush()
 
+    if body.threat_ids:
+        await _sync_threats(s, risk.id, body.threat_ids)
+    if body.vulnerability_ids:
+        await _sync_vulnerabilities(s, risk.id, body.vulnerability_ids)
     if body.safeguard_ids:
         await _sync_safeguards(s, risk.id, body.safeguard_ids)
 
@@ -232,7 +263,7 @@ async def update_risk(risk_id: int, body: RiskUpdate, s: AsyncSession = Depends(
     if not risk:
         raise HTTPException(404, "Ryzyko nie istnieje")
 
-    data = body.model_dump(exclude_unset=True, exclude={"safeguard_ids"})
+    data = body.model_dump(exclude_unset=True, exclude={"threat_ids", "vulnerability_ids", "safeguard_ids"})
     for k, v in data.items():
         setattr(risk, k, v)
 
@@ -247,6 +278,10 @@ async def update_risk(risk_id: int, body: RiskUpdate, s: AsyncSession = Depends(
     if calc is not None:
         risk.residual_risk = round(calc, 2)
 
+    if body.threat_ids is not None:
+        await _sync_threats(s, risk_id, body.threat_ids)
+    if body.vulnerability_ids is not None:
+        await _sync_vulnerabilities(s, risk_id, body.vulnerability_ids)
     if body.safeguard_ids is not None:
         await _sync_safeguards(s, risk_id, body.safeguard_ids)
 

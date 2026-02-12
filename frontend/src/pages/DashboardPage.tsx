@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
-import type { ExecutiveSummary, RiskDashboard, PostureScoreResponse, RiskMatrixCell, OrgUnitTreeNode } from "../types";
+import type { ExecutiveSummary, RiskDashboard, PostureScoreResponse, RiskMatrixCell, OrgUnitTreeNode, KpiItem } from "../types";
 import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
+
+/* ──────────────── helpers ──────────────── */
 
 function gradeColor(g: string | null) {
   if (!g) return "var(--text-muted)";
@@ -22,6 +24,43 @@ function matrixBg(impact: number, prob: number): string {
 function matrixCount(matrix: RiskMatrixCell[], impact: number, prob: number): number {
   return matrix.find(c => c.impact === impact && c.probability === prob)?.count ?? 0;
 }
+
+function gradeLabel(g: string | null): string {
+  switch (g) {
+    case "A": return "DOSKONAŁY";
+    case "B": return "DOBRY";
+    case "C": return "UMIARKOWANY";
+    case "D": return "SŁABY";
+    case "F": return "KRYTYCZNY";
+    default: return "—";
+  }
+}
+
+function gradeDesc(g: string | null): string {
+  switch (g) {
+    case "A": return "Doskonała postawa bezpieczeństwa. Wszystkie wymiary powyżej progu akceptacji. Utrzymuj obecny standard.";
+    case "B": return "Dobra postawa z obszarami wymagającymi wzmocnienia. Skoncentruj się na najsłabszych wymiarach.";
+    case "C": return "Umiarkowana postawa bezpieczeństwa. Wymagane są działania korygujące w wielu obszarach.";
+    case "D": return "Słaba postawa bezpieczeństwa. Konieczne natychmiastowe działania naprawcze i eskalacja.";
+    case "F": return "Krytycznie niski poziom bezpieczeństwa. Wymaga natychmiastowej interwencji zarządu.";
+    default: return "Brak wystarczających danych do pełnej oceny.";
+  }
+}
+
+function kpiVal(kpis: KpiItem[], label: string): number {
+  const k = kpis.find(x => x.label === label);
+  return typeof k?.value === "number" ? k.value : parseFloat(String(k?.value ?? "0")) || 0;
+}
+
+function pluralPL(n: number, one: string, few: string, many: string): string {
+  if (n === 1) return one;
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return few;
+  return many;
+}
+
+/* ──────────────── component ──────────────── */
 
 export default function DashboardPage() {
   const [exec, setExec] = useState<ExecutiveSummary | null>(null);
@@ -62,9 +101,75 @@ export default function DashboardPage() {
 
   const score = posture?.score ?? exec?.posture_score ?? 0;
   const grade = posture?.grade ?? exec?.posture_grade ?? null;
-  const circ = 2 * Math.PI * 50;
+  const circ = 2 * Math.PI * 54;
   const offset = circ - (score / 100) * circ;
   const rc = exec?.risk_counts ?? riskDash?.risk_counts ?? { high: 0, medium: 0, low: 0, total: 0 };
+
+  // Org context
+  const orgName = exec?.org_unit?.name ?? null;
+  const scopeLabel = orgName ?? "Cała organizacja";
+
+  // KPI values from the kpis array
+  const vulns = kpiVal(exec?.kpis ?? [], "Otwarte podatności");
+  const incidents = kpiVal(exec?.kpis ?? [], "Otwarte incydenty");
+  const totalAssets = kpiVal(exec?.kpis ?? [], "Aktywa (CMDB)");
+  const cmdbCoverage = kpiVal(exec?.kpis ?? [], "CMDB Coverage");
+
+  // Trend calculation from risk trend data
+  const highTrend = (() => {
+    if (!riskDash?.trend || riskDash.trend.length < 2) return null;
+    const t = riskDash.trend;
+    const last = t[t.length - 1];
+    const prev = t[t.length - 2];
+    return { delta: last.high - prev.high, totalDelta: last.total - prev.total };
+  })();
+
+  // Auto-generated findings for executive briefing
+  const findings: { text: string; color: string; bg: string }[] = [];
+  if (rc.high > 0) findings.push({
+    text: `${rc.high} ${pluralPL(rc.high, "ryzyko krytyczne wymaga", "ryzyka krytyczne wymagają", "ryzyk krytycznych wymaga")} natychmiastowej uwagi`,
+    color: "var(--red)", bg: "var(--red-dim)",
+  });
+  if (incidents > 0) findings.push({
+    text: `${incidents} ${pluralPL(incidents, "otwarty incydent", "otwarte incydenty", "otwartych incydentów")} bezpieczeństwa`,
+    color: "var(--red)", bg: "var(--red-dim)",
+  });
+  if ((exec?.overdue_reviews_count ?? 0) > 0) findings.push({
+    text: `${exec!.overdue_reviews_count} ${pluralPL(exec!.overdue_reviews_count, "przegląd ryzyka przeterminowany", "przeglądy ryzyk przeterminowane", "przeglądów ryzyk przeterminowanych")}`,
+    color: "var(--orange)", bg: "var(--orange-dim)",
+  });
+  if (vulns > 0) findings.push({
+    text: `${vulns} ${pluralPL(vulns, "otwarta podatność", "otwarte podatności", "otwartych podatności")} do remediacji`,
+    color: vulns > 5 ? "var(--orange)" : "var(--yellow)", bg: vulns > 5 ? "var(--orange-dim)" : "var(--yellow-dim)",
+  });
+  if (exec?.cis_maturity_rating != null) {
+    const cis = exec.cis_maturity_rating;
+    if (cis < 2) findings.push({ text: `CIS Maturity ${cis.toFixed(2)}/5.0 — znacznie poniżej oczekiwań`, color: "var(--red)", bg: "var(--red-dim)" });
+    else if (cis < 3) findings.push({ text: `CIS Maturity ${cis.toFixed(2)}/5.0 — wymaga poprawy`, color: "var(--orange)", bg: "var(--orange-dim)" });
+    else if (cis < 4) findings.push({ text: `CIS Maturity ${cis.toFixed(2)}/5.0 — dobry poziom, dalszy rozwój`, color: "var(--yellow)", bg: "var(--yellow-dim)" });
+    else findings.push({ text: `CIS Maturity ${cis.toFixed(2)}/5.0 — wysoki poziom dojrzałości`, color: "var(--green)", bg: "var(--green-dim)" });
+  }
+  if (findings.length === 0) findings.push({ text: "Brak krytycznych zagrożeń. Postawa bezpieczeństwa stabilna.", color: "var(--green)", bg: "var(--green-dim)" });
+
+  // Recommendations
+  const recommendations: { text: string; link: string }[] = [];
+  if (rc.high > 0) recommendations.push({ text: "Przegląd ryzyk krytycznych", link: "/risks?level=high" });
+  if ((exec?.overdue_reviews_count ?? 0) > 0) recommendations.push({ text: "Uzupełnienie zaległych przeglądów", link: "/reviews" });
+  if (exec?.cis_maturity_rating != null && exec.cis_maturity_rating < 3) recommendations.push({ text: "Rozwój kontroli CIS", link: "/cis" });
+  if (vulns > 3) recommendations.push({ text: "Plan remediacji podatności", link: "/vulnerabilities" });
+  const weakDim = posture?.dimensions?.length ? [...posture.dimensions].sort((a, b) => a.score - b.score)[0] : null;
+  if (weakDim && weakDim.score < 70) recommendations.push({ text: `Wzmocnienie: ${weakDim.name}`, link: "#" });
+
+  // Severity level for the briefing border
+  const severityColor = rc.high > 5 || grade === "F" ? "var(--red)"
+    : rc.high > 0 || grade === "D" ? "var(--orange)"
+    : grade === "C" ? "var(--yellow)"
+    : "var(--green)";
+
+  // Risk proportion bar widths
+  const riskBarTotal = Math.max(rc.total, 1);
+  const highPct = (rc.high / riskBarTotal) * 100;
+  const medPct = (rc.medium / riskBarTotal) * 100;
 
   return (
     <div>
@@ -82,46 +187,262 @@ export default function DashboardPage() {
           {loading && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Odświeżanie...</span>}
         </div>
         <div className="toolbar-right">
+          <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            Zakres: <strong style={{ color: "var(--text-secondary)" }}>{scopeLabel}</strong>
+          </span>
           {posture?.benchmark_avg != null && (
-            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-              Benchmark avg: <strong style={{ color: pctColor(posture.benchmark_avg) }}>{Math.round(posture.benchmark_avg)}%</strong>
+            <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 12 }}>
+              Benchmark: <strong style={{ color: pctColor(posture.benchmark_avg) }}>{Math.round(posture.benchmark_avg)}%</strong>
             </span>
           )}
         </div>
       </div>
 
-      {/* KPI ROW */}
-      <div className="grid-4">
-        <div className="card kpi clickable" onClick={() => {}}>
-          <div className="value" style={{ color: gradeColor(grade) }}>{score ? Math.round(score) : "—"}</div>
-          <div className="label">Security Posture Score</div>
-          {grade && <div className="trend" style={{ background: `${gradeColor(grade)}20`, color: gradeColor(grade) }}>Ocena: {grade}</div>}
-        </div>
-        <div className="card kpi clickable" onClick={() => navigate("/risks?level=high")}>
-          <div className="value" style={{ color: "var(--red)" }}>{rc.high || "—"}</div>
-          <div className="label">Ryzyka Wysokie</div>
-          <div className="trend" style={{ background: "var(--red-dim)", color: "var(--red)" }}>z {rc.total} wszystkich</div>
-        </div>
-        <div className="card kpi clickable" onClick={() => navigate("/cis")}>
-          <div className="value" style={{ color: "var(--yellow)" }}>
-            {exec?.cis_maturity_rating != null ? exec.cis_maturity_rating.toFixed(2) : "—"}
+      {/* ═══════════════════════════════════════
+           EXECUTIVE BRIEFING — hero section
+         ═══════════════════════════════════════ */}
+      <div className="card" style={{
+        borderLeft: `4px solid ${severityColor}`,
+        padding: "24px 28px",
+        marginBottom: 16,
+        background: "linear-gradient(135deg, var(--bg-card) 0%, rgba(26,32,53,0.95) 100%)",
+      }}>
+        <div style={{ display: "flex", gap: 28, alignItems: "flex-start", flexWrap: "wrap" }}>
+
+          {/* LEFT — Score Ring */}
+          <div style={{ textAlign: "center", flexShrink: 0 }}>
+            <div style={{ position: "relative", width: 130, height: 130 }}>
+              <svg width="130" height="130" viewBox="0 0 130 130" style={{ transform: "rotate(-90deg)" }}>
+                <circle cx="65" cy="65" r="54" fill="none" stroke="var(--border)" strokeWidth="8" />
+                <circle cx="65" cy="65" r="54" fill="none"
+                  stroke={gradeColor(grade)} strokeWidth="8" strokeLinecap="round"
+                  strokeDasharray={circ} strokeDashoffset={offset}
+                  style={{ transition: "stroke-dashoffset 1.5s cubic-bezier(0.4,0,0.2,1)" }} />
+              </svg>
+              <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
+                <div style={{ fontSize: 32, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: gradeColor(grade), lineHeight: 1 }}>
+                  {score ? Math.round(score) : "—"}
+                </div>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>/ 100</div>
+              </div>
+            </div>
+            <div style={{
+              display: "inline-block", marginTop: 8, padding: "4px 16px", borderRadius: 20,
+              background: `${gradeColor(grade)}18`, border: `1px solid ${gradeColor(grade)}40`,
+              fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", color: gradeColor(grade),
+            }}>
+              {grade ?? "—"} — {gradeLabel(grade)}
+            </div>
           </div>
-          <div className="label">CIS Maturity</div>
-          <div className="trend" style={{ background: "var(--yellow-dim)", color: "var(--yellow)" }}>Skala 0–5</div>
-        </div>
-        <div className="card kpi clickable" onClick={() => navigate("/reviews")}>
-          <div className="value" style={{ color: exec?.overdue_reviews_count ? "var(--orange)" : "var(--green)" }}>
-            {exec?.overdue_reviews_count ?? "—"}
+
+          {/* CENTER — Briefing Text */}
+          <div style={{ flex: 1, minWidth: 280 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--text-muted)" }}>
+                Executive Briefing
+              </div>
+              {orgName && (
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "var(--blue-dim)", color: "var(--blue)" }}>
+                  {orgName}
+                </span>
+              )}
+            </div>
+            <div style={{ fontSize: 14, color: "var(--text-primary)", lineHeight: 1.5, marginBottom: 14 }}>
+              {gradeDesc(grade)}
+            </div>
+
+            {/* Findings */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {findings.map((f, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: f.color, flexShrink: 0 }} />
+                  <span style={{ color: "var(--text-secondary)" }}>{f.text}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Trend indicator */}
+            {highTrend && (
+              <div style={{ marginTop: 12, display: "flex", gap: 12, fontSize: 11 }}>
+                <span style={{
+                  padding: "3px 10px", borderRadius: 4,
+                  background: highTrend.delta > 0 ? "var(--red-dim)" : highTrend.delta < 0 ? "var(--green-dim)" : "var(--blue-dim)",
+                  color: highTrend.delta > 0 ? "var(--red)" : highTrend.delta < 0 ? "var(--green)" : "var(--blue)",
+                  fontFamily: "'JetBrains Mono',monospace", fontWeight: 600,
+                }}>
+                  {highTrend.delta > 0 ? `+${highTrend.delta}` : highTrend.delta < 0 ? String(highTrend.delta) : "0"} ryzyk wysokich m/m
+                  {highTrend.delta > 0 ? " ▲" : highTrend.delta < 0 ? " ▼" : " ■"}
+                </span>
+                {highTrend.totalDelta !== 0 && (
+                  <span style={{
+                    padding: "3px 10px", borderRadius: 4, background: "rgba(255,255,255,0.04)",
+                    color: "var(--text-muted)", fontFamily: "'JetBrains Mono',monospace",
+                  }}>
+                    {highTrend.totalDelta > 0 ? "+" : ""}{highTrend.totalDelta} ogółem m/m
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <div className="label">Przeterminowane przeglądy</div>
-          {(exec?.overdue_reviews_count ?? 0) > 0 ? (
-            <div className="trend" style={{ background: "var(--orange-dim)", color: "var(--orange)" }}>Wymaga akcji</div>
-          ) : null}
+
+          {/* RIGHT — Recommendations */}
+          {recommendations.length > 0 && (
+            <div style={{ flexShrink: 0, minWidth: 200, maxWidth: 260 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
+                Rekomendowane Działania
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {recommendations.slice(0, 4).map((r, i) => (
+                  <div key={i}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: 6,
+                      background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)",
+                      cursor: "pointer", transition: "var(--transition)", fontSize: 12, color: "var(--text-secondary)",
+                    }}
+                    onClick={() => r.link !== "#" && navigate(r.link)}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-card-hover)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-light)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; }}
+                  >
+                    <span style={{ color: "var(--blue)", fontSize: 11, flexShrink: 0 }}>►</span>
+                    <span>{r.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* MAIN: Risk Matrix + Posture Score */}
+      {/* ═══════════════════════════════════════
+           KPI ROW — Enhanced metrics
+         ═══════════════════════════════════════ */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 16 }}>
+
+        {/* Risk Exposure */}
+        <div className="card clickable" onClick={() => navigate("/risks")} style={{ padding: "16px 18px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
+            Ekspozycja na Ryzyko
+          </div>
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--text-primary)", lineHeight: 1 }}>
+            {rc.total}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>{pluralPL(rc.total, "ryzyko", "ryzyka", "ryzyk")} ogółem</div>
+          {/* Segmented risk bar */}
+          <div style={{ display: "flex", height: 6, borderRadius: 3, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+            {rc.high > 0 && <div style={{ width: `${highPct}%`, background: "var(--red)" }} />}
+            {rc.medium > 0 && <div style={{ width: `${medPct}%`, background: "var(--orange)" }} />}
+            {rc.low > 0 && <div style={{ flex: 1, background: "var(--green)" }} />}
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5, fontSize: 10, fontFamily: "'JetBrains Mono',monospace" }}>
+            <span style={{ color: "var(--red)" }}>{rc.high} wys.</span>
+            <span style={{ color: "var(--orange)" }}>{rc.medium} śr.</span>
+            <span style={{ color: "var(--green)" }}>{rc.low} nis.</span>
+          </div>
+        </div>
+
+        {/* CIS Compliance */}
+        <div className="card clickable" onClick={() => navigate("/cis")} style={{ padding: "16px 18px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
+            Zgodność CIS
+          </div>
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--yellow)", lineHeight: 1 }}>
+            {exec?.cis_maturity_rating != null ? exec.cis_maturity_rating.toFixed(1) : "—"}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>maturity / 5.0</div>
+          {exec?.cis_risk_addressed_pct != null && (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginBottom: 3 }}>
+                <span>Adresowane ryzyka</span>
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(exec.cis_risk_addressed_pct) }}>
+                  {Math.round(exec.cis_risk_addressed_pct)}%
+                </span>
+              </div>
+              <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+                <div style={{ width: `${exec.cis_risk_addressed_pct}%`, height: "100%", borderRadius: 3, background: pctColor(exec.cis_risk_addressed_pct), transition: "width 1s ease" }} />
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Assets & CMDB */}
+        <div className="card clickable" onClick={() => navigate("/assets")} style={{ padding: "16px 18px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
+            Aktywa CMDB
+          </div>
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)", lineHeight: 1 }}>
+            {totalAssets || "—"}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>zarejestrowanych aktywów</div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginBottom: 3 }}>
+            <span>Pokrycie kategorii</span>
+            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(cmdbCoverage) }}>
+              {cmdbCoverage}%
+            </span>
+          </div>
+          <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+            <div style={{ width: `${cmdbCoverage}%`, height: "100%", borderRadius: 3, background: "var(--purple)", transition: "width 1s ease" }} />
+          </div>
+        </div>
+
+        {/* Incidents & Vulnerabilities */}
+        <div className="card clickable" onClick={() => navigate("/vulnerabilities")} style={{ padding: "16px 18px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
+            Incydenty & Podatności
+          </div>
+          <div style={{ display: "flex", gap: 16, alignItems: "baseline" }}>
+            <div>
+              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: incidents > 0 ? "var(--red)" : "var(--green)", lineHeight: 1 }}>
+                {incidents}
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>incydentów</div>
+            </div>
+            <div style={{ width: 1, height: 30, background: "var(--border)" }} />
+            <div>
+              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: vulns > 5 ? "var(--orange)" : vulns > 0 ? "var(--yellow)" : "var(--green)", lineHeight: 1 }}>
+                {vulns}
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>podatności</div>
+            </div>
+          </div>
+          {(incidents > 0 || vulns > 0) && (
+            <div style={{ marginTop: 8, padding: "3px 8px", borderRadius: 4, background: incidents > 0 ? "var(--red-dim)" : "var(--yellow-dim)", color: incidents > 0 ? "var(--red)" : "var(--yellow)", fontSize: 10, display: "inline-block" }}>
+              {incidents > 0 ? "Wymaga natychmiastowej reakcji" : "Zaplanuj remediację"}
+            </div>
+          )}
+        </div>
+
+        {/* Review Discipline */}
+        <div className="card clickable" onClick={() => navigate("/reviews")} style={{ padding: "16px 18px" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
+            Dyscyplina Przeglądów
+          </div>
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: (exec?.overdue_reviews_count ?? 0) > 0 ? "var(--orange)" : "var(--green)", lineHeight: 1 }}>
+            {exec?.overdue_reviews_count ?? 0}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>przeterminowanych</div>
+          {rc.total > 0 && (() => {
+            const onTime = rc.total - (exec?.overdue_reviews_count ?? 0);
+            const onTimePct = Math.round((onTime / rc.total) * 100);
+            return (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginBottom: 3 }}>
+                  <span>Terminowość</span>
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(onTimePct) }}>{onTimePct}%</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+                  <div style={{ width: `${onTimePct}%`, height: "100%", borderRadius: 3, background: pctColor(onTimePct), transition: "width 1s ease" }} />
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════
+           RISK MATRIX + SECURITY POSTURE
+         ═══════════════════════════════════════ */}
       <div className="grid-2-1">
+        {/* Left: Risk Matrix (unchanged) */}
         <div className="card">
           <div className="card-title">Macierz Ryzyka (Wpływ x Prawdopodobieństwo)</div>
           <div style={{ padding: "8px 0" }}>
@@ -178,48 +499,86 @@ export default function DashboardPage() {
           )}
         </div>
 
+        {/* Right: Enhanced Security Posture */}
         <div>
-          <div className="card" style={{ textAlign: "center" }}>
-            <div className="card-title">Security Posture</div>
+          {/* Score Overview */}
+          <div className="card" style={{ textAlign: "center", paddingBottom: 16 }}>
+            <div className="card-title">Security Posture Score</div>
             <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
-              <div className="score-ring">
-                <svg width="120" height="120" viewBox="0 0 120 120">
-                  <circle className="ring-bg" cx="60" cy="60" r="50" />
-                  <circle className="ring-fill" cx="60" cy="60" r="50"
-                    stroke={gradeColor(grade)}
-                    strokeDasharray={circ}
-                    strokeDashoffset={offset} />
+              <div className="score-ring" style={{ width: 140, height: 140 }}>
+                <svg width="140" height="140" viewBox="0 0 140 140" style={{ transform: "rotate(-90deg)" }}>
+                  <circle cx="70" cy="70" r="58" fill="none" stroke="var(--border)" strokeWidth="8" />
+                  <circle cx="70" cy="70" r="58" fill="none"
+                    stroke={gradeColor(grade)} strokeWidth="8" strokeLinecap="round"
+                    strokeDasharray={2 * Math.PI * 58}
+                    strokeDashoffset={2 * Math.PI * 58 - (score / 100) * 2 * Math.PI * 58}
+                    style={{ transition: "stroke-dashoffset 1.5s cubic-bezier(0.4,0,0.2,1)" }} />
                 </svg>
-                <div className="ring-label">
-                  <div className="num" style={{ color: gradeColor(grade) }}>{score ? Math.round(score) : "—"}</div>
-                  <div className="of">/ 100</div>
+                <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center" }}>
+                  <div style={{ fontSize: 34, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: gradeColor(grade), lineHeight: 1 }}>
+                    {score ? Math.round(score) : "—"}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>/ 100</div>
                 </div>
               </div>
             </div>
-            {grade && <div style={{ fontSize: 20, fontWeight: 700, color: gradeColor(grade), margin: "4px 0" }}>Ocena: {grade}</div>}
+            {grade && (
+              <div style={{ marginTop: 4 }}>
+                <div style={{ fontSize: 22, fontWeight: 700, color: gradeColor(grade) }}>
+                  {grade}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2, lineHeight: 1.4, padding: "0 8px" }}>
+                  {gradeDesc(grade)}
+                </div>
+              </div>
+            )}
+            {/* Benchmark comparison */}
+            {posture?.benchmark_avg != null && (
+              <div style={{ marginTop: 10, padding: "6px 12px", borderRadius: 6, background: "rgba(255,255,255,0.03)", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                <span style={{ color: "var(--text-muted)" }}>vs. średnia org:</span>
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: score >= posture.benchmark_avg ? "var(--green)" : "var(--orange)" }}>
+                  {score >= posture.benchmark_avg ? "+" : ""}{(score - posture.benchmark_avg).toFixed(0)} pkt
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* Posture Dimensions */}
+          {/* Posture Dimensions with insights */}
           {posture && posture.dimensions.length > 0 && (
             <div className="card">
               <div className="card-title">Wymiary Bezpieczeństwa</div>
-              {posture.dimensions.map(d => (
-                <div key={d.name} style={{ marginBottom: 10 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-                    <span style={{ color: "var(--text-secondary)" }}>{d.name}</span>
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(d.score) }}>
-                      {Math.round(d.score)}%
-                      <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 4 }}>({Math.round(d.weight * 100)}%)</span>
-                    </span>
+              {posture.dimensions.map(d => {
+                const isWeak = weakDim?.name === d.name && d.score < 70;
+                return (
+                  <div key={d.name} style={{ marginBottom: 12, padding: isWeak ? "8px 10px" : 0, borderRadius: 6, background: isWeak ? "rgba(239,68,68,0.05)" : "transparent", border: isWeak ? "1px solid rgba(239,68,68,0.15)" : "1px solid transparent" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                      <span style={{ color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 4 }}>
+                        {d.name}
+                        {isWeak && <span style={{ fontSize: 9, color: "var(--red)", fontWeight: 600 }}>WYMAGA UWAGI</span>}
+                      </span>
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(d.score) }}>
+                        {Math.round(d.score)}%
+                        <span style={{ fontSize: 9, color: "var(--text-muted)", marginLeft: 4 }}>({Math.round(d.weight * 100)}%)</span>
+                      </span>
+                    </div>
+                    <div style={{ position: "relative" }}>
+                      <div className="bar-track" style={{ height: 8 }}>
+                        <div className="bar-fill" style={{ width: `${d.score}%`, background: d.color ?? pctColor(d.score), height: 8 }} />
+                      </div>
+                      {/* 70% threshold marker */}
+                      <div style={{ position: "absolute", left: "70%", top: -2, width: 1, height: 12, background: "var(--text-muted)", opacity: 0.4 }} />
+                    </div>
                   </div>
-                  <div className="bar-track" style={{ height: 8 }}>
-                    <div className="bar-fill" style={{ width: `${d.score}%`, background: d.color ?? pctColor(d.score), height: 8 }} />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 10, color: "var(--text-muted)" }}>
+                <div style={{ width: 1, height: 10, background: "var(--text-muted)", opacity: 0.4 }} />
+                <span>Próg akceptacji: 70%</span>
+              </div>
             </div>
           )}
 
+          {/* CIS Maturity */}
           <div className="card">
             <div className="card-title">CIS Maturity</div>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -246,7 +605,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* TOP RISKS + DISTRIBUTION */}
+      {/* ═══════════════════════════════════════
+           TOP RISKS + DISTRIBUTION
+         ═══════════════════════════════════════ */}
       <div className="grid-2">
         <div className="card">
           <div className="card-title">Top 5 Ryzyk Krytycznych</div>
@@ -329,15 +690,15 @@ export default function DashboardPage() {
             {riskDash.trend.map(t => {
               const maxTotal = Math.max(...riskDash.trend.map(p => p.total), 1);
               const h = (t.total / maxTotal) * 100;
-              const highPct = (t.high / Math.max(t.total, 1)) * 100;
-              const medPct = (t.medium / Math.max(t.total, 1)) * 100;
+              const thighPct = (t.high / Math.max(t.total, 1)) * 100;
+              const tmedPct = (t.medium / Math.max(t.total, 1)) * 100;
               return (
                 <div key={t.period} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
                   <div style={{ fontSize: 9, fontFamily: "'JetBrains Mono',monospace", color: "var(--text-muted)" }}>{t.total}</div>
                   <div style={{ width: "100%", maxWidth: 40, height: `${h}%`, minHeight: 2, borderRadius: "4px 4px 0 0", position: "relative", overflow: "hidden" }}>
                     <div style={{ position: "absolute", bottom: 0, width: "100%", height: "100%", background: "var(--green)" }} />
-                    <div style={{ position: "absolute", bottom: 0, width: "100%", height: `${highPct + medPct}%`, background: "var(--orange)" }} />
-                    <div style={{ position: "absolute", bottom: 0, width: "100%", height: `${highPct}%`, background: "var(--red)" }} />
+                    <div style={{ position: "absolute", bottom: 0, width: "100%", height: `${thighPct + tmedPct}%`, background: "var(--orange)" }} />
+                    <div style={{ position: "absolute", bottom: 0, width: "100%", height: `${thighPct}%`, background: "var(--red)" }} />
                   </div>
                   <div style={{ fontSize: 9, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{t.period}</div>
                 </div>

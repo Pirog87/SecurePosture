@@ -483,7 +483,7 @@ export default function RisksPage() {
                       Docelowe: W={selected.target_impact} P={selected.target_probability} Z={selected.target_safeguard}
                       {selected.risk_score > 0 && (
                         <span style={{ marginLeft: 6, color: "var(--green)" }}>
-                          (-{((1 - selected.residual_risk / selected.risk_score) * 100).toFixed(0)}%)
+                          (-{((1 - Number(selected.residual_risk) / Number(selected.risk_score)) * 100).toFixed(0)}%)
                         </span>
                       )}
                     </div>

@@ -258,7 +258,7 @@ export default function DashboardPage() {
                   <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/risks?highlight=${r.id}`)}>
                     <td style={{ fontWeight: 500 }}>{r.asset_name}</td>
                     <td style={{ fontSize: 12 }}>{r.org_unit}</td>
-                    <td><span className="score-badge" style={{ background: riskBg(r.risk_level), color: riskColor(r.risk_level) }}>{r.risk_score.toFixed(1)}</span></td>
+                    <td><span className="score-badge" style={{ background: riskBg(r.risk_level), color: riskColor(r.risk_level) }}>{Number(r.risk_score).toFixed(1)}</span></td>
                     <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.status ?? "—"}</td>
                   </tr>
                 ))}
@@ -368,7 +368,7 @@ export default function DashboardPage() {
                 <tr key={r.id}>
                   <td style={{ fontWeight: 500 }}>{r.asset_name}</td>
                   <td style={{ fontSize: 12 }}>{r.org_unit}</td>
-                  <td><span className="score-badge" style={{ background: riskBg(r.risk_level), color: riskColor(r.risk_level) }}>{r.risk_score.toFixed(1)}</span></td>
+                  <td><span className="score-badge" style={{ background: riskBg(r.risk_level), color: riskColor(r.risk_level) }}>{Number(r.risk_score).toFixed(1)}</span></td>
                   <td><span className="score-badge" style={{ background: "var(--red-dim)", color: "var(--red)" }}>{r.days_since_review} dni</span></td>
                   <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.owner ?? "—"}</td>
                 </tr>

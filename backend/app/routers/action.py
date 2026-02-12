@@ -647,7 +647,17 @@ async def list_actions(
         Action.created_at.desc(),
     )
     actions = (await s.execute(q)).scalars().all()
-    return await _batch_action_outs(s, actions)
+    try:
+        return await _batch_action_outs(s, actions)
+    except Exception:
+        # Fallback: return with individual queries if batch fails
+        results = []
+        for a in actions:
+            try:
+                results.append(await _action_out(s, a))
+            except Exception:
+                pass
+        return results
 
 
 # ═══════════════════ GET ═══════════════════

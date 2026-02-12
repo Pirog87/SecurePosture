@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
 import type { Risk, Asset, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries, Action } from "../types";
 import { flattenTree, buildPathMap } from "../utils/orgTree";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
@@ -691,6 +692,7 @@ export default function RisksPage() {
             lookups={lookups}
             setLookups={setLookups}
             flatUnits={flattenTree(lookups.orgUnits)}
+            orgTree={lookups.orgUnits}
             saving={saving}
             onSubmit={handleFormSubmit}
             onCancel={() => { setShowForm(false); setEditRisk(null); }}
@@ -803,11 +805,12 @@ function PlannedSafeguardPicker({ lookups, setLookups, assetId, plannedSafeguard
    ActionSearchWithCreate — search + inline create actions for risk
    ═══════════════════════════════════════════════════════════════════ */
 
-function ActionSearchWithCreate({ riskId, existingLinks, lookups, flatUnits, strategyId }: {
+function ActionSearchWithCreate({ riskId, existingLinks, lookups, flatUnits, orgTree, strategyId }: {
   riskId: number | null;
   existingLinks: { action_id: number; title: string }[];
   lookups: FormLookups;
   flatUnits: { id: number; name: string; depth: number }[];
+  orgTree: OrgUnitTreeNode[];
   strategyId: number | null;
 }) {
   const [query, setQuery] = useState("");
@@ -1008,10 +1011,13 @@ function ActionSearchWithCreate({ riskId, existingLinks, lookups, flatUnits, str
             </div>
             <div className="form-group">
               <label>Jednostka organizacyjna</label>
-              <select className="form-control" value={newOrgUnitId ?? ""} onChange={e => setNewOrgUnitId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-              </select>
+              <OrgUnitTreeSelect
+                tree={orgTree}
+                value={newOrgUnitId}
+                onChange={setNewOrgUnitId}
+                placeholder="Wybierz..."
+                allowClear
+              />
             </div>
             <div className="form-group">
               <label>Termin realizacji</label>
@@ -1258,11 +1264,12 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
    AssetTab — searchable asset picker + inline asset creation
    ═══════════════════════════════════════════════════════════════════ */
 
-function AssetTab({ assetId, assetName, lookups, flatUnits, onSelectAsset, onClearAsset, onAssetCreated }: {
+function AssetTab({ assetId, assetName, lookups, flatUnits, orgTree, onSelectAsset, onClearAsset, onAssetCreated }: {
   assetId: number | null;
   assetName: string;
   lookups: FormLookups;
   flatUnits: { id: number; name: string; depth: number }[];
+  orgTree: OrgUnitTreeNode[];
   onSelectAsset: (asset: Asset) => void;
   onClearAsset: () => void;
   onAssetCreated: (asset: Asset) => void;
@@ -1463,10 +1470,13 @@ function AssetTab({ assetId, assetName, lookups, flatUnits, onSelectAsset, onCle
             </div>
             <div className="form-group">
               <label>Jednostka organizacyjna</label>
-              <select className="form-control" value={newOrgUnitId ?? ""} onChange={e => setNewOrgUnitId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-              </select>
+              <OrgUnitTreeSelect
+                tree={orgTree}
+                value={newOrgUnitId}
+                onChange={setNewOrgUnitId}
+                placeholder="Wybierz..."
+                allowClear
+              />
             </div>
             <div className="form-group">
               <label>Wlasciciel</label>
@@ -1521,11 +1531,12 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubmit, onCancel }: {
+function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, orgTree, saving, onSubmit, onCancel }: {
   editRisk: Risk | null;
   lookups: FormLookups;
   setLookups: React.Dispatch<React.SetStateAction<FormLookups | null>>;
   flatUnits: { id: number; name: string; depth: number }[];
+  orgTree: OrgUnitTreeNode[];
   saving: boolean;
   onSubmit: (data: Record<string, unknown>) => void;
   onCancel: () => void;
@@ -1754,10 +1765,13 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div className="form-group">
               <label>Jednostka organizacyjna *</label>
-              <select className="form-control" value={orgUnitId ?? ""} onChange={e => setOrgUnitId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-              </select>
+              <OrgUnitTreeSelect
+                tree={orgTree}
+                value={orgUnitId}
+                onChange={setOrgUnitId}
+                placeholder="Wybierz..."
+                allowClear={false}
+              />
               {!orgUnitId && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
             </div>
             <div className="form-group">
@@ -1789,6 +1803,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
           assetName={assetName}
           lookups={lookups}
           flatUnits={flatUnits}
+          orgTree={orgTree}
           onSelectAsset={(asset) => {
             setAssetId(asset.id);
             setAssetName(asset.name);
@@ -1900,6 +1915,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
             existingLinks={(editRisk?.linked_actions ?? []).map(a => ({ action_id: a.action_id, title: a.title }))}
             lookups={lookups}
             flatUnits={flatUnits}
+            orgTree={orgTree}
             strategyId={strategyId}
           />
 

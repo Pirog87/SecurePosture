@@ -19,8 +19,7 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "Kontekst Organizacyjny",
     items: [
-      { to: "/org-context", icon: "🏛️", label: "Kontekst Org." },
-      { to: "/org-structure", icon: "🏢", label: "Struktura Org." },
+      { to: "/org-context", icon: "🏛️", label: "Kontekst Organizacyjny" },
     ],
   },
   {

@@ -1,9 +1,10 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "../services/api";
-import type { OrgUnitTreeNode } from "../types";
+import type { OrgUnitTreeNode, OrgLevel } from "../types";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 
 /* ─── Types ─── */
 interface ContextIssue {
@@ -166,9 +167,10 @@ interface ContextOverview {
 }
 
 /* ─── Helpers ─── */
-type Tab = "overview" | "issues" | "obligations" | "stakeholders" | "scope" | "risk_appetite" | "reviews";
+type Tab = "structure" | "overview" | "issues" | "obligations" | "stakeholders" | "scope" | "risk_appetite" | "reviews";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
+  { key: "structure", label: "Jednostka", icon: "🏢" },
   { key: "overview", label: "Przegląd", icon: "📊" },
   { key: "issues", label: "Czynniki", icon: "🔍" },
   { key: "obligations", label: "Zobowiązania", icon: "📜" },
@@ -412,6 +414,14 @@ export default function OrgContextPage() {
   const [selectedObl, setSelectedObl] = useState<ContextObligation | null>(null);
   const [selectedStk, setSelectedStk] = useState<ContextStakeholder | null>(null);
 
+  // Structure tab state
+  const [levels, setLevels] = useState<OrgLevel[]>([]);
+  const [showAddUnitForm, setShowAddUnitForm] = useState(false);
+  const [savingUnit, setSavingUnit] = useState(false);
+  const [editingUnit, setEditingUnit] = useState(false);
+  const [unitForm, setUnitForm] = useState<Record<string, unknown>>({});
+  const [addUnitParentId, setAddUnitParentId] = useState<number | null>(null);
+
   // General form edit
   const [editingGeneral, setEditingGeneral] = useState(false);
   const [generalForm, setGeneralForm] = useState<Record<string, unknown>>({});
@@ -512,6 +522,67 @@ export default function OrgContextPage() {
       setError(String(e));
     }
     setLoading(false);
+  }
+
+  /* ─── Structure: Add unit ─── */
+  const openAddUnitForm = async () => {
+    if (levels.length === 0) {
+      try {
+        const lvls = await api.get<OrgLevel[]>("/api/v1/org-levels");
+        setLevels(lvls);
+      } catch { /* ignore */ }
+    }
+    setShowAddUnitForm(true);
+  };
+
+  async function handleAddUnit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSavingUnit(true);
+    const fd = new FormData(e.currentTarget);
+    const body = {
+      parent_id: addUnitParentId,
+      level_id: Number(fd.get("level_id")),
+      name: fd.get("name") as string,
+      symbol: fd.get("symbol") as string,
+      owner: (fd.get("owner") as string) || null,
+      security_contact: (fd.get("security_contact") as string) || null,
+      description: (fd.get("description") as string) || null,
+    };
+    try {
+      await api.post("/api/v1/org-units", body);
+      setShowAddUnitForm(false);
+      // Refresh tree
+      const data = await api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree");
+      setOrgUnits(data);
+      loadAllOverviews(data);
+    } catch (err) { setError("Błąd zapisu: " + err); }
+    setSavingUnit(false);
+  }
+
+  async function handleSaveUnit() {
+    if (!selectedUnit) return;
+    setSavingUnit(true);
+    try {
+      await api.put(`/api/v1/org-units/${selectedUnit.id}`, unitForm);
+      setEditingUnit(false);
+      const data = await api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree");
+      setOrgUnits(data);
+      loadAllOverviews(data);
+      loadContextData(selectedUnit.id);
+    } catch (err) { setError("Błąd zapisu: " + err); }
+    setSavingUnit(false);
+  }
+
+  async function handleDeactivateUnit() {
+    if (!selectedUnit) return;
+    if (!confirm(`Dezaktywować jednostkę "${selectedUnit.name}"?`)) return;
+    try {
+      await api.delete(`/api/v1/org-units/${selectedUnit.id}`);
+      setSelectedUnitId(null);
+      const data = await api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree");
+      setOrgUnits(data);
+      loadAllOverviews(data);
+    } catch (err) { setError("Błąd: " + err); }
   }
 
   /* ─── Issue form ─── */
@@ -692,8 +763,9 @@ export default function OrgContextPage() {
           overflowY: "auto",
           background: "var(--bg-card)",
         }}>
-          <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>
-            Struktura organizacyjna
+          <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>Struktura organizacyjna</span>
+            <button className="btn btn-sm btn-primary" style={{ fontSize: 11, padding: "2px 8px" }} onClick={openAddUnitForm}>+ Dodaj</button>
           </div>
           {treeLoading ? (
             <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ładowanie...</div>
@@ -764,6 +836,7 @@ export default function OrgContextPage() {
               <div style={{ flex: 1, padding: 16, overflowY: "auto" }}>
                 {loading && <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Ładowanie...</div>}
 
+                {!loading && activeTab === "structure" && renderStructure()}
                 {!loading && activeTab === "overview" && overview && renderOverview()}
                 {!loading && activeTab === "issues" && renderIssues()}
                 {!loading && activeTab === "obligations" && renderObligations()}
@@ -784,92 +857,111 @@ export default function OrgContextPage() {
       {renderReviewModal()}
       {renderScopeModal()}
       {renderRAModal()}
+      {renderAddUnitModal()}
     </div>
   );
 
   /* ═══════════════ TAB RENDERERS ═══════════════ */
 
-  function renderOverview() {
-    if (!overview || !general) return null;
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {/* Status */}
-        <div className="grid-4">
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Status kontekstu</div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: statusColor(overview.context_status) }}>{statusLabel(overview.context_status)}</div>
+  function renderStructure() {
+    if (!selectedUnit) return <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40 }}>Wybierz jednostkę z drzewa</div>;
+
+    if (editingUnit) {
+      return (
+        <div className="card" style={{ padding: 20 }}>
+          <h3 style={{ margin: "0 0 16px 0", fontSize: 15 }}>Edycja jednostki: {selectedUnit.name}</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Nazwa *</label>
+              <input className="form-control" value={(unitForm.name as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, name: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Symbol *</label>
+              <input className="form-control" value={(unitForm.symbol as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, symbol: e.target.value })} />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Właściciel biznesowy</label>
+              <input className="form-control" value={(unitForm.owner as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, owner: e.target.value || null })} />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Security Contact</label>
+              <input className="form-control" value={(unitForm.security_contact as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, security_contact: e.target.value || null })} />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Opis</label>
+              <textarea className="form-control" rows={2} value={(unitForm.description as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, description: e.target.value || null })} />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Status</label>
+              <select className="form-control" value={(unitForm.is_active as boolean) ? "active" : "inactive"} onChange={e => setUnitForm({ ...unitForm, is_active: e.target.value === "active" })}>
+                <option value="active">Aktywna</option>
+                <option value="inactive">Nieaktywna</option>
+              </select>
+            </div>
           </div>
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Czynniki</div>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.issues_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.issues_own} własnych, {overview.issues_inherited} odziedziczonych)</span></div>
-          </div>
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Zobowiązania</div>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.obligations_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.obligations_own} wł., {overview.obligations_inherited} odz.)</span></div>
-          </div>
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Interesariusze</div>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.stakeholders_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.stakeholders_own} wł., {overview.stakeholders_inherited} odz.)</span></div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+            <button className="btn" onClick={() => setEditingUnit(false)}>Anuluj</button>
+            <button className="btn btn-primary" onClick={handleSaveUnit} disabled={savingUnit}>{savingUnit ? "Zapisywanie..." : "Zapisz zmiany"}</button>
           </div>
         </div>
+      );
+    }
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          {/* General info */}
-          <div className="card" style={{ padding: 16 }}>
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="card" style={{ padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3 style={{ margin: 0, fontSize: 15 }}>Atrybuty jednostki</h3>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={handleDeactivateUnit}>Dezaktywuj</button>
+              <button className="btn btn-sm btn-primary" onClick={() => {
+                setEditingUnit(true);
+                setUnitForm({
+                  name: selectedUnit.name,
+                  symbol: selectedUnit.symbol,
+                  owner: selectedUnit.owner,
+                  security_contact: selectedUnit.security_contact,
+                  description: selectedUnit.description,
+                  is_active: selectedUnit.is_active,
+                });
+              }}>Edytuj</button>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 13 }}>
+            <DetailRow label="Nazwa" value={selectedUnit.name} />
+            <DetailRow label="Symbol" value={selectedUnit.symbol} />
+            <DetailRow label="Poziom" value={selectedUnit.level_name} />
+            <DetailRow label="Właściciel biznesowy" value={selectedUnit.owner} />
+            <DetailRow label="Security Contact" value={selectedUnit.security_contact} />
+            <DetailRow label="Status" value={selectedUnit.is_active ? "Aktywna" : "Nieaktywna"} color={selectedUnit.is_active ? "var(--green)" : "var(--red)"} />
+            {selectedUnit.description && (
+              <div style={{ gridColumn: "span 2" }}>
+                <DetailRow label="Opis" value={selectedUnit.description} />
+              </div>
+            )}
+          </div>
+        </div>
+        {general && (
+          <div className="card" style={{ padding: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: 15 }}>Dane ogólne</h3>
+              <h3 style={{ margin: 0, fontSize: 15 }}>Dane kontekstowe</h3>
               <button className="btn btn-sm" onClick={() => { setEditingGeneral(true); setGeneralForm({ headcount: general.headcount, mission_vision: general.mission_vision, key_products_services: general.key_products_services, strategic_objectives: general.strategic_objectives, key_processes_notes: general.key_processes_notes, context_status: general.context_status, context_reviewer: general.context_reviewer }); }}>Edytuj</button>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-              <DetailRow label="Jednostka" value={general.name} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
               <DetailRow label="Zatrudnienie" value={general.headcount ?? "—"} />
-              <DetailRow label="Status" value={statusLabel(general.context_status)} color={statusColor(general.context_status)} />
+              <DetailRow label="Status kontekstu" value={statusLabel(general.context_status)} color={statusColor(general.context_status)} />
               <DetailRow label="Przeglądający" value={general.context_reviewer} />
               <DetailRow label="Ostatni przegląd" value={general.context_review_date} />
               <DetailRow label="Następny przegląd" value={general.context_next_review} />
             </div>
             {general.mission_vision && <div style={{ marginTop: 12 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Misja / Wizja</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.mission_vision}</div></div>}
+            {general.key_products_services && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Kluczowe produkty / usługi</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.key_products_services}</div></div>}
             {general.strategic_objectives && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Cele strategiczne</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.strategic_objectives}</div></div>}
+            {general.key_processes_notes && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Uwagi o kluczowych procesach</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.key_processes_notes}</div></div>}
           </div>
-
-          {/* Scope & Risk Appetite summary */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div className="card" style={{ padding: 16 }}>
-              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Zakres SZBI</h3>
-              {overview.has_scope ? (
-                <div style={{ fontSize: 13 }}>
-                  <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Zdefiniowany</span>
-                  {overview.scope_inherited && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>(odziedziczony)</span>}
-                </div>
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Nie zdefiniowano</div>
-              )}
-            </div>
-            <div className="card" style={{ padding: 16 }}>
-              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Apetyt na ryzyko</h3>
-              {overview.has_risk_appetite ? (
-                <div style={{ fontSize: 13 }}>
-                  <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Zdefiniowany</span>
-                  {overview.risk_appetite_inherited && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>(odziedziczony)</span>}
-                </div>
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Nie zdefiniowano</div>
-              )}
-            </div>
-            <div className="card" style={{ padding: 16 }}>
-              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Przeglądy</h3>
-              <div style={{ fontSize: 13 }}>
-                <DetailRow label="Liczba przeglądów" value={overview.reviews_count} />
-                <DetailRow label="Ostatni przegląd" value={overview.last_review_date ?? "—"} />
-                <DetailRow label="Następny przegląd" value={overview.next_review_date ?? "—"} />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Edit general modal */}
+        )}
         {editingGeneral && (
-          <Modal open={editingGeneral} onClose={() => setEditingGeneral(false)} title="Edytuj dane ogólne" wide>
+          <Modal open={editingGeneral} onClose={() => setEditingGeneral(false)} title="Edytuj dane kontekstowe" wide>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <div>
                 <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Zatrudnienie</label>
@@ -912,6 +1004,84 @@ export default function OrgContextPage() {
             </div>
           </Modal>
         )}
+      </div>
+    );
+  }
+
+  function renderOverview() {
+    if (!overview || !general) return null;
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Status */}
+        <div className="grid-4">
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Status kontekstu</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: statusColor(overview.context_status) }}>{statusLabel(overview.context_status)}</div>
+          </div>
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Czynniki</div>
+            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.issues_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.issues_own} własnych, {overview.issues_inherited} odziedziczonych)</span></div>
+          </div>
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Zobowiązania</div>
+            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.obligations_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.obligations_own} wł., {overview.obligations_inherited} odz.)</span></div>
+          </div>
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Interesariusze</div>
+            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.stakeholders_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.stakeholders_own} wł., {overview.stakeholders_inherited} odz.)</span></div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          {/* General info */}
+          <div className="card" style={{ padding: 16 }}>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: 15 }}>Dane ogólne</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+              <DetailRow label="Jednostka" value={general.name} />
+              <DetailRow label="Zatrudnienie" value={general.headcount ?? "—"} />
+              <DetailRow label="Status" value={statusLabel(general.context_status)} color={statusColor(general.context_status)} />
+              <DetailRow label="Przeglądający" value={general.context_reviewer} />
+              <DetailRow label="Ostatni przegląd" value={general.context_review_date} />
+              <DetailRow label="Następny przegląd" value={general.context_next_review} />
+            </div>
+          </div>
+
+          {/* Scope & Risk Appetite summary */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="card" style={{ padding: 16 }}>
+              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Zakres SZBI</h3>
+              {overview.has_scope ? (
+                <div style={{ fontSize: 13 }}>
+                  <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Zdefiniowany</span>
+                  {overview.scope_inherited && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>(odziedziczony)</span>}
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Nie zdefiniowano</div>
+              )}
+            </div>
+            <div className="card" style={{ padding: 16 }}>
+              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Apetyt na ryzyko</h3>
+              {overview.has_risk_appetite ? (
+                <div style={{ fontSize: 13 }}>
+                  <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Zdefiniowany</span>
+                  {overview.risk_appetite_inherited && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>(odziedziczony)</span>}
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Nie zdefiniowano</div>
+              )}
+            </div>
+            <div className="card" style={{ padding: 16 }}>
+              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Przeglądy</h3>
+              <div style={{ fontSize: 13 }}>
+                <DetailRow label="Liczba przeglądów" value={overview.reviews_count} />
+                <DetailRow label="Ostatni przegląd" value={overview.last_review_date ?? "—"} />
+                <DetailRow label="Następny przegląd" value={overview.next_review_date ?? "—"} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Edit general modal */}
       </div>
     );
   }
@@ -1474,6 +1644,58 @@ export default function OrgContextPage() {
           <button className="btn" onClick={() => setShowScopeForm(false)}>Anuluj</button>
           <button className="btn btn-primary" onClick={saveScope} disabled={saving}>{saving ? "Zapisywanie..." : "Zapisz"}</button>
         </div>
+      </Modal>
+    );
+  }
+
+  function renderAddUnitModal() {
+    return (
+      <Modal open={showAddUnitForm} onClose={() => setShowAddUnitForm(false)} title="Dodaj jednostkę organizacyjną">
+        <form onSubmit={handleAddUnit}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Jednostka nadrzędna</label>
+              <OrgUnitTreeSelect
+                tree={orgUnits}
+                value={addUnitParentId}
+                onChange={setAddUnitParentId}
+                placeholder="Brak (najwyższy poziom)"
+                allowClear
+              />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Poziom *</label>
+              <select name="level_id" className="form-control" required>
+                <option value="">Wybierz...</option>
+                {levels.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Nazwa *</label>
+              <input name="name" className="form-control" required placeholder="np. Dział IT" />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Symbol *</label>
+              <input name="symbol" className="form-control" required placeholder="np. DIT" />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Właściciel biznesowy</label>
+              <input name="owner" className="form-control" placeholder="np. Jan Kowalski" />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Security Contact</label>
+              <input name="security_contact" className="form-control" placeholder="np. Anna Nowak" />
+            </div>
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Opis</label>
+              <textarea name="description" className="form-control" placeholder="Opis jednostki..." />
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+            <button type="button" className="btn" onClick={() => setShowAddUnitForm(false)}>Anuluj</button>
+            <button type="submit" className="btn btn-primary" disabled={savingUnit}>{savingUnit ? "Zapisywanie..." : "Dodaj jednostkę"}</button>
+          </div>
+        </form>
       </Modal>
     );
   }

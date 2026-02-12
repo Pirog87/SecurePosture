@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import type { IncidentRecord, DictionaryEntry, OrgUnit } from "../types";
+import type { IncidentRecord, DictionaryEntry, OrgUnitTreeNode } from "../types";
 import Modal from "../components/Modal";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
 
@@ -83,7 +84,7 @@ export default function IncidentsPage() {
   const [saving, setSaving] = useState(false);
   const [tried, setTried] = useState(false);
 
-  const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([]);
+  const [orgUnits, setOrgUnits] = useState<OrgUnitTreeNode[]>([]);
   const [severities, setSeverities] = useState<DictionaryEntry[]>([]);
   const [statuses, setStatuses] = useState<DictionaryEntry[]>([]);
   const [categories, setCategories] = useState<DictionaryEntry[]>([]);
@@ -134,7 +135,7 @@ export default function IncidentsPage() {
     try {
       const [iRes, ouRes] = await Promise.all([
         fetch(`${API}/api/v1/incidents`),
-        fetch(`${API}/api/v1/org-units/flat`),
+        fetch(`${API}/api/v1/org-units/tree`),
       ]);
       if (iRes.ok) setIncidents(await iRes.json()); else setError(`API ${iRes.status}`);
       if (ouRes.ok) setOrgUnits(await ouRes.json());
@@ -461,10 +462,14 @@ export default function IncidentsPage() {
           </div>
           <div className="form-group">
             <label>Jednostka organizacyjna *</label>
-            <select className="form-control" style={fieldErr(!!form.org_unit_id)} value={form.org_unit_id ?? ""} onChange={e => setForm({...form, org_unit_id: Number(e.target.value)})}>
-              <option value="">Wybierz...</option>
-              {orgUnits.map(ou => <option key={ou.id} value={ou.id}>{ou.name}</option>)}
-            </select>
+            <OrgUnitTreeSelect
+              tree={orgUnits}
+              value={form.org_unit_id}
+              onChange={id => setForm({...form, org_unit_id: id})}
+              placeholder="Wybierz..."
+              allowClear={false}
+              style={fieldErr(!!form.org_unit_id)}
+            />
             {tried && !form.org_unit_id && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 2 }}>Pole wymagane</div>}
           </div>
           <div className="form-group">

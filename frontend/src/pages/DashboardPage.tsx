@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import type { ExecutiveSummary, RiskDashboard, PostureScoreResponse, RiskMatrixCell, OrgUnitTreeNode } from "../types";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 
 function gradeColor(g: string | null) {
   if (!g) return "var(--text-muted)";
@@ -22,21 +23,12 @@ function matrixCount(matrix: RiskMatrixCell[], impact: number, prob: number): nu
   return matrix.find(c => c.impact === impact && c.probability === prob)?.count ?? 0;
 }
 
-function flattenTree(nodes: OrgUnitTreeNode[], depth = 0): { id: number; name: string; depth: number }[] {
-  const result: { id: number; name: string; depth: number }[] = [];
-  for (const n of nodes) {
-    result.push({ id: n.id, name: n.name, depth });
-    result.push(...flattenTree(n.children, depth + 1));
-  }
-  return result;
-}
-
 export default function DashboardPage() {
   const [exec, setExec] = useState<ExecutiveSummary | null>(null);
   const [riskDash, setRiskDash] = useState<RiskDashboard | null>(null);
   const [posture, setPosture] = useState<PostureScoreResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [orgUnits, setOrgUnits] = useState<{ id: number; name: string; depth: number }[]>([]);
+  const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
   const [orgFilter, setOrgFilter] = useState("");
   const navigate = useNavigate();
 
@@ -53,7 +45,7 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(t => setOrgUnits(flattenTree(t))).catch(() => {});
+    api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(setOrgTree).catch(() => {});
     loadData();
   }, []);
 
@@ -79,10 +71,14 @@ export default function DashboardPage() {
       {/* Org Unit Filter */}
       <div className="toolbar">
         <div className="toolbar-left">
-          <select className="form-control" style={{ width: 220 }} value={orgFilter} onChange={e => handleOrgChange(e.target.value)}>
-            <option value="">Cała organizacja</option>
-            {orgUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-          </select>
+          <OrgUnitTreeSelect
+            tree={orgTree}
+            value={orgFilter ? Number(orgFilter) : null}
+            onChange={id => handleOrgChange(id ? String(id) : "")}
+            placeholder="Cała organizacja"
+            allowClear
+            style={{ width: 300 }}
+          />
           {loading && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Odświeżanie...</span>}
         </div>
         <div className="toolbar-right">

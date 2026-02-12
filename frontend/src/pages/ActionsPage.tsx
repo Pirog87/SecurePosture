@@ -1,8 +1,9 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "../services/api";
 import type { Action, OrgUnitTreeNode, DictionaryTypeWithEntries, Risk, Asset } from "../types";
-import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
+import { buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
 
@@ -218,8 +219,6 @@ export default function ActionsPage() {
     }
   };
 
-  const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
-
   // Hierarchical org filtering
   const filterOrgIds = useMemo(() => {
     if (!filterOrg) return null;
@@ -248,8 +247,6 @@ export default function ActionsPage() {
     return result;
   }, [actions, filterOrgIds, filterStatus, filterOverdue, filterSearch, sortField, sortDir]);
 
-  const flatFilterUnits = flattenTree(orgTree);
-  const uniqueOrgs = flatFilterUnits.map(u => ({ id: u.id, name: u.name, depth: u.depth }));
   const uniqueStatuses = [...new Set(actions.map(a => a.status_name).filter(Boolean))] as string[];
   // KPIs
   const totalActive = actions.filter(a => a.is_active).length;
@@ -306,10 +303,14 @@ export default function ActionsPage() {
       {showFilters && (
         <div className="toolbar" style={{ paddingTop: 0, marginTop: -4, gap: 8, flexWrap: "wrap" }}>
           <div className="toolbar-left" style={{ alignItems: "center" }}>
-            <select className="form-control" style={{ width: 220 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
-              <option value="">Wszystkie piony</option>
-              {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{"  ".repeat(o.depth)}{o.name}</option>)}
-            </select>
+            <OrgUnitTreeSelect
+              tree={orgTree}
+              value={filterOrg ? Number(filterOrg) : null}
+              onChange={id => setFilterOrg(id ? String(id) : "")}
+              placeholder="Wszystkie piony"
+              allowClear
+              style={{ width: 280 }}
+            />
             <select className="form-control" style={{ width: 160 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
               <option value="">Wszystkie statusy</option>
               {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
@@ -552,10 +553,17 @@ export default function ActionsPage() {
               </div>
               <div className="form-group">
                 <label>Jednostka organizacyjna</label>
-                <select name="org_unit_id" className="form-control" defaultValue={editAction?.org_unit_id ?? ""}>
-                  <option value="">Wybierz...</option>
-                  {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-                </select>
+                <OrgUnitTreeSelect
+                  tree={lookups.orgUnits}
+                  value={editAction?.org_unit_id ?? null}
+                  onChange={id => {
+                    const hidden = document.querySelector<HTMLInputElement>('input[name="org_unit_id"]');
+                    if (hidden) hidden.value = id ? String(id) : "";
+                  }}
+                  placeholder="Wybierz..."
+                  allowClear
+                />
+                <input type="hidden" name="org_unit_id" defaultValue={editAction?.org_unit_id ?? ""} />
               </div>
               <div className="form-group">
                 <label>Priorytet</label>

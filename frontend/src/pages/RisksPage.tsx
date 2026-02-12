@@ -49,6 +49,7 @@ interface FormLookups {
   risk_categories: { id: number; label: string }[];
   control_effectivenesses: { id: number; label: string }[];
   identification_sources: { id: number; label: string }[];
+  asset_types: { id: number; label: string }[];
 }
 
 /* ─── Sort types ─── */
@@ -115,7 +116,7 @@ export default function RisksPage() {
         return d.entries.filter(e => e.is_active).map(e => ({ id: e.id, label: e.label }));
       } catch { return []; }
     };
-    const [categories, sensitivities, criticalities, statuses, strategies, risk_categories, control_effectivenesses, identification_sources] = await Promise.all([
+    const [categories, sensitivities, criticalities, statuses, strategies, risk_categories, control_effectivenesses, identification_sources, asset_types] = await Promise.all([
       dictEntries("asset_category"),
       dictEntries("sensitivity"),
       dictEntries("criticality"),
@@ -124,11 +125,12 @@ export default function RisksPage() {
       dictEntries("risk_category"),
       dictEntries("control_effectiveness"),
       dictEntries("risk_identification_source"),
+      dictEntries("asset_type"),
     ]);
     const result: FormLookups = {
       orgUnits, areas, threats, vulns, safeguards, assets,
       categories, sensitivities, criticalities, statuses, strategies,
-      risk_categories, control_effectivenesses, identification_sources,
+      risk_categories, control_effectivenesses, identification_sources, asset_types,
     };
     setLookups(result);
     return result;
@@ -599,6 +601,7 @@ export default function RisksPage() {
           <RiskFormTabs
             editRisk={editRisk}
             lookups={lookups}
+            setLookups={setLookups}
             flatUnits={flattenTree(lookups.orgUnits)}
             saving={saving}
             onSubmit={handleFormSubmit}
@@ -730,7 +733,260 @@ function ActionSearch({ riskId, existingLinks }: { riskId: number | null; existi
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   RiskFormTabs — tabbed form with 6 ISO sections
+   AssetTab — searchable asset picker + inline asset creation
+   ═══════════════════════════════════════════════════════════════════ */
+
+function AssetTab({ assetId, assetName, lookups, flatUnits, onSelectAsset, onClearAsset, onAssetCreated }: {
+  assetId: number | null;
+  assetName: string;
+  lookups: FormLookups;
+  flatUnits: { id: number; name: string; depth: number }[];
+  onSelectAsset: (asset: Asset) => void;
+  onClearAsset: () => void;
+  onAssetCreated: (asset: Asset) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  // New asset form state
+  const [newName, setNewName] = useState("");
+  const [newTypeId, setNewTypeId] = useState<number | null>(null);
+  const [newCategoryId, setNewCategoryId] = useState<number | null>(null);
+  const [newOrgUnitId, setNewOrgUnitId] = useState<number | null>(null);
+  const [newOwner, setNewOwner] = useState("");
+  const [newLocation, setNewLocation] = useState("");
+  const [newSensitivityId, setNewSensitivityId] = useState<number | null>(null);
+  const [newCriticalityId, setNewCriticalityId] = useState<number | null>(null);
+  const [newDescription, setNewDescription] = useState("");
+
+  const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
+
+  const filtered = search.length >= 1
+    ? lookups.assets.filter(a => {
+        const q = search.toLowerCase();
+        return a.name.toLowerCase().includes(q)
+          || (a.org_unit_name ?? "").toLowerCase().includes(q)
+          || (a.owner ?? "").toLowerCase().includes(q)
+          || (a.category_name ?? "").toLowerCase().includes(q);
+      }).slice(0, 12)
+    : [];
+
+  const handleCreateAsset = async () => {
+    if (!newName) return;
+    setCreating(true);
+    try {
+      const created = await api.post<Asset>("/api/v1/assets", {
+        name: newName,
+        asset_type_id: newTypeId,
+        category_id: newCategoryId,
+        org_unit_id: newOrgUnitId,
+        owner: newOwner || null,
+        location: newLocation || null,
+        sensitivity_id: newSensitivityId,
+        criticality_id: newCriticalityId,
+        description: newDescription || null,
+      });
+      onAssetCreated(created);
+      setShowNewForm(false);
+      setSearch("");
+      // Reset form
+      setNewName(""); setNewTypeId(null); setNewCategoryId(null);
+      setNewOrgUnitId(null); setNewOwner(""); setNewLocation("");
+      setNewSensitivityId(null); setNewCriticalityId(null); setNewDescription("");
+    } catch (err) {
+      alert("Blad tworzenia aktywa: " + err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div>
+      <SectionHeader number="\u2461" label="Identyfikacja aktywa (ISO 27005 &sect;8.2)" />
+
+      {/* ── Selected asset display ── */}
+      {selectedAsset ? (
+        <div style={{
+          background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.2)",
+          borderRadius: 8, padding: 14, marginBottom: 14,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)", fontSize: 11 }}>Powiazane aktywo</span>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{selectedAsset.name}</span>
+            </div>
+            <button type="button" className="btn btn-sm" style={{ color: "var(--red)", fontSize: 11 }} onClick={onClearAsset}>
+              Odlacz
+            </button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 20px", fontSize: 12 }}>
+            <DetailRow label="Typ" value={selectedAsset.asset_type_name} />
+            <DetailRow label="Kategoria" value={selectedAsset.category_name} />
+            <DetailRow label="Jednostka org." value={selectedAsset.org_unit_name} />
+            <DetailRow label="Wlasciciel" value={selectedAsset.owner} />
+            <DetailRow label="Wrazliwosc" value={selectedAsset.sensitivity_name} />
+            <DetailRow label="Krytycznosc" value={selectedAsset.criticality_name} />
+            {selectedAsset.location && <DetailRow label="Lokalizacja" value={selectedAsset.location} />}
+            {selectedAsset.description && (
+              <div style={{ gridColumn: "span 2", marginTop: 4 }}>
+                <span style={{ color: "var(--text-muted)" }}>Opis: </span>
+                <span style={{ color: "var(--text-secondary)" }}>{selectedAsset.description}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div>
+          {/* ── Search bar ── */}
+          {!showNewForm && (
+            <div style={{ position: "relative", marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ flex: 1, position: "relative" }}>
+                  <input
+                    className="form-control"
+                    style={{ fontSize: 12 }}
+                    placeholder="Szukaj aktywa po nazwie, jednostce, wlascicielu, kategorii..."
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                  />
+                </div>
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => { setShowNewForm(true); setSearch(""); }}>
+                  + Dodaj nowe
+                </button>
+              </div>
+              {/* ── Search results dropdown ── */}
+              {filtered.length > 0 && (
+                <div style={{
+                  position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+                  background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
+                  maxHeight: 260, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                  marginTop: 2,
+                }}>
+                  {filtered.map(a => (
+                    <div key={a.id} style={{
+                      padding: "8px 14px", cursor: "pointer", fontSize: 12,
+                      borderBottom: "1px solid rgba(42,53,84,0.15)",
+                      transition: "background 0.1s",
+                    }}
+                      onClick={() => { onSelectAsset(a); setSearch(""); }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "rgba(59,130,246,0.08)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <div style={{ fontWeight: 500, marginBottom: 2 }}>{a.name}</div>
+                      <div style={{ fontSize: 10, color: "var(--text-muted)", display: "flex", gap: 10 }}>
+                        {a.category_name && <span>{a.category_name}</span>}
+                        {a.org_unit_name && <span>{a.org_unit_name}</span>}
+                        {a.owner && <span>{a.owner}</span>}
+                        {a.sensitivity_name && <span>W: {a.sensitivity_name}</span>}
+                        {a.criticality_name && <span>K: {a.criticality_name}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {search.length >= 1 && filtered.length === 0 && (
+                <div style={{
+                  position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+                  background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
+                  padding: "12px 14px", boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                  marginTop: 2, fontSize: 12, color: "var(--text-muted)", textAlign: "center",
+                }}>
+                  Brak wynikow. <span style={{ color: "var(--blue)", cursor: "pointer", textDecoration: "underline" }}
+                    onClick={() => { setShowNewForm(true); setNewName(search); setSearch(""); }}>Dodaj nowe aktywo</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!showNewForm && !assetName && (
+            <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "rgba(255,255,255,0.02)", borderRadius: 8, border: "1px dashed var(--border)" }}>
+              Wyszukaj i wybierz aktywo z rejestru lub dodaj nowe
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Inline new asset form (1:1 with AssetRegistryPage) ── */}
+      {showNewForm && !selectedAsset && (
+        <div style={{
+          background: "rgba(34,197,94,0.04)", border: "1px solid rgba(34,197,94,0.2)",
+          borderRadius: 8, padding: 16, marginBottom: 14,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <span style={{ fontWeight: 600, fontSize: 13, color: "var(--green)" }}>Nowe aktywo</span>
+            <button type="button" className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => setShowNewForm(false)}>
+              Anuluj
+            </button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label>Nazwa aktywa *</label>
+              <input className="form-control" value={newName} onChange={e => setNewName(e.target.value)} placeholder="np. Serwer bazodanowy DB-01" />
+              {!newName && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
+            </div>
+            <div className="form-group">
+              <label>Typ aktywa</label>
+              <select className="form-control" value={newTypeId ?? ""} onChange={e => setNewTypeId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Wybierz...</option>
+                {lookups.asset_types.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Kategoria</label>
+              <select className="form-control" value={newCategoryId ?? ""} onChange={e => setNewCategoryId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Wybierz...</option>
+                {lookups.categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Jednostka organizacyjna</label>
+              <select className="form-control" value={newOrgUnitId ?? ""} onChange={e => setNewOrgUnitId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Wybierz...</option>
+                {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Wlasciciel</label>
+              <input className="form-control" value={newOwner} onChange={e => setNewOwner(e.target.value)} placeholder="np. Jan Kowalski" />
+            </div>
+            <div className="form-group">
+              <label>Lokalizacja</label>
+              <input className="form-control" value={newLocation} onChange={e => setNewLocation(e.target.value)} placeholder="np. Serwerownia DC-1" />
+            </div>
+            <div className="form-group">
+              <label>Wrazliwosc</label>
+              <select className="form-control" value={newSensitivityId ?? ""} onChange={e => setNewSensitivityId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Wybierz...</option>
+                {lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Krytycznosc</label>
+              <select className="form-control" value={newCriticalityId ?? ""} onChange={e => setNewCriticalityId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Wybierz...</option>
+                {lookups.criticalities.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            </div>
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label>Opis</label>
+              <textarea className="form-control" rows={2} value={newDescription} onChange={e => setNewDescription(e.target.value)} placeholder="Opcjonalny opis aktywa..." />
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={() => setShowNewForm(false)}>Anuluj</button>
+            <button type="button" className="btn btn-sm btn-primary" disabled={creating || !newName} onClick={handleCreateAsset}>
+              {creating ? "Tworzenie..." : "Utworz i powiaz aktywo"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   RiskFormTabs — tabbed form with 5 ISO sections
    ═══════════════════════════════════════════════════════════════════ */
 
 const TABS = [
@@ -743,9 +999,10 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-function RiskFormTabs({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel }: {
+function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubmit, onCancel }: {
   editRisk: Risk | null;
   lookups: FormLookups;
+  setLookups: React.Dispatch<React.SetStateAction<FormLookups | null>>;
   flatUnits: { id: number; name: string; depth: number }[];
   saving: boolean;
   onSubmit: (data: Record<string, unknown>) => void;
@@ -1005,44 +1262,36 @@ function RiskFormTabs({ editRisk, lookups, flatUnits, saving, onSubmit, onCancel
 
       {/* ═══ Tab: Aktywo ═══ */}
       {tab === "asset" && (
-        <div>
-          <SectionHeader number="\u2461" label="Identyfikacja aktywa (ISO 27005 &sect;8.2)" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <div className="form-group">
-              <label>Powiazany aktyw (z rejestru)</label>
-              <select className="form-control" value={assetId ?? ""} onChange={e => setAssetId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Brak powiazania</option>
-                {lookups.assets.map(a => <option key={a.id} value={a.id}>{a.name}{a.org_unit_name ? ` (${a.org_unit_name})` : ""}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Kategoria aktywa</label>
-              <select className="form-control" value={assetCategoryId ?? ""} onChange={e => setAssetCategoryId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {lookups.categories.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select>
-            </div>
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>Nazwa aktywa *</label>
-              <input className="form-control" value={assetName} onChange={e => setAssetName(e.target.value)} placeholder="np. Laptopy konsultantow" />
-              {!assetName && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
-            </div>
-            <div className="form-group">
-              <label>Wrazliwosc</label>
-              <select className="form-control" value={sensitivityId ?? ""} onChange={e => setSensitivityId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Krytycznosc</label>
-              <select className="form-control" value={criticalityId ?? ""} onChange={e => setCriticalityId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {lookups.criticalities.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select>
-            </div>
-          </div>
-        </div>
+        <AssetTab
+          assetId={assetId}
+          assetName={assetName}
+          lookups={lookups}
+          flatUnits={flatUnits}
+          onSelectAsset={(asset) => {
+            setAssetId(asset.id);
+            setAssetName(asset.name);
+            setAssetCategoryId(asset.category_id);
+            setSensitivityId(asset.sensitivity_id);
+            setCriticalityId(asset.criticality_id);
+          }}
+          onClearAsset={() => {
+            setAssetId(null);
+            setAssetName("");
+            setAssetCategoryId(null);
+            setSensitivityId(null);
+            setCriticalityId(null);
+          }}
+          onAssetCreated={(asset) => {
+            setAssetId(asset.id);
+            setAssetName(asset.name);
+            setAssetCategoryId(asset.category_id);
+            setSensitivityId(asset.sensitivity_id);
+            setCriticalityId(asset.criticality_id);
+            api.get<Asset[]>("/api/v1/assets").then(all => {
+              setLookups(prev => prev ? { ...prev, assets: all } : prev);
+            }).catch(() => {});
+          }}
+        />
       )}
 
       {/* ═══ Tab: Scenariusz ═══ */}

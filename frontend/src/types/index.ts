@@ -408,6 +408,45 @@ export interface Action {
   updated_at: string;
 }
 
+// Action Comments
+export interface ActionComment {
+  id: number;
+  action_id: number;
+  author: string | null;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Action Stats / KPI
+export interface ActionStatusBreakdown {
+  status_name: string;
+  count: number;
+}
+
+export interface ActionPriorityBreakdown {
+  priority_name: string;
+  count: number;
+}
+
+export interface ActionMonthlyTrend {
+  month: string;
+  created: number;
+  completed: number;
+}
+
+export interface ActionStats {
+  total: number;
+  open: number;
+  completed: number;
+  overdue: number;
+  avg_completion_days: number | null;
+  overdue_pct: number;
+  by_status: ActionStatusBreakdown[];
+  by_priority: ActionPriorityBreakdown[];
+  monthly_trend: ActionMonthlyTrend[];
+}
+
 // ═══ Dashboard: Executive Summary ═══
 export interface OrgUnitRef {
   id: number;

@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { api } from "../services/api";
-import type { Action, ActionAttachment, ActionLink, OrgUnitTreeNode, DictionaryTypeWithEntries, Risk, Asset } from "../types";
+import type { Action, ActionAttachment, ActionLink, ActionComment, ActionStats, OrgUnitTreeNode, DictionaryTypeWithEntries, Risk } from "../types";
 import { buildPathMap } from "../utils/orgTree";
 import Modal from "../components/Modal";
 import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
@@ -29,6 +29,7 @@ function statusColor(name: string | null): string {
   if (l.includes("zamkn") || l.includes("complet") || l.includes("wykonan")) return "var(--green)";
   if (l.includes("w trakcie") || l.includes("progress") || l.includes("realizac")) return "var(--blue)";
   if (l.includes("anulowa") || l.includes("cancel")) return "var(--text-muted)";
+  if (l.includes("przetermin") || l.includes("overdue")) return "var(--red)";
   return "var(--orange)";
 }
 
@@ -71,7 +72,7 @@ interface FormLookups {
   allRisks: Risk[];
 }
 
-type FormTab = "description" | "links" | "effectiveness" | "history";
+type FormTab = "description" | "links" | "effectiveness" | "comments" | "history";
 
 /* ═══════════════════════════════════════════════════════════
    Table columns
@@ -97,6 +98,163 @@ const COLUMNS: ColumnDef<Action>[] = [
 ];
 
 /* ═══════════════════════════════════════════════════════════
+   MiniBarChart — simple inline bar chart for KPI dashboard
+   ═══════════════════════════════════════════════════════════ */
+
+function MiniBarChart({ data, color1, color2, label1, label2 }: {
+  data: { label: string; v1: number; v2: number }[];
+  color1: string; color2: string; label1: string; label2: string;
+}) {
+  const max = Math.max(...data.map(d => Math.max(d.v1, d.v2)), 1);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 12, fontSize: 10, color: "var(--text-muted)", marginBottom: 6 }}>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: color1, marginRight: 4 }} />{label1}</span>
+        <span><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: 2, background: color2, marginRight: 4 }} />{label2}</span>
+      </div>
+      <div style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 60 }}>
+        {data.map((d, i) => (
+          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+            <div style={{ display: "flex", gap: 1, alignItems: "flex-end", height: 50 }}>
+              <div style={{ width: 6, height: Math.max(2, (d.v1 / max) * 50), background: color1, borderRadius: 1 }} title={`${label1}: ${d.v1}`} />
+              <div style={{ width: 6, height: Math.max(2, (d.v2 / max) * 50), background: color2, borderRadius: 1 }} title={`${label2}: ${d.v2}`} />
+            </div>
+            <div style={{ fontSize: 8, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{d.label.slice(5)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   KPI Dashboard Panel
+   ═══════════════════════════════════════════════════════════ */
+
+function KpiDashboard({ stats }: { stats: ActionStats | null }) {
+  if (!stats) return null;
+
+  return (
+    <div className="card" style={{ marginBottom: 16, padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div className="card-title" style={{ margin: 0, fontSize: 13 }}>Dashboard KPI</div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+        {/* Col 1: Status breakdown */}
+        <div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Podział wg statusu</div>
+          {stats.by_status.map((s, i) => {
+            const pct = stats.total > 0 ? (s.count / stats.total * 100) : 0;
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, width: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.status_name}</span>
+                <div style={{ flex: 1, height: 6, borderRadius: 3, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: statusColor(s.status_name) }} />
+                </div>
+                <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono',monospace", width: 24, textAlign: "right" }}>{s.count}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Col 2: Priority breakdown */}
+        <div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Podział wg priorytetu</div>
+          {stats.by_priority.map((p, i) => {
+            const pct = stats.total > 0 ? (p.count / stats.total * 100) : 0;
+            return (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 11, width: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.priority_name}</span>
+                <div style={{ flex: 1, height: 6, borderRadius: 3, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                  <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: priorityColor(p.priority_name) }} />
+                </div>
+                <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono',monospace", width: 24, textAlign: "right" }}>{p.count}</span>
+              </div>
+            );
+          })}
+          {stats.avg_completion_days != null && (
+            <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-muted)" }}>
+              Śr. czas realizacji: <span style={{ fontWeight: 600, color: "var(--blue)", fontFamily: "'JetBrains Mono',monospace" }}>{stats.avg_completion_days} dni</span>
+            </div>
+          )}
+        </div>
+
+        {/* Col 3: Monthly trend */}
+        <div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Trend miesięczny (12 mies.)</div>
+          <MiniBarChart
+            data={stats.monthly_trend.map(t => ({ label: t.month, v1: t.created, v2: t.completed }))}
+            color1="var(--blue)" color2="var(--green)"
+            label1="Utworzone" label2="Ukończone"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Bulk action bar
+   ═══════════════════════════════════════════════════════════ */
+
+function BulkActionBar({ selectedIds, lookups, onBulkDone }: {
+  selectedIds: number[];
+  lookups: FormLookups | null;
+  onBulkDone: () => void;
+}) {
+  const [bulkField, setBulkField] = useState<"status" | "priority" | "responsible">("status");
+  const [bulkValue, setBulkValue] = useState("");
+  const [bulkReason, setBulkReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleBulk = async () => {
+    if (!bulkValue) { alert("Wybierz wartość"); return; }
+    setSaving(true);
+    const body: Record<string, unknown> = { action_ids: selectedIds };
+    if (bulkField === "status") body.status_id = Number(bulkValue);
+    else if (bulkField === "priority") body.priority_id = Number(bulkValue);
+    else body.responsible = bulkValue;
+    if (bulkReason) body.change_reason = bulkReason;
+    try {
+      await api.post("/api/v1/actions/bulk", body);
+      onBulkDone();
+    } catch (err) { alert("Błąd: " + err); }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", marginBottom: 8,
+      background: "rgba(59,130,246,0.08)", borderRadius: 8, border: "1px solid rgba(59,130,246,0.2)",
+    }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color: "var(--blue)" }}>
+        Zaznaczono: {selectedIds.length}
+      </span>
+      <select className="form-control" style={{ width: 130, fontSize: 11, padding: "4px 8px" }} value={bulkField} onChange={e => { setBulkField(e.target.value as any); setBulkValue(""); }}>
+        <option value="status">Status</option>
+        <option value="priority">Priorytet</option>
+        <option value="responsible">Odpowiedzialny</option>
+      </select>
+      {bulkField === "responsible" ? (
+        <input className="form-control" style={{ width: 160, fontSize: 11, padding: "4px 8px" }} placeholder="Nowy odpowiedzialny..." value={bulkValue} onChange={e => setBulkValue(e.target.value)} />
+      ) : (
+        <select className="form-control" style={{ width: 160, fontSize: 11, padding: "4px 8px" }} value={bulkValue} onChange={e => setBulkValue(e.target.value)}>
+          <option value="">Wybierz...</option>
+          {(bulkField === "status" ? lookups?.statuses : lookups?.priorities)?.map(o => (
+            <option key={o.id} value={o.id}>{o.label}</option>
+          ))}
+        </select>
+      )}
+      <input className="form-control" style={{ width: 200, fontSize: 11, padding: "4px 8px" }} placeholder="Powód zmiany (opcjonalnie)..." value={bulkReason} onChange={e => setBulkReason(e.target.value)} />
+      <button className="btn btn-sm btn-primary" disabled={saving || !bulkValue} onClick={handleBulk} style={{ fontSize: 11 }}>
+        {saving ? "..." : "Zastosuj"}
+      </button>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
    Main component
    ═══════════════════════════════════════════════════════════ */
 
@@ -109,6 +267,9 @@ export default function ActionsPage() {
   const [lookups, setLookups] = useState<FormLookups | null>(null);
   const [selected, setSelected] = useState<Action | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [kpiStats, setKpiStats] = useState<ActionStats | null>(null);
+  const [showKpi, setShowKpi] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<Set<number>>(new Set());
 
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "actions");
   const table = useTableFeatures<Action>({ data: actions, storageKey: "actions", defaultSort: "due_date", defaultSortDir: "asc" });
@@ -118,10 +279,17 @@ export default function ActionsPage() {
     api.get<Action[]>("/api/v1/actions").then(setActions).catch(() => {}).finally(() => setLoading(false));
   }, []);
 
+  const loadKpi = useCallback(() => {
+    api.get<ActionStats>("/api/v1/actions/stats").then(setKpiStats).catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadActions();
+    loadKpi();
     api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(setOrgTree).catch(() => {});
-  }, [loadActions]);
+    // Auto-overdue on page load
+    api.post("/api/v1/actions/auto-overdue", {}).catch(() => {});
+  }, [loadActions, loadKpi]);
 
   const orgPathMap = useMemo(() => buildPathMap(orgTree), [orgTree]);
 
@@ -148,7 +316,28 @@ export default function ActionsPage() {
 
   const handleArchive = async (action: Action) => {
     if (!confirm(`Archiwizowac dzialanie "${action.title}"?`)) return;
-    try { await api.delete(`/api/v1/actions/${action.id}`); setSelected(null); setLoading(true); loadActions(); } catch (err) { alert("Blad: " + err); }
+    try { await api.delete(`/api/v1/actions/${action.id}`); setSelected(null); setLoading(true); loadActions(); loadKpi(); } catch (err) { alert("Blad: " + err); }
+  };
+
+  const handleExportRich = () => {
+    const apiBase = (import.meta as any).env?.VITE_API_BASE ?? "";
+    window.open(`${apiBase}/api/v1/actions/export`, "_blank");
+  };
+
+  /* ── Checkbox selection ── */
+  const toggleCheck = (id: number) => {
+    setCheckedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleAllChecked = () => {
+    if (checkedIds.size === table.pageData.length) {
+      setCheckedIds(new Set());
+    } else {
+      setCheckedIds(new Set(table.pageData.map(a => a.id)));
+    }
   };
 
   /* ── Stats cards ── */
@@ -171,6 +360,26 @@ export default function ActionsPage() {
     <div>
       <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
+      {/* KPI toggle */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <button className="btn btn-sm" style={{ fontSize: 11, color: showKpi ? "var(--blue)" : undefined }} onClick={() => setShowKpi(v => !v)}>
+          {showKpi ? "Ukryj" : "Pokaż"} Dashboard KPI
+        </button>
+        <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={handleExportRich} title="Eksport do Excel z ryzykami i historią">
+          Eksport szczegółowy (XLSX)
+        </button>
+      </div>
+      {showKpi && <KpiDashboard stats={kpiStats} />}
+
+      {/* Bulk bar */}
+      {checkedIds.size > 0 && (
+        <BulkActionBar
+          selectedIds={Array.from(checkedIds)}
+          lookups={lookups}
+          onBulkDone={() => { setCheckedIds(new Set()); setLoading(true); loadActions(); loadKpi(); setLookups(null); }}
+        />
+      )}
+
       <TableToolbar
         filteredCount={table.filteredCount} totalCount={table.totalCount} unitLabel="działań"
         search={table.search} onSearchChange={table.setSearch} searchPlaceholder="Szukaj działań..."
@@ -192,7 +401,12 @@ export default function ActionsPage() {
           onPageChange={table.setPage} onPageSizeChange={table.setPageSize}
           loading={loading} emptyMessage="Brak działań w systemie." emptyFilteredMessage="Brak działań pasujących do filtrów."
           renderCell={(row, colKey) => {
-            if (colKey === "id") return <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>D-{row.id}</span>;
+            if (colKey === "id") return (
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input type="checkbox" checked={checkedIds.has(row.id)} onChange={() => toggleCheck(row.id)} onClick={e => e.stopPropagation()} style={{ cursor: "pointer" }} />
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>D-{row.id}</span>
+              </span>
+            );
             if (colKey === "title") return <span style={{ fontWeight: 500, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>{row.title}</span>;
             if (colKey === "priority_name") return row.priority_name ? <span style={{ fontSize: 12, fontWeight: 500, color: priorityColor(row.priority_name) }}>{row.priority_name}</span> : <span>{"\u2014"}</span>;
             if (colKey === "status_name") return row.status_name ? <span className="score-badge" style={{ background: `${statusColor(row.status_name)}20`, color: statusColor(row.status_name) }}>{row.status_name}</span> : <span>{"\u2014"}</span>;
@@ -202,6 +416,12 @@ export default function ActionsPage() {
               return <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono',monospace", color: row.is_overdue ? "var(--red)" : days != null && days <= 7 ? "var(--orange)" : "var(--text-secondary)" }}>{row.due_date.slice(0, 10)}{row.is_overdue && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--red)" }}>!</span>}</span>;
             }
             if (colKey === "links") return row.links.length > 0 ? <span className="score-badge" style={{ background: "var(--cyan-dim)", color: "var(--cyan)" }}>{row.links.length}</span> : <span style={{ fontSize: 12, color: "var(--text-muted)" }}>0</span>;
+            return undefined;
+          }}
+          renderHeaderExtra={colKey => {
+            if (colKey === "id") return (
+              <input type="checkbox" checked={checkedIds.size > 0 && checkedIds.size === table.pageData.length} onChange={toggleAllChecked} onClick={e => e.stopPropagation()} style={{ cursor: "pointer", marginRight: 4 }} />
+            );
             return undefined;
           }}
         />
@@ -293,7 +513,7 @@ export default function ActionsPage() {
         )}
       </div>
 
-      {/* ── Form Modal with 4 Tabs ── */}
+      {/* ── Form Modal with 5 Tabs ── */}
       <Modal open={showForm} onClose={() => { setShowForm(false); setEditAction(null); }} title={editAction ? `Edytuj: D-${editAction.id} ${editAction.title}` : "Nowe działanie"} wide>
         {lookups ? (
           <ActionFormTabs
@@ -309,6 +529,7 @@ export default function ActionsPage() {
               setLookups(null);
               setLoading(true);
               loadActions();
+              loadKpi();
             }}
             onCancel={() => { setShowForm(false); setEditAction(null); }}
           />
@@ -333,7 +554,7 @@ function DetailRow({ label, value }: { label: string; value: React.ReactNode }) 
 }
 
 /* ═══════════════════════════════════════════════════════════
-   ActionFormTabs — 4 tab form
+   ActionFormTabs — 5 tab form (desc, links, effectiveness, comments, history)
    ═══════════════════════════════════════════════════════════ */
 
 function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSaved, onCancel }: {
@@ -438,7 +659,6 @@ function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSav
 
   const handleSave = () => {
     if (isEdit && hasTrackedChanges()) {
-      // Show reason modal
       pendingSubmit.current = () => doSubmit(changeReason);
       setChangeReason("");
       setShowReasonModal(true);
@@ -500,6 +720,7 @@ function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSav
           {linkedRiskIds.length > 0 && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--cyan)", fontWeight: 700 }}>({linkedRiskIds.length})</span>}
         </span>
         {isEdit && <span style={tabStyle("effectiveness")} onClick={() => setTab("effectiveness")}>Skuteczność</span>}
+        {isEdit && <span style={tabStyle("comments")} onClick={() => setTab("comments")}>Komentarze</span>}
         {isEdit && <span style={tabStyle("history")} onClick={() => setTab("history")}>
           Historia
           {editAction?.history.length ? <span style={{ marginLeft: 4, fontSize: 10, color: "var(--text-muted)" }}>({editAction.history.length})</span> : null}
@@ -584,7 +805,12 @@ function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSav
         />
       )}
 
-      {/* ══════════ Tab 4: History ══════════ */}
+      {/* ══════════ Tab 4: Comments ══════════ */}
+      {tab === "comments" && editAction && (
+        <CommentsTab actionId={editAction.id} />
+      )}
+
+      {/* ══════════ Tab 5: History ══════════ */}
       {tab === "history" && editAction && (
         <HistoryTab history={editAction.history} />
       )}
@@ -696,12 +922,6 @@ function RiskLinkerTab({ allRisks, linkedRiskIds, setLinkedRiskIds, otherLinks }
                 {risk.status_name && <span>Status: {risk.status_name}</span>}
                 {risk.owner && <span>Właśc.: {risk.owner}</span>}
               </div>
-              {/* Show other linked items of this risk */}
-              {risk.linked_actions && risk.linked_actions.length > 0 && (
-                <div style={{ fontSize: 10, color: "var(--cyan)", marginTop: 3 }}>
-                  Inne działania: {risk.linked_actions.length}
-                </div>
-              )}
             </div>
             <button type="button" className="btn btn-sm" style={{ padding: "2px 8px", fontSize: 11, color: "var(--red)" }} onClick={() => removeRisk(risk.id)}>
               &#10005;
@@ -917,7 +1137,133 @@ function EffectivenessTab({ editAction, implementationNotes, setImplementationNo
 
 
 /* ═══════════════════════════════════════════════════════════
-   Tab 4: HistoryTab — full change history
+   Tab 4: CommentsTab — discussion thread
+   ═══════════════════════════════════════════════════════════ */
+
+function CommentsTab({ actionId }: { actionId: number }) {
+  const [comments, setComments] = useState<ActionComment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newContent, setNewContent] = useState("");
+  const [newAuthor, setNewAuthor] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editContent, setEditContent] = useState("");
+
+  const loadComments = useCallback(() => {
+    api.get<ActionComment[]>(`/api/v1/actions/${actionId}/comments`)
+      .then(setComments)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [actionId]);
+
+  useEffect(() => { loadComments(); }, [loadComments]);
+
+  const handleAdd = async () => {
+    if (!newContent.trim()) return;
+    setSaving(true);
+    try {
+      const c = await api.post<ActionComment>(`/api/v1/actions/${actionId}/comments`, {
+        content: newContent.trim(),
+        author: newAuthor.trim() || null,
+      });
+      setComments(prev => [...prev, c]);
+      setNewContent("");
+    } catch (err) {
+      alert("Błąd: " + err);
+    }
+    setSaving(false);
+  };
+
+  const handleUpdate = async (commentId: number) => {
+    if (!editContent.trim()) return;
+    try {
+      const c = await api.put<ActionComment>(`/api/v1/actions/${actionId}/comments/${commentId}`, {
+        content: editContent.trim(),
+      });
+      setComments(prev => prev.map(x => x.id === commentId ? c : x));
+      setEditingId(null);
+    } catch (err) {
+      alert("Błąd: " + err);
+    }
+  };
+
+  const handleDelete = async (commentId: number) => {
+    if (!confirm("Usunąć komentarz?")) return;
+    try {
+      await api.delete(`/api/v1/actions/${actionId}/comments/${commentId}`);
+      setComments(prev => prev.filter(c => c.id !== commentId));
+    } catch (err) {
+      alert("Błąd: " + err);
+    }
+  };
+
+  if (loading) return <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>Ładowanie komentarzy...</div>;
+
+  return (
+    <div>
+      {/* Comment list */}
+      <div style={{ maxHeight: 350, overflowY: "auto", marginBottom: 16 }}>
+        {comments.length === 0 && (
+          <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "rgba(255,255,255,0.02)", borderRadius: 8, border: "1px dashed var(--border)" }}>
+            Brak komentarzy. Dodaj pierwszy komentarz poniżej.
+          </div>
+        )}
+        {comments.map(c => (
+          <div key={c.id} style={{
+            padding: "10px 12px", borderRadius: 8, marginBottom: 6,
+            background: "rgba(255,255,255,0.02)", border: "1px solid rgba(42,53,84,0.15)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--blue)" }}>{c.author || "Anonim"}</span>
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{c.created_at.slice(0, 16).replace("T", " ")}</span>
+                {c.updated_at !== c.created_at && <span style={{ fontSize: 9, color: "var(--text-muted)", fontStyle: "italic" }}>(edytowany)</span>}
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button type="button" className="btn btn-sm" style={{ padding: "1px 6px", fontSize: 10 }} onClick={() => { setEditingId(c.id); setEditContent(c.content); }}>Edytuj</button>
+                <button type="button" className="btn btn-sm" style={{ padding: "1px 6px", fontSize: 10, color: "var(--red)" }} onClick={() => handleDelete(c.id)}>Usuń</button>
+              </div>
+            </div>
+            {editingId === c.id ? (
+              <div>
+                <textarea className="form-control" rows={2} value={editContent} onChange={e => setEditContent(e.target.value)} style={{ fontSize: 12 }} />
+                <div style={{ display: "flex", gap: 6, marginTop: 6, justifyContent: "flex-end" }}>
+                  <button type="button" className="btn btn-sm" style={{ fontSize: 10 }} onClick={() => setEditingId(null)}>Anuluj</button>
+                  <button type="button" className="btn btn-sm btn-primary" style={{ fontSize: 10 }} onClick={() => handleUpdate(c.id)} disabled={!editContent.trim()}>Zapisz</button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{c.content}</div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Add comment form */}
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+        <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>Nowy komentarz</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <input className="form-control" style={{ width: 180, fontSize: 11 }} placeholder="Autor (opcjonalnie)" value={newAuthor} onChange={e => setNewAuthor(e.target.value)} />
+        </div>
+        <textarea
+          className="form-control" rows={3} style={{ fontSize: 12 }}
+          value={newContent}
+          onChange={e => setNewContent(e.target.value)}
+          placeholder="Wpisz komentarz, uwagę, pytanie..."
+        />
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+          <button type="button" className="btn btn-sm btn-primary" disabled={saving || !newContent.trim()} onClick={handleAdd}>
+            {saving ? "..." : "Dodaj komentarz"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   Tab 5: HistoryTab — full change history
    ═══════════════════════════════════════════════════════════ */
 
 function HistoryTab({ history }: { history: Action["history"] }) {

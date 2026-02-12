@@ -100,3 +100,66 @@ class ActionCloseRequest(BaseModel):
     effectiveness_notes: str | None = None
     implementation_notes: str | None = None
     change_reason: str | None = None
+
+
+# ── Comments ──
+
+class ActionCommentOut(BaseModel):
+    id: int
+    action_id: int
+    author: str | None = None
+    content: str
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class ActionCommentCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=5000)
+    author: str | None = Field(None, max_length=200)
+
+
+class ActionCommentUpdate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=5000)
+
+
+# ── Bulk operations ──
+
+class ActionBulkUpdate(BaseModel):
+    action_ids: list[int] = Field(..., min_length=1)
+    status_id: int | None = None
+    priority_id: int | None = None
+    responsible: str | None = None
+    change_reason: str | None = None
+
+
+class ActionBulkResult(BaseModel):
+    updated_count: int
+    action_ids: list[int]
+
+
+# ── Stats / KPI ──
+
+class ActionStatusBreakdown(BaseModel):
+    status_name: str
+    count: int
+
+class ActionPriorityBreakdown(BaseModel):
+    priority_name: str
+    count: int
+
+class ActionMonthlyTrend(BaseModel):
+    month: str       # YYYY-MM
+    created: int
+    completed: int
+
+class ActionStats(BaseModel):
+    total: int
+    open: int
+    completed: int
+    overdue: int
+    avg_completion_days: float | None
+    overdue_pct: float
+    by_status: list[ActionStatusBreakdown]
+    by_priority: list[ActionPriorityBreakdown]
+    monthly_trend: list[ActionMonthlyTrend]

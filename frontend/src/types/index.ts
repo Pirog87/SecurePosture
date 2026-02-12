@@ -134,10 +134,80 @@ export interface Asset {
   sensitivity_name: string | null;
   criticality_id: number | null;
   criticality_name: string | null;
+  // CMDB Phase 2
+  asset_category_id: number | null;
+  asset_category_name: string | null;
+  asset_category_code: string | null;
+  asset_category_icon: string | null;
+  asset_category_color: string | null;
+  custom_attributes: Record<string, unknown> | null;
   is_active: boolean;
   risk_count: number;
   created_at: string;
   updated_at: string;
+}
+
+// ── CMDB: Asset Categories ──
+
+export interface AssetCategory {
+  id: number;
+  parent_id: number | null;
+  name: string;
+  name_plural: string | null;
+  code: string;
+  icon: string | null;
+  color: string | null;
+  description: string | null;
+  is_abstract: boolean;
+  sort_order: number;
+  is_active: boolean;
+  asset_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssetCategoryTreeNode extends AssetCategory {
+  children: AssetCategoryTreeNode[];
+}
+
+export interface CategoryFieldDefinition {
+  id: number;
+  category_id: number;
+  inherited_from_id: number | null;
+  field_key: string;
+  label: string;
+  label_en: string | null;
+  field_type: "text" | "number" | "date" | "boolean" | "select" | "multiselect" | "reference" | "textarea" | "url" | "email";
+  tab_name: string;
+  section_name: string | null;
+  is_required: boolean;
+  is_unique: boolean;
+  default_value: string | null;
+  placeholder: string | null;
+  help_text: string | null;
+  min_value: number | null;
+  max_value: number | null;
+  max_length: number | null;
+  regex_pattern: string | null;
+  options_json: string[] | { value: string; label: string }[] | null;
+  reference_category_id: number | null;
+  show_in_list: boolean;
+  sort_order: number;
+  column_width: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface RelationshipType {
+  id: number;
+  code: string;
+  name: string;
+  name_reverse: string | null;
+  color: string | null;
+  icon: string | null;
+  description: string | null;
+  sort_order: number;
+  is_active: boolean;
 }
 
 // Asset Relationships

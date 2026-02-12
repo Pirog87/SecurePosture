@@ -8,6 +8,7 @@ from sqlalchemy.orm import aliased
 
 from app.database import get_session
 from app.models.asset import Asset, AssetRelationship
+from app.models.asset_category import AssetCategory
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk
@@ -31,6 +32,7 @@ async def _asset_out(s: AsyncSession, asset: Asset) -> AssetOut:
 
     org = await s.get(OrgUnit, asset.org_unit_id) if asset.org_unit_id else None
     parent = await s.get(Asset, asset.parent_id) if asset.parent_id else None
+    acat = await s.get(AssetCategory, asset.asset_category_id) if asset.asset_category_id else None
 
     # Count linked risks
     risk_count_q = select(func.count()).select_from(Risk).where(Risk.asset_id == asset.id)
@@ -69,6 +71,13 @@ async def _asset_out(s: AsyncSession, asset: Asset) -> AssetOut:
         status_name=await _de_label(asset.status_id),
         last_scan_date=asset.last_scan_date,
         notes=asset.notes,
+        # CMDB Phase 2
+        asset_category_id=asset.asset_category_id,
+        asset_category_name=acat.name if acat else None,
+        asset_category_code=acat.code if acat else None,
+        asset_category_icon=acat.icon if acat else None,
+        asset_category_color=acat.color if acat else None,
+        custom_attributes=asset.custom_attributes,
         is_active=asset.is_active,
         risk_count=risk_count,
         created_at=asset.created_at,
@@ -83,6 +92,8 @@ async def list_assets(
     org_unit_id: int | None = Query(None),
     category_id: int | None = Query(None),
     asset_type_id: int | None = Query(None),
+    asset_category_id: int | None = Query(None),
+    include_children: bool = Query(True),
     include_archived: bool = Query(False),
     s: AsyncSession = Depends(get_session),
 ):
@@ -95,6 +106,15 @@ async def list_assets(
         q = q.where(Asset.category_id == category_id)
     if asset_type_id is not None:
         q = q.where(Asset.asset_type_id == asset_type_id)
+    if asset_category_id is not None:
+        if include_children:
+            # Include assets from this category AND all child categories
+            child_q = select(AssetCategory.id).where(AssetCategory.parent_id == asset_category_id)
+            child_ids = [r[0] for r in (await s.execute(child_q)).all()]
+            all_ids = [asset_category_id] + child_ids
+            q = q.where(Asset.asset_category_id.in_(all_ids))
+        else:
+            q = q.where(Asset.asset_category_id == asset_category_id)
     q = q.order_by(Asset.name)
     assets = (await s.execute(q)).scalars().all()
     return [await _asset_out(s, a) for a in assets]

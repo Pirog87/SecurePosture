@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -36,6 +36,10 @@ class Asset(Base):
     status_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     last_scan_date: Mapped[date | None] = mapped_column(Date)
     notes: Mapped[str | None] = mapped_column(Text)
+
+    # ── CMDB Phase 2: category + custom attributes ──
+    asset_category_id: Mapped[int | None] = mapped_column(ForeignKey("asset_categories.id", ondelete="SET NULL"))
+    custom_attributes: Mapped[dict | None] = mapped_column(JSON)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

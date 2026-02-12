@@ -266,28 +266,34 @@ async def action_stats(s: AsyncSession = Depends(get_session)):
 @router.post("/auto-overdue", summary="Automatycznie oznacz przeterminowane dzialania")
 async def auto_mark_overdue(s: AsyncSession = Depends(get_session)):
     """Find actions past due_date without completed_at and update their status to 'overdue'."""
-    overdue_status_id = await _find_overdue_status_id(s)
+    try:
+        overdue_status_id = await _find_overdue_status_id(s)
+        if not overdue_status_id:
+            return {"updated_count": 0, "action_ids": []}
 
-    now = datetime.utcnow()
-    q = select(Action).where(
-        Action.is_active.is_(True),
-        Action.due_date < now,
-        Action.completed_at.is_(None),
-    )
-    actions = (await s.execute(q)).scalars().all()
+        now = datetime.utcnow()
+        q = select(Action).where(
+            Action.is_active.is_(True),
+            Action.due_date < now,
+            Action.completed_at.is_(None),
+            Action.status_id != overdue_status_id,
+        )
+        actions = (await s.execute(q)).scalars().all()
 
-    updated_ids = []
-    for a in actions:
-        if overdue_status_id and a.status_id != overdue_status_id:
+        updated_ids = []
+        for a in actions:
             await _track_change(s, a.id, "status_id", a.status_id, overdue_status_id,
                                 change_reason="Automatyczna zmiana — przekroczono termin realizacji")
             a.status_id = overdue_status_id
             updated_ids.append(a.id)
 
-    if updated_ids:
-        await s.commit()
+        if updated_ids:
+            await s.commit()
 
-    return {"updated_count": len(updated_ids), "action_ids": updated_ids}
+        return {"updated_count": len(updated_ids), "action_ids": updated_ids}
+    except Exception:
+        await s.rollback()
+        return {"updated_count": 0, "action_ids": []}
 
 
 # ═══════════════════ BULK UPDATE ═══════════════════
@@ -443,7 +449,155 @@ async def export_actions_xlsx(s: AsyncSession = Depends(get_session)):
     )
 
 
-# ═══════════════════ LIST ═══════════════════
+# ═══════════════════ LIST (optimized — batch loading) ═══════════════════
+
+async def _batch_action_outs(s: AsyncSession, actions: list[Action]) -> list[ActionOut]:
+    """Build ActionOut list with batch queries instead of N+1."""
+    if not actions:
+        return []
+
+    now = datetime.utcnow()
+    action_ids = [a.id for a in actions]
+
+    # 1) Batch-load all org units
+    org_ids = {a.org_unit_id for a in actions if a.org_unit_id}
+    org_map: dict[int, str] = {}
+    if org_ids:
+        rows = (await s.execute(select(OrgUnit.id, OrgUnit.name).where(OrgUnit.id.in_(org_ids)))).all()
+        org_map = {r[0]: r[1] for r in rows}
+
+    # 2) Batch-load all dictionary labels
+    de_ids = set()
+    for a in actions:
+        for did in (a.priority_id, a.status_id, a.source_id):
+            if did is not None:
+                de_ids.add(did)
+    de_map: dict[int, str] = {}
+    if de_ids:
+        rows = (await s.execute(select(DictionaryEntry.id, DictionaryEntry.label).where(DictionaryEntry.id.in_(de_ids)))).all()
+        de_map = {r[0]: r[1] for r in rows}
+
+    # 3) Batch-load all links
+    links_q = select(ActionLink).where(ActionLink.action_id.in_(action_ids))
+    all_links = (await s.execute(links_q)).scalars().all()
+    links_by_action: dict[int, list[ActionLink]] = defaultdict(list)
+    for lnk in all_links:
+        links_by_action[lnk.action_id].append(lnk)
+
+    # 4) Batch-load entity names for linked risks/assets
+    risk_ids = {lnk.entity_id for lnk in all_links if lnk.entity_type == "risk"}
+    asset_ids = {lnk.entity_id for lnk in all_links if lnk.entity_type == "asset"}
+    risk_map: dict[int, Risk] = {}
+    asset_name_map: dict[int, str] = {}
+    if risk_ids:
+        rows = (await s.execute(select(Risk).where(Risk.id.in_(risk_ids)))).scalars().all()
+        risk_map = {r.id: r for r in rows}
+    if asset_ids:
+        rows = (await s.execute(select(Asset.id, Asset.name).where(Asset.id.in_(asset_ids)))).all()
+        asset_name_map = {r[0]: r[1] for r in rows}
+
+    # Batch-load risk status labels
+    risk_status_ids = {r.status_id for r in risk_map.values() if r.status_id}
+    if risk_status_ids - de_ids:
+        extra = risk_status_ids - de_ids
+        rows = (await s.execute(select(DictionaryEntry.id, DictionaryEntry.label).where(DictionaryEntry.id.in_(extra)))).all()
+        for r in rows:
+            de_map[r[0]] = r[1]
+
+    # Count other actions linked to same risks (for entity_extra)
+    risk_other_count: dict[int, int] = {}
+    if risk_ids:
+        cnt_q = (
+            select(ActionLink.entity_id, func.count(ActionLink.id))
+            .where(ActionLink.entity_type == "risk", ActionLink.entity_id.in_(risk_ids))
+            .group_by(ActionLink.entity_id)
+        )
+        rows = (await s.execute(cnt_q)).all()
+        risk_other_count = {r[0]: r[1] for r in rows}
+
+    # 5) Batch-load history
+    hist_q = (select(ActionHistory)
+              .where(ActionHistory.action_id.in_(action_ids))
+              .order_by(ActionHistory.created_at.desc()))
+    all_history = (await s.execute(hist_q)).scalars().all()
+    hist_by_action: dict[int, list[ActionHistory]] = defaultdict(list)
+    for h in all_history:
+        hist_by_action[h.action_id].append(h)
+
+    # 6) Batch-load attachments
+    att_q = (select(ActionAttachment)
+             .where(ActionAttachment.action_id.in_(action_ids))
+             .order_by(ActionAttachment.created_at.desc()))
+    all_atts = (await s.execute(att_q)).scalars().all()
+    att_by_action: dict[int, list[ActionAttachment]] = defaultdict(list)
+    for att in all_atts:
+        att_by_action[att.action_id].append(att)
+
+    # 7) Build results
+    results: list[ActionOut] = []
+    for action in actions:
+        # Links
+        link_outs = []
+        for lnk in links_by_action.get(action.id, []):
+            ename: str | None = None
+            eextra: dict | None = None
+            if lnk.entity_type == "risk":
+                r = risk_map.get(lnk.entity_id)
+                if r:
+                    ename = r.asset_name
+                    eextra = {
+                        "risk_score": r.risk_score,
+                        "risk_level": r.risk_level,
+                        "status_name": de_map.get(r.status_id) if r.status_id else None,
+                        "org_unit_name": None,
+                        "other_action_count": risk_other_count.get(lnk.entity_id, 0),
+                    }
+            elif lnk.entity_type == "asset":
+                ename = asset_name_map.get(lnk.entity_id)
+            else:
+                ename = f"{lnk.entity_type}#{lnk.entity_id}"
+            link_outs.append(ActionLinkOut(
+                id=lnk.id, entity_type=lnk.entity_type,
+                entity_id=lnk.entity_id, entity_name=ename,
+                entity_extra=eextra, created_at=lnk.created_at,
+            ))
+
+        is_overdue = (
+            action.due_date is not None
+            and action.completed_at is None
+            and action.due_date < now
+        )
+
+        results.append(ActionOut(
+            id=action.id,
+            title=action.title,
+            description=action.description,
+            org_unit_id=action.org_unit_id,
+            org_unit_name=org_map.get(action.org_unit_id) if action.org_unit_id else None,
+            owner=action.owner,
+            responsible=action.responsible,
+            priority_id=action.priority_id,
+            priority_name=de_map.get(action.priority_id) if action.priority_id else None,
+            status_id=action.status_id,
+            status_name=de_map.get(action.status_id) if action.status_id else None,
+            source_id=action.source_id,
+            source_name=de_map.get(action.source_id) if action.source_id else None,
+            due_date=action.due_date,
+            completed_at=action.completed_at,
+            effectiveness_rating=action.effectiveness_rating,
+            effectiveness_notes=action.effectiveness_notes,
+            implementation_notes=action.implementation_notes,
+            is_active=action.is_active,
+            is_overdue=is_overdue,
+            links=link_outs,
+            history=[ActionHistoryOut.model_validate(h) for h in hist_by_action.get(action.id, [])],
+            attachments=[ActionAttachmentOut.model_validate(a) for a in att_by_action.get(action.id, [])],
+            created_at=action.created_at,
+            updated_at=action.updated_at,
+        ))
+
+    return results
+
 
 @router.get("", response_model=list[ActionOut], summary="Lista dzialan")
 async def list_actions(
@@ -479,7 +633,7 @@ async def list_actions(
         Action.created_at.desc(),
     )
     actions = (await s.execute(q)).scalars().all()
-    return [await _action_out(s, a) for a in actions]
+    return await _batch_action_outs(s, actions)
 
 
 # ═══════════════════ GET ═══════════════════
@@ -580,6 +734,7 @@ async def archive_action(action_id: int, s: AsyncSession = Depends(get_session))
         raise HTTPException(404, "Dzialanie nie istnieje")
     action.is_active = False
     await s.commit()
+    await s.refresh(action)
     return {"status": "archived", "id": action_id}
 
 

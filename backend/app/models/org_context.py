@@ -98,7 +98,7 @@ class OrgContextRiskAppetite(Base):
     __tablename__ = "org_context_risk_appetite"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    org_unit_id: Mapped[int] = mapped_column(ForeignKey("org_units.id"), nullable=False, unique=True)
+    org_unit_id: Mapped[int] = mapped_column(ForeignKey("org_units.id"), nullable=False)
     risk_appetite_statement: Mapped[str | None] = mapped_column(Text)
     max_acceptable_risk_level: Mapped[str | None] = mapped_column(String(20))  # low / medium / high
     max_acceptable_risk_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))

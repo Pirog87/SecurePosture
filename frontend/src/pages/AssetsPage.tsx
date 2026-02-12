@@ -1,10 +1,9 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import type {
   Asset, AssetCategoryTreeNode, CategoryFieldDefinition,
   AssetRelationship, RelationshipType, OrgUnitTreeNode, DictionaryTypeWithEntries,
-  AuditLogEntry, AuditLogPage,
+  AuditLogEntry, AuditLogPage, Risk,
 } from "../types";
 import { buildPathMap } from "../utils/orgTree";
 import Modal from "../components/Modal";
@@ -36,8 +35,6 @@ interface FormLookups {
    AssetsPage — Unified CMDB module
    ═══════════════════════════════════════════════ */
 export default function AssetsPage() {
-  const navigate = useNavigate();
-
   // ── Category tree state ──
   const [categoryTree, setCategoryTree] = useState<AssetCategoryTreeNode[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<AssetCategoryTreeNode | null>(null);
@@ -404,15 +401,21 @@ export default function AssetsPage() {
     }
   };
 
-  // ═══════════════════ FLAT CATEGORY LIST ═══════════════════
-  const flatCategories = useMemo(() => {
-    const flat: AssetCategoryTreeNode[] = [];
-    const walk = (nodes: AssetCategoryTreeNode[]) => {
-      for (const n of nodes) { flat.push(n); walk(n.children); }
+  // ═══════════════════ HIERARCHICAL CATEGORY LIST ═══════════════════
+  const hierarchicalCategories = useMemo(() => {
+    const flat: { cat: AssetCategoryTreeNode; depth: number }[] = [];
+    const walk = (nodes: AssetCategoryTreeNode[], depth: number) => {
+      for (const n of nodes) {
+        flat.push({ cat: n, depth });
+        walk(n.children, depth + 1);
+      }
     };
-    walk(categoryTree);
-    return flat.filter(c => !c.is_abstract);
+    walk(categoryTree, 0);
+    return flat;
   }, [categoryTree]);
+
+  // Leaf-only for bulk assignment (backwards compat)
+  const flatCategories = useMemo(() => hierarchicalCategories.filter(c => !c.cat.is_abstract), [hierarchicalCategories]);
 
   // ═══════════════════ RENDER ═══════════════════
 
@@ -495,8 +498,8 @@ export default function AssetsPage() {
               onChange={e => { if (e.target.value) handleBulkAssignCategory(Number(e.target.value)); }}
             >
               <option value="">Przypisz kategorie...</option>
-              {flatCategories.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
+              {flatCategories.map(({ cat, depth }) => (
+                <option key={cat.id} value={cat.id}>{"\u00A0\u00A0".repeat(depth)}{cat.name}</option>
               ))}
             </select>
             <button className="btn btn-sm" style={{ fontSize: 11, color: "var(--red)" }} onClick={handleBulkArchive}>
@@ -750,23 +753,13 @@ export default function AssetsPage() {
 
               {/* Tab: Risks */}
               {detailTab === "risks" && (
-                <div>
-                  {selected.risk_count === 0 ? (
-                    <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
-                      Brak powiazanych ryzyk.
-                    </div>
-                  ) : (
-                    <div style={{ textAlign: "center", padding: 12 }}>
-                      <div style={{ fontSize: 32, fontWeight: 700, color: "var(--red)", marginBottom: 8 }}>
-                        {selected.risk_count}
-                      </div>
-                      <div style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 12 }}>powiazanych ryzyk</div>
-                      <button className="btn btn-sm btn-primary" onClick={() => navigate(`/risks?asset=${selected.id}`)}>
-                        Przejdz do rejestru ryzyk
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <AssetRisksTab
+                  asset={selected}
+                  orgTree={orgTree}
+                  onRiskCountChange={(count) => {
+                    setSelected(prev => prev ? { ...prev, risk_count: count } : prev);
+                  }}
+                />
               )}
 
               {/* Tab: History */}
@@ -831,8 +824,15 @@ export default function AssetsPage() {
                   onChange={e => handleFormCategoryChange(e.target.value ? Number(e.target.value) : null)}
                 >
                   <option value="">Wybierz kategorie...</option>
-                  {flatCategories.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                  {hierarchicalCategories.map(({ cat, depth }) => (
+                    <option
+                      key={cat.id}
+                      value={cat.id}
+                      disabled={cat.is_abstract}
+                      style={{ paddingLeft: depth * 16 }}
+                    >
+                      {"\u00A0\u00A0".repeat(depth)}{cat.is_abstract ? `── ${cat.name} ──` : `${cat.icon ?? ""} ${cat.name}`}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -1008,6 +1008,405 @@ function DetailCustomAttributes({ assetCategoryId, customAttributes }: {
 
   return (
     <DynamicAssetForm fields={fields} values={customAttributes} onChange={() => {}} readOnly />
+  );
+}
+
+/* ══════════════════════════════════════
+   AssetRisksTab: Risk linking section
+   ══════════════════════════════════════ */
+function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
+  asset: Asset;
+  orgTree: OrgUnitTreeNode[];
+  onRiskCountChange: (count: number) => void;
+}) {
+  const [linkedRisks, setLinkedRisks] = useState<Risk[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<"list" | "search" | "create">("list");
+
+  // Search state
+  const [allRisks, setAllRisks] = useState<Risk[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchLevel, setSearchLevel] = useState("");
+  const [searchLoading, setSearchLoading] = useState(false);
+
+  // Create form state
+  const [createSaving, setCreateSaving] = useState(false);
+  const [securityAreas, setSecurityAreas] = useState<{ id: number; name: string }[]>([]);
+  const [dictSafeguards, setDictSafeguards] = useState<{ id: number; label: string }[]>([]);
+
+  // Load linked risks
+  const loadLinkedRisks = useCallback(() => {
+    setLoading(true);
+    api.get<Risk[]>(`/api/v1/risks?include_archived=false`)
+      .then(risks => {
+        const linked = risks.filter(r => r.asset_id === asset.id);
+        setLinkedRisks(linked);
+        onRiskCountChange(linked.length);
+      })
+      .catch(() => setLinkedRisks([]))
+      .finally(() => setLoading(false));
+  }, [asset.id, onRiskCountChange]);
+
+  useEffect(() => { loadLinkedRisks(); }, [loadLinkedRisks]);
+
+  // Load all risks for search
+  const loadAllRisks = useCallback(() => {
+    if (allRisks.length > 0) return;
+    setSearchLoading(true);
+    api.get<Risk[]>("/api/v1/risks?include_archived=false")
+      .then(setAllRisks)
+      .catch(() => {})
+      .finally(() => setSearchLoading(false));
+  }, [allRisks.length]);
+
+  // Filtered search results
+  const searchResults = useMemo(() => {
+    const linkedIds = new Set(linkedRisks.map(r => r.id));
+    let filtered = allRisks.filter(r => !linkedIds.has(r.id));
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      filtered = filtered.filter(r =>
+        r.asset_name.toLowerCase().includes(q) ||
+        r.code?.toLowerCase().includes(q) ||
+        r.owner?.toLowerCase().includes(q) ||
+        r.security_area_name?.toLowerCase().includes(q)
+      );
+    }
+    if (searchLevel) {
+      filtered = filtered.filter(r => r.risk_level === searchLevel);
+    }
+    return filtered.slice(0, 20);
+  }, [allRisks, linkedRisks, searchQuery, searchLevel]);
+
+  // Link existing risk to this asset
+  const handleLinkRisk = async (risk: Risk) => {
+    try {
+      await api.put(`/api/v1/risks/${risk.id}`, {
+        asset_id: asset.id,
+        asset_name: asset.name,
+      });
+      setMode("list");
+      setSearchQuery("");
+      setSearchLevel("");
+      loadLinkedRisks();
+      // Refresh search cache
+      setAllRisks([]);
+    } catch (err) {
+      alert("Blad linkowania: " + err);
+    }
+  };
+
+  // Unlink risk from asset
+  const handleUnlinkRisk = async (risk: Risk) => {
+    if (!confirm(`Odlacz ryzyko R-${risk.id} od tego aktywa?`)) return;
+    try {
+      await api.put(`/api/v1/risks/${risk.id}`, {
+        asset_id: null,
+      });
+      loadLinkedRisks();
+      setAllRisks([]);
+    } catch (err) {
+      alert("Blad: " + err);
+    }
+  };
+
+  // Create new risk linked to this asset
+  const handleCreateRisk = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setCreateSaving(true);
+    const fd = new FormData(e.currentTarget);
+    const body = {
+      org_unit_id: asset.org_unit_id || Number(fd.get("org_unit_id")),
+      asset_id: asset.id,
+      asset_name: asset.name,
+      security_area_id: Number(fd.get("security_area_id")),
+      impact_level: Number(fd.get("impact_level")),
+      probability_level: Number(fd.get("probability_level")),
+      safeguard_rating: Number(fd.get("safeguard_rating")),
+      consequence_description: (fd.get("consequence_description") as string) || null,
+      existing_controls: (fd.get("existing_controls") as string) || null,
+      owner: (fd.get("owner") as string) || asset.owner || null,
+    };
+    try {
+      await api.post("/api/v1/risks", body);
+      setMode("list");
+      loadLinkedRisks();
+      setAllRisks([]);
+    } catch (err) {
+      alert("Blad tworzenia ryzyka: " + err);
+    } finally {
+      setCreateSaving(false);
+    }
+  };
+
+  const riskLevelColor = (level: string) => {
+    if (level === "high") return "var(--red)";
+    if (level === "medium") return "var(--orange)";
+    return "var(--green)";
+  };
+
+  const riskLevelBg = (level: string) => {
+    if (level === "high") return "var(--red-dim, rgba(239,68,68,0.15))";
+    if (level === "medium") return "var(--orange-dim, rgba(249,115,22,0.15))";
+    return "var(--green-dim, rgba(34,197,94,0.15))";
+  };
+
+  // Load security areas for create form
+  const openCreateMode = async () => {
+    setMode("create");
+    if (securityAreas.length === 0) {
+      try {
+        const areas = await api.get<{ id: number; name: string }[]>("/api/v1/security-areas");
+        setSecurityAreas(areas);
+      } catch { /* ignore */ }
+    }
+  };
+
+  if (loading) {
+    return <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>Ladowanie ryzyk...</div>;
+  }
+
+  return (
+    <div>
+      {/* Mode: List linked risks */}
+      {mode === "list" && (
+        <>
+          {linkedRisks.length === 0 ? (
+            <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
+              Brak powiazanych ryzyk dla tego aktywa.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+              {linkedRisks.map(risk => (
+                <div key={risk.id} style={{
+                  padding: "8px 10px", borderRadius: 6,
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid var(--border)", fontSize: 12,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>R-{risk.id}</span>
+                      <span className="score-badge" style={{
+                        background: riskLevelBg(risk.risk_level),
+                        color: riskLevelColor(risk.risk_level), fontSize: 10,
+                      }}>
+                        {risk.risk_level === "high" ? "WYSOKI" : risk.risk_level === "medium" ? "SREDNI" : "NISKI"}
+                      </span>
+                      <span style={{ fontWeight: 600, fontSize: 11, color: riskLevelColor(risk.risk_level) }}>
+                        {risk.risk_score?.toFixed(0)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleUnlinkRisk(risk)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", fontSize: 12, padding: "0 2px", opacity: 0.5 }}
+                      title="Odlacz ryzyko"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{risk.security_area_name}</div>
+                      {risk.status_name && <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Status: {risk.status_name}</span>}
+                    </div>
+                    <div style={{ textAlign: "right", fontSize: 10, color: "var(--text-muted)" }}>
+                      {risk.owner && <div>{risk.owner}</div>}
+                      <div>W={risk.impact_level} P={risk.probability_level}</div>
+                    </div>
+                  </div>
+                  {risk.consequence_description && (
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4, fontStyle: "italic" }}>
+                      {risk.consequence_description.length > 80 ? risk.consequence_description.slice(0, 80) + "..." : risk.consequence_description}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 6 }}>
+            <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => { setMode("search"); loadAllRisks(); }}>
+              Polacz istniejace ryzyko
+            </button>
+            <button className="btn btn-sm" style={{ flex: 1 }} onClick={openCreateMode}>
+              + Nowe ryzyko
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* Mode: Search & link existing risk */}
+      {mode === "search" && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600 }}>Wyszukaj ryzyko do polaczenia</div>
+            <button className="btn btn-sm" style={{ fontSize: 10 }} onClick={() => { setMode("list"); setSearchQuery(""); setSearchLevel(""); }}>Wstecz</button>
+          </div>
+
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            <input
+              className="form-control"
+              placeholder="Szukaj po nazwie, kodzie, wlascicielu..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              style={{ fontSize: 12, flex: 1 }}
+              autoFocus
+            />
+            <select
+              className="form-control"
+              value={searchLevel}
+              onChange={e => setSearchLevel(e.target.value)}
+              style={{ fontSize: 12, width: 100 }}
+            >
+              <option value="">Poziom</option>
+              <option value="high">Wysoki</option>
+              <option value="medium">Sredni</option>
+              <option value="low">Niski</option>
+            </select>
+          </div>
+
+          {searchLoading ? (
+            <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>Ladowanie ryzyk...</div>
+          ) : searchResults.length === 0 ? (
+            <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
+              {searchQuery || searchLevel ? "Brak ryzyk pasujacych do filtrow." : "Wpisz fraze aby wyszukac..."}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 300, overflowY: "auto" }}>
+              {searchResults.map(risk => (
+                <div
+                  key={risk.id}
+                  style={{
+                    padding: "8px 10px", borderRadius: 6, cursor: "pointer",
+                    background: "rgba(255,255,255,0.02)",
+                    border: "1px solid var(--border)", fontSize: 12,
+                    transition: "border-color 0.2s",
+                  }}
+                  onClick={() => handleLinkRisk(risk)}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--blue)")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>R-{risk.id}</span>
+                      <span className="score-badge" style={{
+                        background: riskLevelBg(risk.risk_level),
+                        color: riskLevelColor(risk.risk_level), fontSize: 9,
+                      }}>
+                        {risk.risk_level === "high" ? "WYS" : risk.risk_level === "medium" ? "SRE" : "NIS"} {risk.risk_score?.toFixed(0)}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 10, color: "var(--blue)" }}>+ Polacz</span>
+                  </div>
+                  <div style={{ fontWeight: 500, fontSize: 11, marginTop: 2 }}>{risk.asset_name}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>
+                    <span>{risk.security_area_name}</span>
+                    <span>{risk.owner || "brak wlasciciela"}</span>
+                  </div>
+                  {risk.asset_id_name && risk.asset_id !== asset.id && (
+                    <div style={{ fontSize: 10, color: "var(--orange)", marginTop: 2 }}>
+                      Aktualnie powiazane z: {risk.asset_id_name}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Mode: Create new risk */}
+      {mode === "create" && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600 }}>Nowe ryzyko dla: {asset.name}</div>
+            <button className="btn btn-sm" style={{ fontSize: 10 }} onClick={() => setMode("list")}>Wstecz</button>
+          </div>
+
+          <form onSubmit={handleCreateRisk}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div className="form-group">
+                <label style={{ fontSize: 11 }}>Domena bezpieczenstwa *</label>
+                <select name="security_area_id" className="form-control" required style={{ fontSize: 12 }}>
+                  <option value="">Wybierz...</option>
+                  {securityAreas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+
+              {!asset.org_unit_id && (
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Jednostka organizacyjna *</label>
+                  <select name="org_unit_id" className="form-control" required style={{ fontSize: 12 }}>
+                    <option value="">Wybierz...</option>
+                    {(() => {
+                      const flat: { id: number; name: string; depth: number }[] = [];
+                      const walk = (nodes: OrgUnitTreeNode[], d: number) => {
+                        for (const n of nodes) { flat.push({ id: n.id, name: n.name, depth: d }); walk(n.children, d + 1); }
+                      };
+                      walk(orgTree, 0);
+                      return flat.map(u => (
+                        <option key={u.id} value={u.id}>{"\u00A0\u00A0".repeat(u.depth)}{u.name}</option>
+                      ));
+                    })()}
+                  </select>
+                </div>
+              )}
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Wplyw (W) *</label>
+                  <select name="impact_level" className="form-control" required style={{ fontSize: 12 }}>
+                    <option value="1">1 - Niski</option>
+                    <option value="2">2 - Sredni</option>
+                    <option value="3">3 - Wysoki</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Prawdop. (P) *</label>
+                  <select name="probability_level" className="form-control" required style={{ fontSize: 12 }}>
+                    <option value="1">1 - Niski</option>
+                    <option value="2">2 - Sredni</option>
+                    <option value="3">3 - Wysoki</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label style={{ fontSize: 11 }}>Zabezp. (Z) *</label>
+                  <select name="safeguard_rating" className="form-control" required style={{ fontSize: 12 }}>
+                    <option value="0.10">0.10 - Brak</option>
+                    <option value="0.25">0.25 - Slabe</option>
+                    <option value="0.50">0.50 - Srednie</option>
+                    <option value="0.70">0.70 - Dobre</option>
+                    <option value="0.95">0.95 - Bardzo dobre</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontSize: 11 }}>Wlasciciel ryzyka</label>
+                <input name="owner" className="form-control" defaultValue={asset.owner || ""} style={{ fontSize: 12 }} placeholder="np. Jan Kowalski" />
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontSize: 11 }}>Opis konsekwencji</label>
+                <textarea name="consequence_description" className="form-control" rows={2} style={{ fontSize: 12 }} placeholder="Co moze sie stac w przypadku materializacji ryzyka?" />
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontSize: 11 }}>Istniejace zabezpieczenia</label>
+                <textarea name="existing_controls" className="form-control" rows={2} style={{ fontSize: 12 }} placeholder="Jakie zabezpieczenia juz istnieja?" />
+              </div>
+
+              <div style={{ display: "flex", gap: 6 }}>
+                <button type="submit" className="btn btn-sm btn-primary" style={{ flex: 1 }} disabled={createSaving}>
+                  {createSaving ? "Tworzenie..." : "Utworz ryzyko i polacz"}
+                </button>
+                <button type="button" className="btn btn-sm" onClick={() => setMode("list")}>Anuluj</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
   );
 }
 

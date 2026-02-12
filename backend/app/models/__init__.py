@@ -36,6 +36,19 @@ from .framework import (
     Assessment,
     AssessmentAnswer,
 )
+from .smart_catalog import (
+    ThreatCatalog,
+    WeaknessCatalog,
+    ControlCatalog,
+    ThreatAssetCategory,
+    WeaknessAssetCategory,
+    ControlAssetCategory,
+    ThreatWeaknessLink,
+    ThreatControlLink,
+    WeaknessControlLink,
+    AIProviderConfig,
+    AIAuditLog,
+)
 
 __all__ = [
     "Base",
@@ -63,4 +76,8 @@ __all__ = [
     "Framework", "FrameworkNode", "FrameworkNodeSecurityArea",
     "AssessmentDimension", "DimensionLevel",
     "Assessment", "AssessmentAnswer",
+    "ThreatCatalog", "WeaknessCatalog", "ControlCatalog",
+    "ThreatAssetCategory", "WeaknessAssetCategory", "ControlAssetCategory",
+    "ThreatWeaknessLink", "ThreatControlLink", "WeaknessControlLink",
+    "AIProviderConfig", "AIAuditLog",
 ]

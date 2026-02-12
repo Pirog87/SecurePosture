@@ -1145,6 +1145,8 @@ export default function OrgContextPage() {
               </div>
               {general.mission_vision && <div style={{ marginTop: 12 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Misja / Wizja</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.mission_vision}</div></div>}
               {general.key_products_services && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Kluczowe produkty / usługi</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.key_products_services}</div></div>}
+              {general.strategic_objectives && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Cele strategiczne</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.strategic_objectives}</div></div>}
+              {general.key_processes_notes && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Uwagi do kluczowych procesów</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.key_processes_notes}</div></div>}
             </div>
           )}
 

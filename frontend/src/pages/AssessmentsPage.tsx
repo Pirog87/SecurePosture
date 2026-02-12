@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
 import type { AssessmentBrief, FrameworkBrief, OrgUnitTreeNode } from "../types";
-import { flattenTree } from "../utils/orgTree";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 
 function statusColor(s: string) {
   return s === "approved" ? "badge-green" : s === "in_progress" ? "badge-yellow" : "badge-gray";
@@ -45,8 +45,6 @@ export default function AssessmentsPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-
-  const flatUnits = flattenTree(orgTree);
 
   const handleCreate = async () => {
     if (!form.framework_id) return;
@@ -98,11 +96,13 @@ export default function AssessmentsPage() {
             </div>
             <div>
               <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Jednostka org.</label>
-              <select className="form-control" value={form.org_unit_id}
-                      onChange={e => setForm(f => ({ ...f, org_unit_id: e.target.value }))}>
-                <option value="">Cala organizacja</option>
-                {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-              </select>
+              <OrgUnitTreeSelect
+                tree={orgTree}
+                value={form.org_unit_id ? Number(form.org_unit_id) : null}
+                onChange={id => setForm(f => ({ ...f, org_unit_id: id ? String(id) : "" }))}
+                placeholder="Cala organizacja"
+                allowClear
+              />
             </div>
             <div>
               <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Tytul</label>

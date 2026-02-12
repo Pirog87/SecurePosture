@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import type { DictionaryEntry, OrgUnit } from "../types";
+import type { DictionaryEntry, OrgUnitTreeNode } from "../types";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
@@ -117,7 +118,7 @@ export default function AwarenessPage() {
   // Dictionaries & org units
   const [types, setTypes] = useState<DictionaryEntry[]>([]);
   const [statuses, setStatuses] = useState<DictionaryEntry[]>([]);
-  const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([]);
+  const [orgUnits, setOrgUnits] = useState<OrgUnitTreeNode[]>([]);
 
   // Search, sort, filter
   const [search, setSearch] = useState("");
@@ -152,7 +153,7 @@ export default function AwarenessPage() {
     try {
       const [cRes, ouRes] = await Promise.all([
         fetch(`${API}/api/v1/awareness-campaigns`),
-        fetch(`${API}/api/v1/org-units`),
+        fetch(`${API}/api/v1/org-units/tree`),
       ]);
       if (cRes.ok) setCampaigns(await cRes.json()); else setError(`API ${cRes.status}`);
       if (ouRes.ok) setOrgUnits(await ouRes.json());
@@ -542,10 +543,13 @@ export default function AwarenessPage() {
           </div>
           <div className="form-group">
             <label>Jednostka org.</label>
-            <select className="form-control" value={form.org_unit_id ?? ""} onChange={e => setForm({ ...form, org_unit_id: e.target.value ? Number(e.target.value) : null })}>
-              <option value="">-- cala org. --</option>
-              {orgUnits.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
+            <OrgUnitTreeSelect
+              tree={orgUnits}
+              value={form.org_unit_id}
+              onChange={id => setForm({ ...form, org_unit_id: id })}
+              placeholder="-- cala org. --"
+              allowClear
+            />
           </div>
           <div className="form-group">
             <label>Wlasciciel</label>

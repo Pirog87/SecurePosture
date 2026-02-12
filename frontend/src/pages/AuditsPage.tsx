@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
-import type { DictionaryEntry, OrgUnit } from "../types";
+import type { DictionaryEntry, OrgUnitTreeNode } from "../types";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
@@ -111,7 +112,7 @@ export default function AuditsPage() {
   const [saving, setSaving] = useState(false);
   const [tried, setTried] = useState(false);
 
-  const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([]);
+  const [orgUnits, setOrgUnits] = useState<OrgUnitTreeNode[]>([]);
   const [auditTypes, setAuditTypes] = useState<DictionaryEntry[]>([]);
   const [, setRatings] = useState<DictionaryEntry[]>([]);
 
@@ -157,7 +158,7 @@ export default function AuditsPage() {
     try {
       const [aRes, ouRes] = await Promise.all([
         fetch(`${API}/api/v1/audits`),
-        fetch(`${API}/api/v1/org-units/flat`),
+        fetch(`${API}/api/v1/org-units/tree`),
       ]);
       if (aRes.ok) setAudits(await aRes.json()); else setError(`API ${aRes.status}`);
       if (ouRes.ok) setOrgUnits(await ouRes.json());
@@ -532,14 +533,13 @@ export default function AuditsPage() {
           </div>
           <div className="form-group">
             <label>Jednostka org.</label>
-            <select
-              className="form-control"
-              value={form.org_unit_id ?? ""}
-              onChange={e => setForm({ ...form, org_unit_id: e.target.value ? Number(e.target.value) : null })}
-            >
-              <option value="">-- brak --</option>
-              {orgUnits.map(ou => <option key={ou.id} value={ou.id}>{ou.name}</option>)}
-            </select>
+            <OrgUnitTreeSelect
+              tree={orgUnits}
+              value={form.org_unit_id}
+              onChange={id => setForm({ ...form, org_unit_id: id })}
+              placeholder="-- brak --"
+              allowClear
+            />
           </div>
         </div>
 

@@ -2,8 +2,9 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import type { Asset, OrgUnitTreeNode, DictionaryTypeWithEntries } from "../types";
-import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
+import { buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
 
@@ -194,8 +195,6 @@ export default function AssetRegistryPage() {
     }
   };
 
-  const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
-
   // Hierarchical org filtering
   const filterOrgIds = useMemo(() => {
     if (!filterOrg) return null;
@@ -223,8 +222,6 @@ export default function AssetRegistryPage() {
     return result;
   }, [assets, filterOrgIds, filterType, filterSearch, sortField, sortDir]);
 
-  const flatFilterUnits = flattenTree(orgTree);
-  const uniqueOrgs = flatFilterUnits.map(u => ({ id: u.id, name: u.name, depth: u.depth }));
   const uniqueTypes = [...new Map(assets.filter(a => a.asset_type_id).map(a => [a.asset_type_id, { id: a.asset_type_id!, name: a.asset_type_name! }])).values()];
 
   // Stats
@@ -275,10 +272,14 @@ export default function AssetRegistryPage() {
 
       {showFilters && (
         <div className="card" style={{ padding: "10px 14px", marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <select className="form-control" style={{ width: 220, padding: "5px 8px", fontSize: 11 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
-            <option value="">Wszystkie piony</option>
-            {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{"  ".repeat(o.depth)}{o.name}</option>)}
-          </select>
+          <OrgUnitTreeSelect
+            tree={orgTree}
+            value={filterOrg ? Number(filterOrg) : null}
+            onChange={id => setFilterOrg(id ? String(id) : "")}
+            placeholder="Wszystkie piony"
+            allowClear
+            style={{ width: 280 }}
+          />
           <select className="form-control" style={{ width: 160, padding: "5px 8px", fontSize: 11 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
             <option value="">Wszystkie typy</option>
             {uniqueTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
@@ -556,10 +557,17 @@ export default function AssetRegistryPage() {
               </div>
               <div className="form-group">
                 <label>Jednostka organizacyjna</label>
-                <select name="org_unit_id" className="form-control" defaultValue={editAsset?.org_unit_id ?? ""}>
-                  <option value="">Wybierz...</option>
-                  {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-                </select>
+                <OrgUnitTreeSelect
+                  tree={lookups.orgUnits}
+                  value={editAsset?.org_unit_id ?? null}
+                  onChange={id => {
+                    const hidden = document.querySelector<HTMLInputElement>('input[name="org_unit_id"]');
+                    if (hidden) hidden.value = id ? String(id) : "";
+                  }}
+                  placeholder="Wybierz..."
+                  allowClear
+                />
+                <input type="hidden" name="org_unit_id" defaultValue={editAsset?.org_unit_id ?? ""} />
               </div>
               <div className="form-group">
                 <label>Nadrzędny aktyw</label>

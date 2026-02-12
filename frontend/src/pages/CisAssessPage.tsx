@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { api } from "../services/api";
 import type { CisControl, CisAssessment, OrgUnitTreeNode, DictionaryTypeWithEntries } from "../types";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 
 function flattenTree(nodes: OrgUnitTreeNode[], depth = 0): { id: number; name: string; depth: number }[] {
   const result: { id: number; name: string; depth: number }[] = [];
@@ -41,7 +42,7 @@ export default function CisAssessPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [assessmentId, setAssessmentId] = useState<number | null>(null);
-  const [orgUnits, setOrgUnits] = useState<{ id: number; name: string; depth: number }[]>([]);
+  const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
   const [selectedOrgUnit, setSelectedOrgUnit] = useState<string>("");
   const [statuses, setStatuses] = useState<{ id: number; label: string }[]>([]);
   const answersRef = useRef<Map<string, AnswerVals>>(new Map());
@@ -57,7 +58,7 @@ export default function CisAssessPage() {
         .catch(() => []),
     ]).then(([c, tree, sts]) => {
       setControls(c);
-      setOrgUnits(flattenTree(tree));
+      setOrgTree(tree);
       setStatuses(sts);
       const totalSubs = c.reduce((sum, ctrl) => sum + ctrl.sub_controls.length, 0);
       setSummary(prev => ({ ...prev, total: totalSubs }));
@@ -159,10 +160,14 @@ export default function CisAssessPage() {
     <div>
       <div className="toolbar">
         <div className="toolbar-left" style={{ alignItems: "center" }}>
-          <select className="form-control" style={{ width: 200 }} value={selectedOrgUnit} onChange={e => setSelectedOrgUnit(e.target.value)}>
-            <option value="">Cała organizacja</option>
-            {orgUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-          </select>
+          <OrgUnitTreeSelect
+            tree={orgTree}
+            value={selectedOrgUnit ? Number(selectedOrgUnit) : null}
+            onChange={id => setSelectedOrgUnit(id ? String(id) : "")}
+            placeholder="Cała organizacja"
+            allowClear
+            style={{ width: 300 }}
+          />
           <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>
             {assessmentId ? `Ocena #${assessmentId}` : "Nowa ocena"}
           </span>

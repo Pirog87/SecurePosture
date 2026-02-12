@@ -2,26 +2,18 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import type { CisAssessment, CisDashboard, CisTrend, OrgUnitTreeNode } from "../types";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 
 function pctColor(v: number) { return v >= 75 ? "var(--green)" : v >= 50 ? "var(--yellow)" : v >= 25 ? "var(--orange)" : "var(--red)"; }
 function pctBg(v: number) { return v >= 75 ? "var(--green-dim)" : v >= 50 ? "var(--yellow-dim)" : v >= 25 ? "var(--orange-dim)" : "var(--red-dim)"; }
 function matColor(v: number) { return v >= 4 ? "var(--green)" : v >= 3 ? "var(--cyan)" : v >= 2 ? "var(--yellow)" : v >= 1 ? "var(--orange)" : "var(--red)"; }
-
-function flattenTree(nodes: OrgUnitTreeNode[], depth = 0): { id: number; name: string; depth: number }[] {
-  const result: { id: number; name: string; depth: number }[] = [];
-  for (const n of nodes) {
-    result.push({ id: n.id, name: n.name, depth });
-    result.push(...flattenTree(n.children, depth + 1));
-  }
-  return result;
-}
 
 export default function CisListPage() {
   const [assessments, setAssessments] = useState<CisAssessment[]>([]);
   const [cisDash, setCisDash] = useState<CisDashboard | null>(null);
   const [cisTrend, setCisTrend] = useState<CisTrend | null>(null);
   const [loading, setLoading] = useState(true);
-  const [orgUnits, setOrgUnits] = useState<{ id: number; name: string; depth: number }[]>([]);
+  const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
   const [orgFilter, setOrgFilter] = useState("");
   const navigate = useNavigate();
 
@@ -38,7 +30,7 @@ export default function CisListPage() {
   };
 
   useEffect(() => {
-    api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(t => setOrgUnits(flattenTree(t))).catch(() => {});
+    api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(setOrgTree).catch(() => {});
     loadData();
   }, []);
 
@@ -55,10 +47,14 @@ export default function CisListPage() {
     <div>
       <div className="toolbar">
         <div className="toolbar-left">
-          <select className="form-control" style={{ width: 220 }} value={orgFilter} onChange={e => handleOrgChange(e.target.value)}>
-            <option value="">Cała organizacja</option>
-            {orgUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-          </select>
+          <OrgUnitTreeSelect
+            tree={orgTree}
+            value={orgFilter ? Number(orgFilter) : null}
+            onChange={id => handleOrgChange(id ? String(id) : "")}
+            placeholder="Cała organizacja"
+            allowClear
+            style={{ width: 300 }}
+          />
           <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>CIS Controls v8</span>
           {loading && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Odświeżanie...</span>}
         </div>

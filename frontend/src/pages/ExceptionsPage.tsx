@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { api } from "../services/api";
 import type { OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, DictionaryTypeWithEntries, Asset, Risk } from "../types";
 import { flattenTree, buildPathMap } from "../utils/orgTree";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
@@ -187,6 +188,7 @@ export default function ExceptionsPage() {
   const isExpired = (d: string | null) => d ? new Date(d) < today : false;
 
   const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
+  const orgTreeForSelect = lookups?.orgUnits ?? [];
 
   // Sort & filter
   const handleSort = (field: SortField) => {
@@ -512,6 +514,7 @@ export default function ExceptionsPage() {
           <ExceptionWizard
             lookups={lookups}
             flatUnits={flatUnits}
+            orgTree={orgTreeForSelect}
             saving={saving}
             editingException={editingException}
             onSubmit={async (data) => {
@@ -594,9 +597,10 @@ function ZLevelPanel({ value, onChange, readonly }: { value: number; onChange?: 
   );
 }
 
-function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmit, onCancel }: {
+function ExceptionWizard({ lookups, flatUnits, orgTree, saving, editingException, onSubmit, onCancel }: {
   lookups: Lookups;
   flatUnits: { id: number; name: string; depth: number }[];
+  orgTree: OrgUnitTreeNode[];
   saving: boolean;
   editingException: ExceptionRecord | null;
   onSubmit: (data: Record<string, unknown>) => void;
@@ -1156,12 +1160,14 @@ function ExceptionWizard({ lookups, flatUnits, saving, editingException, onSubmi
             </div>
             <div className="form-group">
               <label>Jednostka organizacyjna *</label>
-              <select className="form-control" value={orgUnitId ?? ""}
+              <OrgUnitTreeSelect
+                tree={orgTree}
+                value={orgUnitId}
+                onChange={setOrgUnitId}
+                placeholder="Wybierz..."
+                allowClear={false}
                 style={fieldStyle(step1Errors.orgUnitId)}
-                onChange={e => setOrgUnitId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-              </select>
+              />
               {triedNext && step1Errors.orgUnitId && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
             </div>
             <AssetSelectBlock gridColumn="span 2" />

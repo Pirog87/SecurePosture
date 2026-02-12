@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import type { VulnerabilityRecord, DictionaryEntry, OrgUnit } from "../types";
+import type { VulnerabilityRecord, DictionaryEntry, OrgUnitTreeNode } from "../types";
 import Modal from "../components/Modal";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
 
@@ -71,7 +72,7 @@ export default function VulnerabilitiesPage() {
   const [saving, setSaving] = useState(false);
   const [tried, setTried] = useState(false);
 
-  const [orgUnits, setOrgUnits] = useState<OrgUnit[]>([]);
+  const [orgUnits, setOrgUnits] = useState<OrgUnitTreeNode[]>([]);
   const [severities, setSeverities] = useState<DictionaryEntry[]>([]);
   const [statuses, setStatuses] = useState<DictionaryEntry[]>([]);
   const [sources, setSources] = useState<DictionaryEntry[]>([]);
@@ -109,7 +110,7 @@ export default function VulnerabilitiesPage() {
     try {
       const [vRes, ouRes] = await Promise.all([
         fetch(`${API}/api/v1/vulnerabilities`),
-        fetch(`${API}/api/v1/org-units/flat`),
+        fetch(`${API}/api/v1/org-units/tree`),
       ]);
       if (vRes.ok) setVulns(await vRes.json()); else setError(`API ${vRes.status}`);
       if (ouRes.ok) setOrgUnits(await ouRes.json());
@@ -366,10 +367,14 @@ export default function VulnerabilitiesPage() {
           </div>
           <div className="form-group">
             <label>Jednostka org. *</label>
-            <select className="form-control" style={fieldErr(!!form.org_unit_id)} value={form.org_unit_id ?? ""} onChange={e => setForm({ ...form, org_unit_id: Number(e.target.value) })}>
-              <option value="">-- wybierz --</option>
-              {orgUnits.map(ou => <option key={ou.id} value={ou.id}>{ou.name}</option>)}
-            </select>
+            <OrgUnitTreeSelect
+              tree={orgUnits}
+              value={form.org_unit_id}
+              onChange={id => setForm({ ...form, org_unit_id: id })}
+              placeholder="-- wybierz --"
+              allowClear={false}
+              style={fieldErr(!!form.org_unit_id)}
+            />
             {tried && !form.org_unit_id && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 2 }}>Pole wymagane</div>}
           </div>
           <div className="form-group">

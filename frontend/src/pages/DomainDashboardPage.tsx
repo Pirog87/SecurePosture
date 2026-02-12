@@ -1,8 +1,8 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import type { DomainDashboard, DomainScoreCard, OrgUnitTreeNode } from "../types";
-import { flattenTree } from "../utils/orgTree";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 
 function gradeColor(g: string) {
   return g === "A" ? "var(--green)" : g === "B" ? "var(--cyan)" : g === "C" ? "var(--yellow)" : g === "D" ? "var(--orange)" : "var(--red)";
@@ -32,7 +32,6 @@ export default function DomainDashboardPage() {
     loadData();
   }, []);
 
-  const flatUnits = useMemo(() => flattenTree(orgTree), [orgTree]);
 
   const handleOrgChange = (val: string) => {
     setOrgFilter(val);
@@ -57,10 +56,14 @@ export default function DomainDashboardPage() {
       {/* Toolbar */}
       <div className="toolbar">
         <div className="toolbar-left">
-          <select className="form-control" style={{ width: 220 }} value={orgFilter} onChange={e => handleOrgChange(e.target.value)}>
-            <option value="">Cala organizacja</option>
-            {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
-          </select>
+          <OrgUnitTreeSelect
+            tree={orgTree}
+            value={orgFilter ? Number(orgFilter) : null}
+            onChange={id => handleOrgChange(id ? String(id) : "")}
+            placeholder="Cala organizacja"
+            allowClear
+            style={{ width: 300 }}
+          />
           {loading && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Odswiezanie...</span>}
         </div>
         <div className="toolbar-right">

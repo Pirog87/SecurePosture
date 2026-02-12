@@ -1,11 +1,11 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import RisksPage from "./pages/RisksPage";
 import ReviewsPage from "./pages/ReviewsPage";
 import CisListPage from "./pages/CisListPage";
 import CisAssessPage from "./pages/CisAssessPage";
-import OrgStructurePage from "./pages/OrgStructurePage";
+
 import CatalogsPage from "./pages/CatalogsPage";
 import DictionariesPage from "./pages/DictionariesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
@@ -54,7 +54,7 @@ export default function App() {
           <Route path="cis" element={<CisListPage />} />
           <Route path="cis/assess" element={<CisAssessPage />} />
           <Route path="org-context" element={<OrgContextPage />} />
-          <Route path="org-structure" element={<OrgStructurePage />} />
+          <Route path="org-structure" element={<Navigate to="/org-context" replace />} />
           <Route path="catalogs" element={<CatalogsPage />} />
           <Route path="dictionaries" element={<DictionariesPage />} />
           <Route path="actions" element={<ActionsPage />} />

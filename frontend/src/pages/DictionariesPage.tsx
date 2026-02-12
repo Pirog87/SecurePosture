@@ -3,6 +3,21 @@ import { api } from "../services/api";
 import type { DictionaryType, DictionaryTypeWithEntries, DictionaryEntry } from "../types";
 import Modal from "../components/Modal";
 
+/* ─── Types for usage / reassignment ─── */
+interface UsageDetail {
+  table: string;
+  table_key: string;
+  column: string;
+  count: number;
+}
+
+interface EntryUsage {
+  entry_id: number;
+  entry_label: string;
+  total_references: number;
+  details: UsageDetail[];
+}
+
 export default function DictionariesPage() {
   const [dicts, setDicts] = useState<DictionaryType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -12,6 +27,13 @@ export default function DictionariesPage() {
   const [showAddEntry, setShowAddEntry] = useState(false);
   const [editEntry, setEditEntry] = useState<DictionaryEntry | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Archive / reassign state
+  const [archiveTarget, setArchiveTarget] = useState<DictionaryEntry | null>(null);
+  const [usageData, setUsageData] = useState<EntryUsage | null>(null);
+  const [loadingUsage, setLoadingUsage] = useState(false);
+  const [reassignTargetId, setReassignTargetId] = useState<number | null>(null);
+  const [reassigning, setReassigning] = useState(false);
 
   const loadDicts = async () => {
     try {
@@ -97,14 +119,39 @@ export default function DictionariesPage() {
     }
   };
 
-  const archiveEntry = async (entry: DictionaryEntry) => {
-    if (!openDict) return;
-    if (!confirm(`Archiwizowac "${entry.label}"?`)) return;
+  /* ─── Archive flow with usage check ─── */
+  const startArchive = async (entry: DictionaryEntry) => {
+    setArchiveTarget(entry);
+    setReassignTargetId(null);
+    setLoadingUsage(true);
     try {
-      await api.patch(`/api/v1/dictionaries/entries/${entry.id}/archive`, {});
+      const usage = await api.get<EntryUsage>(`/api/v1/dictionaries/entries/${entry.id}/usage`);
+      setUsageData(usage);
+    } catch {
+      setUsageData({ entry_id: entry.id, entry_label: entry.label, total_references: 0, details: [] });
+    } finally {
+      setLoadingUsage(false);
+    }
+  };
+
+  const confirmArchive = async () => {
+    if (!openDict || !archiveTarget) return;
+    setReassigning(true);
+    try {
+      if (usageData && usageData.total_references > 0 && reassignTargetId) {
+        // Reassign all references then archive
+        await api.post(`/api/v1/dictionaries/entries/${archiveTarget.id}/reassign`, { target_id: reassignTargetId });
+      } else {
+        // No references or no reassignment needed — just archive
+        await api.patch(`/api/v1/dictionaries/entries/${archiveTarget.id}/archive`, {});
+      }
+      setArchiveTarget(null);
+      setUsageData(null);
       await refreshOpenDict(openDict.code);
     } catch (err) {
       alert("Blad: " + err);
+    } finally {
+      setReassigning(false);
     }
   };
 
@@ -160,6 +207,9 @@ export default function DictionariesPage() {
   const activeEntries = openDict?.entries.filter(e => e.is_active).sort((a, b) => a.sort_order - b.sort_order) ?? [];
   const archivedEntries = openDict?.entries.filter(e => !e.is_active) ?? [];
 
+  // Candidates for reassignment (active entries excluding the one being archived)
+  const reassignCandidates = activeEntries.filter(e => e.id !== archiveTarget?.id);
+
   return (
     <div>
       <div className="grid-3">
@@ -182,6 +232,7 @@ export default function DictionariesPage() {
         )}
       </div>
 
+      {/* ─── Dictionary entries modal ─── */}
       <Modal open={!!openDict} onClose={() => { setOpenDict(null); setEditEntry(null); }} title={openDict?.name ?? "Slownik"} wide>
         {loadingEntries ? (
           <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Ladowanie pozycji...</div>
@@ -259,7 +310,7 @@ export default function DictionariesPage() {
                         {!openDict.is_system && (
                           <div style={{ display: "flex", gap: 4 }}>
                             <button className="btn btn-sm" onClick={() => { setEditEntry(entry); setShowAddEntry(false); }}>Edytuj</button>
-                            <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => archiveEntry(entry)}>Archiwizuj</button>
+                            <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => startArchive(entry)}>Archiwizuj</button>
                           </div>
                         )}
                       </td>
@@ -294,6 +345,92 @@ export default function DictionariesPage() {
             )}
           </div>
         )}
+      </Modal>
+
+      {/* ─── Archive / Reassign modal ─── */}
+      <Modal
+        open={!!archiveTarget}
+        onClose={() => { setArchiveTarget(null); setUsageData(null); }}
+        title={`Archiwizacja: ${archiveTarget?.label ?? ""}`}
+      >
+        {loadingUsage ? (
+          <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>Sprawdzanie powiazanych rekordow...</div>
+        ) : usageData && usageData.total_references === 0 ? (
+          /* No references — simple confirmation */
+          <div>
+            <p style={{ fontSize: 13, marginBottom: 16 }}>
+              Pozycja <strong>"{archiveTarget?.label}"</strong> nie jest uzywana w zadnych rekordach. Mozna ja bezpiecznie zarchiwizowac.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn" onClick={() => { setArchiveTarget(null); setUsageData(null); }}>Anuluj</button>
+              <button className="btn btn-primary" onClick={confirmArchive} disabled={reassigning}>
+                {reassigning ? "Archiwizowanie..." : "Archiwizuj"}
+              </button>
+            </div>
+          </div>
+        ) : usageData ? (
+          /* Has references — show usage and offer reassignment */
+          <div>
+            <div style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 8, padding: 14, marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--orange)", marginBottom: 6 }}>
+                Pozycja jest uzywana w {usageData.total_references} rekordach
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                Przed archiwizacja musisz przepiac referencje na inna pozycje tego samego slownika.
+                Wszystkie powiazane rekordy zostana automatycznie zaktualizowane.
+              </div>
+            </div>
+
+            {/* Usage details table */}
+            <table className="data-table" style={{ marginBottom: 16 }}>
+              <thead>
+                <tr>
+                  <th>Modul</th>
+                  <th>Pole</th>
+                  <th style={{ textAlign: "right" }}>Liczba rekordow</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usageData.details.map((d, i) => (
+                  <tr key={i}>
+                    <td style={{ fontSize: 13 }}>{d.table}</td>
+                    <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{d.column}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600 }}>{d.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {/* Reassign target selector */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4, display: "block" }}>
+                Przepnij wszystkie referencje na:
+              </label>
+              <select
+                className="form-control"
+                value={reassignTargetId ?? ""}
+                onChange={e => setReassignTargetId(e.target.value ? Number(e.target.value) : null)}
+              >
+                <option value="">— wybierz docelowa pozycje —</option>
+                {reassignCandidates.map(e => (
+                  <option key={e.id} value={e.id}>{e.label}{e.code ? ` (${e.code})` : ""}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn" onClick={() => { setArchiveTarget(null); setUsageData(null); }}>Anuluj</button>
+              <button
+                className="btn btn-primary"
+                onClick={confirmArchive}
+                disabled={reassigning || !reassignTargetId}
+                title={!reassignTargetId ? "Wybierz docelowa pozycje" : undefined}
+              >
+                {reassigning ? "Przenoszenie..." : `Przepnij (${usageData.total_references}) i archiwizuj`}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
     </div>
   );

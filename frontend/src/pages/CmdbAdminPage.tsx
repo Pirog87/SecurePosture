@@ -63,6 +63,11 @@ export default function CmdbAdminPage() {
   const [editField, setEditField] = useState<CategoryFieldDefinition | null>(null);
   const [fieldSaving, setFieldSaving] = useState(false);
 
+  // ── Relationship type form modal ──
+  const [showRelTypeForm, setShowRelTypeForm] = useState(false);
+  const [editRelType, setEditRelType] = useState<RelationshipType | null>(null);
+  const [relTypeSaving, setRelTypeSaving] = useState(false);
+
   // ── Active admin tab ──
   const [adminTab, setAdminTab] = useState<"fields" | "reltypes">("fields");
 
@@ -88,8 +93,8 @@ export default function CmdbAdminPage() {
 
   useEffect(() => {
     loadTree();
-    api.get<RelationshipType[]>("/api/v1/asset-categories/relationship-types/all").then(setRelTypes).catch(() => {});
-  }, [loadTree]);
+    loadRelTypes();
+  }, [loadTree, loadRelTypes]);
 
   // Load fields when category changes
   useEffect(() => {
@@ -237,6 +242,59 @@ export default function CmdbAdminPage() {
     }
   };
 
+  // ═══════════════════ RELATIONSHIP TYPE CRUD ═══════════════════
+
+  const loadRelTypes = useCallback(() => {
+    api.get<RelationshipType[]>("/api/v1/asset-categories/relationship-types/all?include_inactive=true").then(setRelTypes).catch(() => {});
+  }, []);
+
+  const openAddRelType = () => { setEditRelType(null); setShowRelTypeForm(true); };
+  const openEditRelType = (rt: RelationshipType) => { setEditRelType(rt); setShowRelTypeForm(true); };
+
+  const handleSaveRelType = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setRelTypeSaving(true);
+    const fd = new FormData(e.currentTarget);
+    const body: Record<string, unknown> = {
+      code: fd.get("code") as string,
+      name: fd.get("name") as string,
+      name_reverse: (fd.get("name_reverse") as string) || null,
+      color: (fd.get("color") as string) || null,
+      icon: (fd.get("icon") as string) || null,
+      description: (fd.get("description") as string) || null,
+      sort_order: fd.get("sort_order") ? Number(fd.get("sort_order")) : 0,
+    };
+    try {
+      if (editRelType) {
+        await api.put(`/api/v1/asset-categories/relationship-types/${editRelType.id}`, body);
+      } else {
+        await api.post("/api/v1/asset-categories/relationship-types", body);
+      }
+      setShowRelTypeForm(false);
+      setEditRelType(null);
+      loadRelTypes();
+    } catch (err) {
+      alert("Blad: " + err);
+    } finally {
+      setRelTypeSaving(false);
+    }
+  };
+
+  const handleDeactivateRelType = async (rt: RelationshipType) => {
+    const action = rt.is_active ? "dezaktywowac" : "aktywowac";
+    if (!confirm(`${action} typ relacji "${rt.name}"?`)) return;
+    try {
+      if (rt.is_active) {
+        await api.delete(`/api/v1/asset-categories/relationship-types/${rt.id}`);
+      } else {
+        await api.put(`/api/v1/asset-categories/relationship-types/${rt.id}`, { is_active: true });
+      }
+      loadRelTypes();
+    } catch (err) {
+      alert("Blad: " + err);
+    }
+  };
+
   // ═══════════════════ RENDER ═══════════════════
 
   // Group fields by tab for display
@@ -359,6 +417,10 @@ export default function CmdbAdminPage() {
 
             {adminTab === "reltypes" && (
               <div className="card">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>Typy relacji miedzy aktywami</div>
+                  <button className="btn btn-sm btn-primary" onClick={openAddRelType}>+ Dodaj typ</button>
+                </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                   <thead>
                     <tr style={{ borderBottom: "1px solid var(--border)" }}>
@@ -366,11 +428,13 @@ export default function CmdbAdminPage() {
                       <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500 }}>Nazwa</th>
                       <th style={{ textAlign: "left", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500 }}>Nazwa odwrotna</th>
                       <th style={{ textAlign: "center", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500 }}>Kolor</th>
+                      <th style={{ textAlign: "center", padding: "8px 10px", color: "var(--text-muted)", fontWeight: 500 }}>Aktywny</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px" }}></th>
                     </tr>
                   </thead>
                   <tbody>
                     {relTypes.map(rt => (
-                      <tr key={rt.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                      <tr key={rt.id} style={{ borderBottom: "1px solid var(--border)", opacity: rt.is_active ? 1 : 0.4 }}>
                         <td style={{ padding: "6px 10px", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>{rt.code}</td>
                         <td style={{ padding: "6px 10px" }}>{rt.name}</td>
                         <td style={{ padding: "6px 10px", color: "var(--text-muted)" }}>{rt.name_reverse || "\u2014"}</td>
@@ -378,6 +442,13 @@ export default function CmdbAdminPage() {
                           {rt.color && (
                             <span style={{ display: "inline-block", width: 16, height: 16, borderRadius: "50%", background: rt.color, verticalAlign: "middle" }} />
                           )}
+                        </td>
+                        <td style={{ padding: "6px 10px", textAlign: "center" }}>{rt.is_active ? "✓" : "✗"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>
+                          <button className="btn btn-sm" style={{ fontSize: 11, marginRight: 4 }} onClick={() => openEditRelType(rt)}>Edytuj</button>
+                          <button className="btn btn-sm" style={{ fontSize: 11, color: rt.is_active ? "var(--red)" : "var(--green)" }} onClick={() => handleDeactivateRelType(rt)}>
+                            {rt.is_active ? "Dezaktywuj" : "Aktywuj"}
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -701,6 +772,58 @@ export default function CmdbAdminPage() {
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
             <button type="button" className="btn" onClick={() => { setShowFieldForm(false); setEditField(null); }}>Anuluj</button>
             <button type="submit" className="btn btn-primary" disabled={fieldSaving}>{fieldSaving ? "Zapisywanie..." : editField ? "Zapisz zmiany" : "Dodaj pole"}</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ═══ RELATIONSHIP TYPE FORM MODAL ═══ */}
+      <Modal open={showRelTypeForm} onClose={() => { setShowRelTypeForm(false); setEditRelType(null); }} title={editRelType ? `Edytuj: ${editRelType.name}` : "Nowy typ relacji"}>
+        <form onSubmit={handleSaveRelType}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div className="form-group">
+              <label>Kod (unikalny) *</label>
+              <input name="code" className="form-control" required defaultValue={editRelType?.code ?? ""} placeholder="np. depends_on" pattern="[a-z0-9_]+" title="Tylko male litery, cyfry i podkreslniki" disabled={!!editRelType} />
+            </div>
+            <div className="form-group">
+              <label>Nazwa (np. "Zalezy od") *</label>
+              <input name="name" className="form-control" required defaultValue={editRelType?.name ?? ""} placeholder="np. Zalezy od" />
+            </div>
+            <div className="form-group">
+              <label>Nazwa odwrotna (np. "Jest wymagany przez")</label>
+              <input name="name_reverse" className="form-control" defaultValue={editRelType?.name_reverse ?? ""} placeholder="np. Jest wymagany przez" />
+            </div>
+            <div className="form-group">
+              <label>Kolor</label>
+              <input name="color" className="form-control" defaultValue={editRelType?.color ?? ""} placeholder="#3B82F6" />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 6 }}>
+                {COLOR_PRESETS.slice(0, 12).map(c => (
+                  <span
+                    key={c}
+                    onClick={(e) => {
+                      const input = (e.currentTarget.parentElement?.parentElement?.querySelector('input[name="color"]') as HTMLInputElement);
+                      if (input) input.value = c;
+                    }}
+                    style={{ width: 18, height: 18, borderRadius: 4, background: c, cursor: "pointer", border: "1px solid rgba(255,255,255,0.1)" }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Ikona</label>
+              <input name="icon" className="form-control" defaultValue={editRelType?.icon ?? ""} placeholder="np. ArrowRight" />
+            </div>
+            <div className="form-group">
+              <label>Kolejnosc</label>
+              <input name="sort_order" type="number" className="form-control" defaultValue={editRelType?.sort_order ?? 0} />
+            </div>
+            <div className="form-group">
+              <label>Opis</label>
+              <textarea name="description" className="form-control" rows={2} defaultValue={editRelType?.description ?? ""} />
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+            <button type="button" className="btn" onClick={() => { setShowRelTypeForm(false); setEditRelType(null); }}>Anuluj</button>
+            <button type="submit" className="btn btn-primary" disabled={relTypeSaving}>{relTypeSaving ? "Zapisywanie..." : editRelType ? "Zapisz" : "Utwórz"}</button>
           </div>
         </form>
       </Modal>

@@ -29,6 +29,7 @@ from app.routers.vendor import router as vendor_router
 from app.routers.awareness import router as awareness_router
 from app.routers.security_score import router as score_router
 from app.routers.org_context import router as org_context_router
+from app.routers.report import router as report_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -88,6 +89,7 @@ app.include_router(score_router)
 app.include_router(domain_router)
 app.include_router(audit_router)
 app.include_router(org_context_router)
+app.include_router(report_router)
 
 
 @app.get("/health")

@@ -28,6 +28,7 @@ import AwarenessPage from "./pages/AwarenessPage";
 import SecurityScorePage from "./pages/SecurityScorePage";
 import OrgContextPage from "./pages/OrgContextPage";
 import CmdbAdminPage from "./pages/CmdbAdminPage";
+import ReportsPage from "./pages/ReportsPage";
 
 export default function App() {
   return (
@@ -62,6 +63,7 @@ export default function App() {
           <Route path="catalogs" element={<CatalogsPage />} />
           <Route path="dictionaries" element={<DictionariesPage />} />
           <Route path="actions" element={<ActionsPage />} />
+          <Route path="reports" element={<ReportsPage />} />
           <Route path="audit" element={<AuditPage />} />
         </Route>
       </Routes>

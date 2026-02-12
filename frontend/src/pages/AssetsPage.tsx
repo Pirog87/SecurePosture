@@ -69,6 +69,7 @@ export default function AssetsPage() {
   const [formCustomAttrs, setFormCustomAttrs] = useState<Record<string, unknown>>({});
   const [formFields, setFormFields] = useState<CategoryFieldDefinition[]>([]);
   const [formCategoryId, setFormCategoryId] = useState<number | null>(null);
+  const [editFormTab, setEditFormTab] = useState<"data" | "risks">("data");
 
   // ── Graph modal ──
   const [showGraph, setShowGraph] = useState(false);
@@ -226,6 +227,7 @@ export default function AssetsPage() {
   const openEditForm = async (asset: Asset) => {
     await loadLookups();
     setEditAsset(asset);
+    setEditFormTab("data");
     setFormCategoryId(asset.asset_category_id);
     setFormCustomAttrs(asset.custom_attributes || {});
     if (asset.asset_category_id) {
@@ -809,105 +811,143 @@ export default function AssetsPage() {
       {/* ═══ ADD / EDIT FORM MODAL ═══ */}
       <Modal open={showForm} onClose={() => { setShowForm(false); setEditAsset(null); }} title={editAsset ? `Edytuj aktyw: ${editAsset.name}` : "Dodaj aktyw"} wide>
         {lookups ? (
-          <form onSubmit={handleSubmit}>
-            {/* Core fields */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <div className="form-group" style={{ gridColumn: "span 2" }}>
-                <label>Nazwa aktywa *</label>
-                <input name="name" className="form-control" required defaultValue={editAsset?.name ?? ""} placeholder="np. Serwer bazodanowy DB-01" />
-              </div>
-              <div className="form-group">
-                <label>Kategoria CMDB</label>
-                <select
-                  className="form-control"
-                  value={formCategoryId ?? ""}
-                  onChange={e => handleFormCategoryChange(e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">Wybierz kategorie...</option>
-                  {hierarchicalCategories.map(({ cat, depth }) => (
-                    <option
-                      key={cat.id}
-                      value={cat.id}
-                      disabled={cat.is_abstract}
-                      style={{ paddingLeft: depth * 16 }}
-                    >
-                      {"\u00A0\u00A0".repeat(depth)}{cat.is_abstract ? `── ${cat.name} ──` : `${cat.icon ?? ""} ${cat.name}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Jednostka organizacyjna</label>
-                <OrgUnitTreeSelect
-                  tree={lookups.orgUnits}
-                  value={editAsset?.org_unit_id ?? null}
-                  onChange={id => {
-                    const hidden = document.querySelector<HTMLInputElement>('input[name="org_unit_id"]');
-                    if (hidden) hidden.value = id ? String(id) : "";
-                  }}
-                  placeholder="Wybierz..."
-                  allowClear
-                />
-                <input type="hidden" name="org_unit_id" defaultValue={editAsset?.org_unit_id ?? ""} />
-              </div>
-              <div className="form-group">
-                <label>Nadrzedny aktyw</label>
-                <select name="parent_id" className="form-control" defaultValue={editAsset?.parent_id ?? ""}>
-                  <option value="">Brak (glowny)</option>
-                  {lookups.assets.filter(a => !editAsset || a.id !== editAsset.id).map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Wlasciciel</label>
-                <input name="owner" className="form-control" defaultValue={editAsset?.owner ?? ""} placeholder="np. Jan Kowalski" />
-              </div>
-              <div className="form-group">
-                <label>Lokalizacja</label>
-                <input name="location" className="form-control" defaultValue={editAsset?.location ?? ""} placeholder="np. Serwerownia DC-1" />
-              </div>
-              <div className="form-group">
-                <label>Wrazliwosc</label>
-                <select name="sensitivity_id" className="form-control" defaultValue={editAsset?.sensitivity_id ?? ""}>
-                  <option value="">Wybierz...</option>
-                  {lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
-                </select>
-              </div>
-              <div className="form-group">
-                <label>Krytycznosc</label>
-                <select name="criticality_id" className="form-control" defaultValue={editAsset?.criticality_id ?? ""}>
-                  <option value="">Wybierz...</option>
-                  {lookups.criticalities.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                </select>
-              </div>
-              <div className="form-group" style={{ gridColumn: "span 2" }}>
-                <label>Opis</label>
-                <textarea name="description" className="form-control" rows={2} defaultValue={editAsset?.description ?? ""} />
-              </div>
-            </div>
-
-            {/* Dynamic fields from category */}
-            {formFields.length > 0 && (
-              <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: "var(--text-primary)" }}>
-                  Atrybuty kategorii
-                </div>
-                <DynamicAssetForm
-                  fields={formFields}
-                  values={formCustomAttrs}
-                  onChange={(key, val) => setFormCustomAttrs(prev => ({ ...prev, [key]: val }))}
-                />
+          <div>
+            {/* Tabs header - only when editing existing asset */}
+            {editAsset && (
+              <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "2px solid var(--border)" }}>
+                {([
+                  { key: "data" as const, label: "Dane aktywa" },
+                  { key: "risks" as const, label: "Ryzyka" },
+                ]).map(t => (
+                  <div
+                    key={t.key}
+                    style={{
+                      padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: editFormTab === t.key ? 600 : 400,
+                      color: editFormTab === t.key ? "var(--blue)" : "var(--text-muted)",
+                      borderBottom: editFormTab === t.key ? "2px solid var(--blue)" : "2px solid transparent",
+                      marginBottom: -2, transition: "all 0.2s",
+                    }}
+                    onClick={() => setEditFormTab(t.key)}
+                  >
+                    {t.label}
+                  </div>
+                ))}
               </div>
             )}
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" className="btn" onClick={() => { setShowForm(false); setEditAsset(null); }}>Anuluj</button>
-              <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? "Zapisywanie..." : editAsset ? "Zapisz zmiany" : "Dodaj aktyw"}
-              </button>
-            </div>
-          </form>
+            {/* Tab: Data (form) */}
+            {(editFormTab === "data" || !editAsset) && (
+              <form onSubmit={handleSubmit}>
+                {/* Core fields */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                  <div className="form-group" style={{ gridColumn: "span 2" }}>
+                    <label>Nazwa aktywa *</label>
+                    <input name="name" className="form-control" required defaultValue={editAsset?.name ?? ""} placeholder="np. Serwer bazodanowy DB-01" />
+                  </div>
+                  <div className="form-group">
+                    <label>Kategoria CMDB</label>
+                    <select
+                      className="form-control"
+                      value={formCategoryId ?? ""}
+                      onChange={e => handleFormCategoryChange(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">Wybierz kategorie...</option>
+                      {hierarchicalCategories.map(({ cat, depth }) => (
+                        <option
+                          key={cat.id}
+                          value={cat.id}
+                          disabled={cat.is_abstract}
+                        >
+                          {depth > 0 ? "\u2003".repeat(depth) : ""}{cat.is_abstract ? `▸ ${cat.name}` : `${cat.icon ?? "·"} ${cat.name}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Jednostka organizacyjna</label>
+                    <OrgUnitTreeSelect
+                      tree={lookups.orgUnits}
+                      value={editAsset?.org_unit_id ?? null}
+                      onChange={id => {
+                        const hidden = document.querySelector<HTMLInputElement>('input[name="org_unit_id"]');
+                        if (hidden) hidden.value = id ? String(id) : "";
+                      }}
+                      placeholder="Wybierz..."
+                      allowClear
+                    />
+                    <input type="hidden" name="org_unit_id" defaultValue={editAsset?.org_unit_id ?? ""} />
+                  </div>
+                  <div className="form-group">
+                    <label>Nadrzedny aktyw</label>
+                    <select name="parent_id" className="form-control" defaultValue={editAsset?.parent_id ?? ""}>
+                      <option value="">Brak (glowny)</option>
+                      {lookups.assets.filter(a => !editAsset || a.id !== editAsset.id).map(a => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Wlasciciel</label>
+                    <input name="owner" className="form-control" defaultValue={editAsset?.owner ?? ""} placeholder="np. Jan Kowalski" />
+                  </div>
+                  <div className="form-group">
+                    <label>Lokalizacja</label>
+                    <input name="location" className="form-control" defaultValue={editAsset?.location ?? ""} placeholder="np. Serwerownia DC-1" />
+                  </div>
+                  <div className="form-group">
+                    <label>Wrazliwosc</label>
+                    <select name="sensitivity_id" className="form-control" defaultValue={editAsset?.sensitivity_id ?? ""}>
+                      <option value="">Wybierz...</option>
+                      {lookups.sensitivities.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label>Krytycznosc</label>
+                    <select name="criticality_id" className="form-control" defaultValue={editAsset?.criticality_id ?? ""}>
+                      <option value="">Wybierz...</option>
+                      {lookups.criticalities.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ gridColumn: "span 2" }}>
+                    <label>Opis</label>
+                    <textarea name="description" className="form-control" rows={2} defaultValue={editAsset?.description ?? ""} />
+                  </div>
+                </div>
+
+                {/* Dynamic fields from category */}
+                {formFields.length > 0 && (
+                  <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: "var(--text-primary)" }}>
+                      Atrybuty kategorii
+                    </div>
+                    <DynamicAssetForm
+                      fields={formFields}
+                      values={formCustomAttrs}
+                      onChange={(key, val) => setFormCustomAttrs(prev => ({ ...prev, [key]: val }))}
+                    />
+                  </div>
+                )}
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+                  <button type="button" className="btn" onClick={() => { setShowForm(false); setEditAsset(null); }}>Anuluj</button>
+                  <button type="submit" className="btn btn-primary" disabled={saving}>
+                    {saving ? "Zapisywanie..." : editAsset ? "Zapisz zmiany" : "Dodaj aktyw"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Tab: Risks (only when editing) */}
+            {editAsset && editFormTab === "risks" && (
+              <AssetRisksTab
+                asset={editAsset}
+                orgTree={orgTree}
+                onRiskCountChange={(count) => {
+                  setSelected(prev => prev && prev.id === editAsset.id ? { ...prev, risk_count: count } : prev);
+                }}
+              />
+            )}
+          </div>
         ) : (
           <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Ladowanie danych formularza...</div>
         )}
@@ -1032,8 +1072,6 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
   // Create form state
   const [createSaving, setCreateSaving] = useState(false);
   const [securityAreas, setSecurityAreas] = useState<{ id: number; name: string }[]>([]);
-  const [dictSafeguards, setDictSafeguards] = useState<{ id: number; label: string }[]>([]);
-
   // Load linked risks
   const loadLinkedRisks = useCallback(() => {
     setLoading(true);

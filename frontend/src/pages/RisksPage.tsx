@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
 import type { Risk, Asset, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries, Action } from "../types";
-import { flattenTree, buildPathMap } from "../utils/orgTree";
+import { buildPathMap } from "../utils/orgTree";
 import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
@@ -592,7 +592,6 @@ export default function RisksPage() {
             editRisk={editRisk}
             lookups={lookups}
             setLookups={setLookups}
-            flatUnits={flattenTree(lookups.orgUnits)}
             orgTree={lookups.orgUnits}
             saving={saving}
             onSubmit={handleFormSubmit}
@@ -1467,11 +1466,10 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, orgTree, saving, onSubmit, onCancel }: {
+function RiskFormTabs({ editRisk, lookups, setLookups, orgTree, saving, onSubmit, onCancel }: {
   editRisk: Risk | null;
   lookups: FormLookups;
   setLookups: React.Dispatch<React.SetStateAction<FormLookups | null>>;
-  flatUnits: { id: number; name: string; depth: number }[];
   orgTree: OrgUnitTreeNode[];
   saving: boolean;
   onSubmit: (data: Record<string, unknown>) => void;

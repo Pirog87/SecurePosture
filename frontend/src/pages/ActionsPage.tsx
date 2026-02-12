@@ -635,19 +635,23 @@ function ActionFormTabs({ editAction, lookups, orgTree, saving, setSaving, onSav
       status_id: statusId,
       source_id: sourceId,
       due_date: dueDate || null,
-      implementation_notes: implementationNotes || null,
-      effectiveness_rating: effectivenessRating,
-      effectiveness_notes: effectivenessNotes || null,
       links,
     };
-    if (reason) body.change_reason = reason;
+
+    if (isEdit) {
+      // Update-only fields
+      body.implementation_notes = implementationNotes || null;
+      body.effectiveness_rating = effectivenessRating;
+      body.effectiveness_notes = effectivenessNotes || null;
+      if (reason) body.change_reason = reason;
+    }
 
     try {
       if (isEdit) {
         const updated = await api.put<Action>(`/api/v1/actions/${editAction.id}`, body);
         onSaved(updated);
       } else {
-        await api.post("/api/v1/actions", body);
+        await api.post<Action>("/api/v1/actions", body);
         onSaved();
       }
     } catch (err) {

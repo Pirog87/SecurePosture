@@ -2,28 +2,39 @@
 Actions module — /api/v1/actions
 Track corrective actions, risk treatment plans, CIS remediation tasks.
 """
+import io
 import os
 import uuid
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
-from sqlalchemy import delete, select
+from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
-from app.models.action import Action, ActionAttachment, ActionHistory, ActionLink
+from app.models.action import Action, ActionAttachment, ActionComment, ActionHistory, ActionLink
 from app.models.asset import Asset
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk
 from app.schemas.action import (
     ActionAttachmentOut,
+    ActionBulkResult,
+    ActionBulkUpdate,
     ActionCloseRequest,
+    ActionCommentCreate,
+    ActionCommentOut,
+    ActionCommentUpdate,
     ActionCreate,
     ActionHistoryOut,
     ActionLinkOut,
+    ActionMonthlyTrend,
     ActionOut,
+    ActionPriorityBreakdown,
+    ActionStats,
+    ActionStatusBreakdown,
     ActionUpdate,
 )
 
@@ -69,20 +80,18 @@ async def _entity_extra(s, entity_type: str, entity_id: int) -> dict | None:
         r = await s.get(Risk, entity_id)
         if not r:
             return None
-        # Get other action_links pointing to this risk
         other_links_q = select(ActionLink).where(
             ActionLink.entity_type == "risk",
             ActionLink.entity_id == entity_id,
         )
         other_links = (await s.execute(other_links_q)).scalars().all()
         other_action_ids = [lnk.action_id for lnk in other_links]
-        # Also collect all links FROM this risk (via action_links where this risk is target)
         status_name = await _de_label(s, r.status_id) if hasattr(r, 'status_id') else None
         return {
             "risk_score": r.risk_score,
             "risk_level": r.risk_level,
             "status_name": status_name,
-            "org_unit_name": None,  # Loaded separately if needed
+            "org_unit_name": None,
             "other_action_count": len(other_action_ids),
         }
     return None
@@ -171,6 +180,265 @@ async def _track_change(s, action_id: int, field: str, old_val, new_val, change_
             new_value=str(new_val) if new_val is not None else None,
             change_reason=change_reason,
         ))
+
+
+async def _find_overdue_status_id(s) -> int | None:
+    """Find the dictionary entry for 'overdue' action status."""
+    from app.models.dictionary import DictionaryType
+    q = (
+        select(DictionaryEntry.id)
+        .select_from(DictionaryEntry)
+        .join(DictionaryType, DictionaryEntry.dict_type_id == DictionaryType.id)
+        .where(DictionaryType.code == "action_status")
+        .where(DictionaryEntry.code == "overdue")
+        .limit(1)
+    )
+    return (await s.execute(q)).scalar()
+
+
+# ═══════════════════ STATS / KPI ═══════════════════
+
+@router.get("/stats", response_model=ActionStats, summary="Statystyki KPI dzialan")
+async def action_stats(s: AsyncSession = Depends(get_session)):
+    actions = (await s.execute(select(Action).where(Action.is_active.is_(True)))).scalars().all()
+    now = datetime.utcnow()
+
+    total = len(actions)
+    completed = [a for a in actions if a.completed_at is not None]
+    open_actions = [a for a in actions if a.completed_at is None]
+    overdue = [a for a in open_actions if a.due_date is not None and a.due_date < now]
+
+    # Avg completion time
+    completion_days = []
+    for a in completed:
+        if a.completed_at and a.created_at:
+            delta = (a.completed_at - a.created_at).days
+            completion_days.append(delta)
+    avg_completion = sum(completion_days) / len(completion_days) if completion_days else None
+
+    overdue_pct = (len(overdue) / len(open_actions) * 100) if open_actions else 0.0
+
+    # By status
+    status_counts: dict[str, int] = defaultdict(int)
+    for a in actions:
+        sn = await _de_label(s, a.status_id) or "Brak statusu"
+        status_counts[sn] += 1
+    by_status = [ActionStatusBreakdown(status_name=k, count=v) for k, v in status_counts.items()]
+
+    # By priority
+    priority_counts: dict[str, int] = defaultdict(int)
+    for a in actions:
+        pn = await _de_label(s, a.priority_id) or "Brak priorytetu"
+        priority_counts[pn] += 1
+    by_priority = [ActionPriorityBreakdown(priority_name=k, count=v) for k, v in priority_counts.items()]
+
+    # Monthly trend (last 12 months)
+    monthly: dict[str, dict[str, int]] = {}
+    for i in range(11, -1, -1):
+        d = now - timedelta(days=30 * i)
+        key = d.strftime("%Y-%m")
+        monthly[key] = {"created": 0, "completed": 0}
+    for a in actions:
+        key = a.created_at.strftime("%Y-%m")
+        if key in monthly:
+            monthly[key]["created"] += 1
+        if a.completed_at:
+            ckey = a.completed_at.strftime("%Y-%m")
+            if ckey in monthly:
+                monthly[ckey]["completed"] += 1
+    trend = [ActionMonthlyTrend(month=k, created=v["created"], completed=v["completed"]) for k, v in monthly.items()]
+
+    return ActionStats(
+        total=total,
+        open=len(open_actions),
+        completed=len(completed),
+        overdue=len(overdue),
+        avg_completion_days=round(avg_completion, 1) if avg_completion is not None else None,
+        overdue_pct=round(overdue_pct, 1),
+        by_status=by_status,
+        by_priority=by_priority,
+        monthly_trend=trend,
+    )
+
+
+# ═══════════════════ AUTO-OVERDUE ═══════════════════
+
+@router.post("/auto-overdue", summary="Automatycznie oznacz przeterminowane dzialania")
+async def auto_mark_overdue(s: AsyncSession = Depends(get_session)):
+    """Find actions past due_date without completed_at and update their status to 'overdue'."""
+    overdue_status_id = await _find_overdue_status_id(s)
+
+    now = datetime.utcnow()
+    q = select(Action).where(
+        Action.is_active.is_(True),
+        Action.due_date < now,
+        Action.completed_at.is_(None),
+    )
+    actions = (await s.execute(q)).scalars().all()
+
+    updated_ids = []
+    for a in actions:
+        if overdue_status_id and a.status_id != overdue_status_id:
+            await _track_change(s, a.id, "status_id", a.status_id, overdue_status_id,
+                                change_reason="Automatyczna zmiana — przekroczono termin realizacji")
+            a.status_id = overdue_status_id
+            updated_ids.append(a.id)
+
+    if updated_ids:
+        await s.commit()
+
+    return {"updated_count": len(updated_ids), "action_ids": updated_ids}
+
+
+# ═══════════════════ BULK UPDATE ═══════════════════
+
+@router.post("/bulk", response_model=ActionBulkResult, summary="Masowa zmiana statusu/priorytetu/odpowiedzialnego")
+async def bulk_update_actions(body: ActionBulkUpdate, s: AsyncSession = Depends(get_session)):
+    q = select(Action).where(Action.id.in_(body.action_ids), Action.is_active.is_(True))
+    actions = (await s.execute(q)).scalars().all()
+
+    if not actions:
+        raise HTTPException(404, "Nie znaleziono aktywnych dzialan o podanych ID")
+
+    updated_ids = []
+    for a in actions:
+        changed = False
+        if body.status_id is not None and a.status_id != body.status_id:
+            await _track_change(s, a.id, "status_id", a.status_id, body.status_id, change_reason=body.change_reason)
+            a.status_id = body.status_id
+            changed = True
+        if body.priority_id is not None and a.priority_id != body.priority_id:
+            await _track_change(s, a.id, "priority_id", a.priority_id, body.priority_id, change_reason=body.change_reason)
+            a.priority_id = body.priority_id
+            changed = True
+        if body.responsible is not None and a.responsible != body.responsible:
+            await _track_change(s, a.id, "responsible", a.responsible, body.responsible, change_reason=body.change_reason)
+            a.responsible = body.responsible
+            changed = True
+        if changed:
+            updated_ids.append(a.id)
+
+    if updated_ids:
+        await s.commit()
+
+    return ActionBulkResult(updated_count=len(updated_ids), action_ids=updated_ids)
+
+
+# ═══════════════════ EXPORT XLSX ═══════════════════
+
+@router.get("/export", summary="Eksport dzialan do Excel (z ryzykami i historia)")
+async def export_actions_xlsx(s: AsyncSession = Depends(get_session)):
+    """Generate rich XLSX with 3 sheets: Actions, Linked Risks, History."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    actions = (await s.execute(
+        select(Action).where(Action.is_active.is_(True)).order_by(Action.due_date.asc().nullslast())
+    )).scalars().all()
+
+    wb = openpyxl.Workbook()
+
+    # ── Sheet 1: Actions ──
+    ws1 = wb.active
+    ws1.title = "Dzialania"
+    headers1 = ["ID", "Tytuł", "Opis", "Jednostka org.", "Właściciel", "Odpowiedzialny",
+                 "Priorytet", "Status", "Źródło", "Termin", "Ukończono",
+                 "Skuteczność", "Notatki wdrożenia", "Przeterminowane", "Utworzono"]
+    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True, size=10)
+    for ci, h in enumerate(headers1, 1):
+        cell = ws1.cell(row=1, column=ci, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    now = datetime.utcnow()
+    for ri, a in enumerate(actions, 2):
+        org = await s.get(OrgUnit, a.org_unit_id) if a.org_unit_id else None
+        is_overdue = a.due_date is not None and a.completed_at is None and a.due_date < now
+        ws1.cell(row=ri, column=1, value=f"D-{a.id}")
+        ws1.cell(row=ri, column=2, value=a.title)
+        ws1.cell(row=ri, column=3, value=a.description or "")
+        ws1.cell(row=ri, column=4, value=org.name if org else "")
+        ws1.cell(row=ri, column=5, value=a.owner or "")
+        ws1.cell(row=ri, column=6, value=a.responsible or "")
+        ws1.cell(row=ri, column=7, value=await _de_label(s, a.priority_id) or "")
+        ws1.cell(row=ri, column=8, value=await _de_label(s, a.status_id) or "")
+        ws1.cell(row=ri, column=9, value=await _de_label(s, a.source_id) or "")
+        ws1.cell(row=ri, column=10, value=a.due_date.strftime("%Y-%m-%d") if a.due_date else "")
+        ws1.cell(row=ri, column=11, value=a.completed_at.strftime("%Y-%m-%d") if a.completed_at else "")
+        ws1.cell(row=ri, column=12, value=f"{a.effectiveness_rating}/5" if a.effectiveness_rating else "")
+        ws1.cell(row=ri, column=13, value=a.implementation_notes or "")
+        ws1.cell(row=ri, column=14, value="TAK" if is_overdue else "NIE")
+        ws1.cell(row=ri, column=15, value=a.created_at.strftime("%Y-%m-%d"))
+
+    # Auto-width
+    for col in ws1.columns:
+        max_len = max((len(str(cell.value or "")) for cell in col), default=10)
+        ws1.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+    # ── Sheet 2: Linked Risks ──
+    ws2 = wb.create_sheet("Powiazane ryzyka")
+    headers2 = ["Działanie ID", "Działanie tytuł", "Typ", "Obiekt ID", "Nazwa obiektu", "Score", "Poziom ryzyka"]
+    for ci, h in enumerate(headers2, 1):
+        cell = ws2.cell(row=1, column=ci, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+    row2 = 2
+    for a in actions:
+        links = (await s.execute(select(ActionLink).where(ActionLink.action_id == a.id))).scalars().all()
+        for lnk in links:
+            ename = await _entity_name(s, lnk.entity_type, lnk.entity_id)
+            eextra = await _entity_extra(s, lnk.entity_type, lnk.entity_id)
+            ws2.cell(row=row2, column=1, value=f"D-{a.id}")
+            ws2.cell(row=row2, column=2, value=a.title)
+            ws2.cell(row=row2, column=3, value=lnk.entity_type)
+            ws2.cell(row=row2, column=4, value=lnk.entity_id)
+            ws2.cell(row=row2, column=5, value=ename or "")
+            ws2.cell(row=row2, column=6, value=eextra.get("risk_score") if eextra else None)
+            ws2.cell(row=row2, column=7, value=eextra.get("risk_level") if eextra else "")
+            row2 += 1
+
+    for col in ws2.columns:
+        max_len = max((len(str(cell.value or "")) for cell in col), default=10)
+        ws2.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+    # ── Sheet 3: History ──
+    ws3 = wb.create_sheet("Historia zmian")
+    headers3 = ["Działanie ID", "Pole", "Stara wartość", "Nowa wartość", "Powód", "Data"]
+    for ci, h in enumerate(headers3, 1):
+        cell = ws3.cell(row=1, column=ci, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+    row3 = 2
+    for a in actions:
+        hist = (await s.execute(
+            select(ActionHistory).where(ActionHistory.action_id == a.id).order_by(ActionHistory.created_at.desc())
+        )).scalars().all()
+        for h in hist:
+            ws3.cell(row=row3, column=1, value=f"D-{a.id}")
+            ws3.cell(row=row3, column=2, value=h.field_name)
+            ws3.cell(row=row3, column=3, value=h.old_value or "")
+            ws3.cell(row=row3, column=4, value=h.new_value or "")
+            ws3.cell(row=row3, column=5, value=h.change_reason or "")
+            ws3.cell(row=row3, column=6, value=h.created_at.strftime("%Y-%m-%d %H:%M"))
+            row3 += 1
+
+    for col in ws3.columns:
+        max_len = max((len(str(cell.value or "")) for cell in col), default=10)
+        ws3.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+
+    # Write to buffer
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"dzialania_export_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 # ═══════════════════ LIST ═══════════════════
@@ -377,3 +645,54 @@ async def delete_attachment(
     await s.delete(att)
     await s.commit()
     return {"status": "deleted", "id": attachment_id}
+
+
+# ═══════════════════ COMMENTS ═══════════════════
+
+@router.get("/{action_id}/comments", response_model=list[ActionCommentOut], summary="Lista komentarzy")
+async def list_comments(action_id: int, s: AsyncSession = Depends(get_session)):
+    action = await s.get(Action, action_id)
+    if not action:
+        raise HTTPException(404, "Dzialanie nie istnieje")
+    q = (select(ActionComment)
+         .where(ActionComment.action_id == action_id)
+         .order_by(ActionComment.created_at.asc()))
+    comments = (await s.execute(q)).scalars().all()
+    return [ActionCommentOut.model_validate(c) for c in comments]
+
+
+@router.post("/{action_id}/comments", response_model=ActionCommentOut, status_code=201, summary="Dodaj komentarz")
+async def add_comment(action_id: int, body: ActionCommentCreate, s: AsyncSession = Depends(get_session)):
+    action = await s.get(Action, action_id)
+    if not action:
+        raise HTTPException(404, "Dzialanie nie istnieje")
+    comment = ActionComment(
+        action_id=action_id,
+        author=body.author,
+        content=body.content,
+    )
+    s.add(comment)
+    await s.commit()
+    await s.refresh(comment)
+    return ActionCommentOut.model_validate(comment)
+
+
+@router.put("/{action_id}/comments/{comment_id}", response_model=ActionCommentOut, summary="Edytuj komentarz")
+async def update_comment(action_id: int, comment_id: int, body: ActionCommentUpdate, s: AsyncSession = Depends(get_session)):
+    comment = await s.get(ActionComment, comment_id)
+    if not comment or comment.action_id != action_id:
+        raise HTTPException(404, "Komentarz nie istnieje")
+    comment.content = body.content
+    await s.commit()
+    await s.refresh(comment)
+    return ActionCommentOut.model_validate(comment)
+
+
+@router.delete("/{action_id}/comments/{comment_id}", summary="Usun komentarz")
+async def delete_comment(action_id: int, comment_id: int, s: AsyncSession = Depends(get_session)):
+    comment = await s.get(ActionComment, comment_id)
+    if not comment or comment.action_id != action_id:
+        raise HTTPException(404, "Komentarz nie istnieje")
+    await s.delete(comment)
+    await s.commit()
+    return {"status": "deleted", "id": comment_id}

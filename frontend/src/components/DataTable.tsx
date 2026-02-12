@@ -15,6 +15,8 @@ interface Props<T> {
   data: T[];
   /** Render a custom cell; return undefined to use default format */
   renderCell?: (row: T, colKey: string) => ReactNode | undefined;
+  /** Render extra content before the column name in header (e.g. checkbox) */
+  renderHeaderExtra?: (colKey: string) => ReactNode | undefined;
   /** Row click */
   onRowClick?: (row: T) => void;
   /** Row key extractor */
@@ -52,7 +54,7 @@ interface Props<T> {
 export default function DataTable<T>(props: Props<T>) {
   const {
     columns, visibleColumns, data,
-    renderCell, onRowClick, rowKey, selectedKey, rowBorderColor,
+    renderCell, renderHeaderExtra, onRowClick, rowKey, selectedKey, rowBorderColor,
     sortField, sortDir, onSort,
     columnFilters, onColumnFilter, showFilters,
     page, totalPages, pageSize, totalItems, filteredItems,
@@ -106,6 +108,7 @@ export default function DataTable<T>(props: Props<T>) {
                     return (
                       <th key={col.key} style={{ position: "relative", userSelect: "none", whiteSpace: "nowrap" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          {renderHeaderExtra?.(col.key)}
                           {/* Column name — clicking toggles filter popup */}
                           <span
                             style={{

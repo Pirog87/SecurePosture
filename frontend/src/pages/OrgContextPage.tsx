@@ -432,6 +432,7 @@ export default function OrgContextPage() {
   // Scope form
   const [showScopeForm, setShowScopeForm] = useState(false);
   const [scopeForm, setScopeForm] = useState<Record<string, unknown>>({});
+  const [msEntries, setMsEntries] = useState<{ id: number; label: string }[]>([]);
 
   // Risk appetite form
   const [showRAForm, setShowRAForm] = useState(false);
@@ -459,6 +460,10 @@ export default function OrgContextPage() {
       // Load overviews for all units
       loadAllOverviews(data);
     }).catch(() => {}).finally(() => setTreeLoading(false));
+    // Load management system dictionary for scope dropdown
+    api.get<{ entries: { id: number; label: string }[] }>("/api/v1/dictionaries/by-code/management_system")
+      .then(data => setMsEntries(data.entries ?? []))
+      .catch(() => {});
   }, []);
 
   function flattenIds(nodes: OrgUnitTreeNode[]): number[] {
@@ -1780,8 +1785,11 @@ export default function OrgContextPage() {
     return (
       <Modal open={showScopeForm} onClose={() => setShowScopeForm(false)} title="Zakres Systemu Zarządzania" wide>
         <div style={{ marginBottom: 10 }}>
-          <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Norma ISO (ze słownika management_system)</label>
-          <input className="form-control" placeholder="ID wpisu słownika (np. ISO 27001)" value={(scopeForm.management_system_id as number | null) ?? ""} onChange={e => setScopeForm({ ...scopeForm, management_system_id: e.target.value ? Number(e.target.value) : null })} />
+          <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Norma ISO</label>
+          <select className="form-control" value={(scopeForm.management_system_id as number | null) ?? ""} onChange={e => setScopeForm({ ...scopeForm, management_system_id: e.target.value ? Number(e.target.value) : null })}>
+            <option value="">— wybierz normę —</option>
+            {msEntries.map(e => <option key={e.id} value={e.id}>{e.label}</option>)}
+          </select>
         </div>
         <div>
           <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Oświadczenie o zakresie</label>

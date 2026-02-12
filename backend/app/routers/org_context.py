@@ -857,6 +857,11 @@ async def create_scope(
     s: AsyncSession = Depends(get_session),
 ):
     await _get_org_unit(s, org_unit_id)
+    # Validate management_system_id exists in dictionary
+    if body.management_system_id is not None:
+        entry = await s.get(DictionaryEntry, body.management_system_id)
+        if entry is None:
+            raise HTTPException(400, detail=f"Wpis słownika #{body.management_system_id} nie istnieje")
     # Check if own scope exists for same management_system_id — bump version
     q = select(OrgContextScope).where(
         OrgContextScope.org_unit_id == org_unit_id,

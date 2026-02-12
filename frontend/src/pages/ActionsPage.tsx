@@ -3,6 +3,8 @@ import { api } from "../services/api";
 import type { Action, OrgUnitTreeNode, DictionaryTypeWithEntries, Risk, Asset } from "../types";
 import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
+import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
+import { useColumnVisibility } from "../hooks/useColumnVisibility";
 
 function priorityColor(name: string | null): string {
   if (!name) return "var(--text-muted)";
@@ -38,6 +40,20 @@ interface FormLookups {
   assets: { id: number; label: string }[];
 }
 
+type SortField = "id" | "title" | "org_unit_name" | "priority_name" | "status_name" | "due_date" | "responsible";
+type SortDir = "asc" | "desc";
+
+const COLUMNS: ColumnDef<Action>[] = [
+  { key: "id", header: "ID", format: r => `D-${r.id}` },
+  { key: "title", header: "Tytuł" },
+  { key: "org_unit_name", header: "Pion", format: r => r.org_unit_name ?? "" },
+  { key: "priority_name", header: "Priorytet", format: r => r.priority_name ?? "" },
+  { key: "status_name", header: "Status", format: r => r.status_name ?? "" },
+  { key: "due_date", header: "Termin", format: r => r.due_date?.slice(0, 10) ?? "" },
+  { key: "responsible", header: "Odpowiedzialny", format: r => r.responsible ?? r.owner ?? "" },
+  { key: "links", header: "Powiązania", format: r => String(r.links.length), defaultVisible: true },
+];
+
 export default function ActionsPage() {
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,8 +69,25 @@ export default function ActionsPage() {
   const [filterStatus, setFilterStatus] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
   const [filterOverdue, setFilterOverdue] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
+
+  const [sortField, setSortField] = useState<SortField>("due_date");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const handleSort = (field: SortField) => {
+    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortField(field); setSortDir("asc"); }
+  };
+
+  const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "actions");
 
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
+
+  const SortTh = ({ field, label }: { field: SortField; label: string }) => (
+    <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }} onClick={() => handleSort(field)}>
+      {label}
+      {sortField === field && <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>}
+    </th>
+  );
 
   const loadActions = () => {
     api.get<Action[]>("/api/v1/actions").then(data => {
@@ -193,19 +226,31 @@ export default function ActionsPage() {
     return new Set(collectDescendantIds(orgTree, Number(filterOrg)));
   }, [filterOrg, orgTree]);
 
-  const filtered = actions.filter(a => {
-    if (filterOrgIds && a.org_unit_id && !filterOrgIds.has(a.org_unit_id)) return false;
-    if (filterStatus && a.status_name !== filterStatus) return false;
-    if (filterOverdue && !a.is_overdue) return false;
-    if (filterSearch && !a.title.toLowerCase().includes(filterSearch.toLowerCase())) return false;
-    return true;
-  });
+  const filteredAndSorted = useMemo(() => {
+    let result = actions.filter(a => {
+      if (filterOrgIds && a.org_unit_id && !filterOrgIds.has(a.org_unit_id)) return false;
+      if (filterStatus && a.status_name !== filterStatus) return false;
+      if (filterOverdue && !a.is_overdue) return false;
+      if (filterSearch && !a.title.toLowerCase().includes(filterSearch.toLowerCase())) return false;
+      return true;
+    });
+    result.sort((a, b) => {
+      let cmp = 0;
+      const av = (a as any)[sortField];
+      const bv = (b as any)[sortField];
+      if (av == null && bv == null) cmp = 0;
+      else if (av == null) cmp = 1;
+      else if (bv == null) cmp = -1;
+      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+      else cmp = String(av).localeCompare(String(bv));
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return result;
+  }, [actions, filterOrgIds, filterStatus, filterOverdue, filterSearch, sortField, sortDir]);
 
   const flatFilterUnits = flattenTree(orgTree);
   const uniqueOrgs = flatFilterUnits.map(u => ({ id: u.id, name: u.name, depth: u.depth }));
   const uniqueStatuses = [...new Set(actions.map(a => a.status_name).filter(Boolean))] as string[];
-  const hasFilters = filterOrg || filterStatus || filterSearch || filterOverdue;
-
   // KPIs
   const totalActive = actions.filter(a => a.is_active).length;
   const overdueCount = actions.filter(a => a.is_overdue).length;
@@ -238,42 +283,50 @@ export default function ActionsPage() {
         </div>
       </div>
 
-      <div className="toolbar">
-        <div className="toolbar-left">
-          <input
-            className="form-control"
-            style={{ width: 220 }}
-            placeholder="Szukaj dzialan..."
-            value={filterSearch}
-            onChange={e => setFilterSearch(e.target.value)}
-          />
-          <select className="form-control" style={{ width: 220 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
-            <option value="">Wszystkie piony</option>
-            {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{"  ".repeat(o.depth)}{o.name}</option>)}
-          </select>
-          <select className="form-control" style={{ width: 160 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">Wszystkie statusy</option>
-            {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <label style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-            <input type="checkbox" checked={filterOverdue} onChange={e => setFilterOverdue(e.target.checked)} />
-            Tylko przeterminowane
-          </label>
-          {hasFilters && (
-            <button className="btn btn-sm" onClick={() => { setFilterOrg(""); setFilterStatus(""); setFilterSearch(""); setFilterOverdue(false); }}>Wyczysc filtry</button>
-          )}
+      <TableToolbar
+        filteredCount={filteredAndSorted.length}
+        totalCount={actions.length}
+        unitLabel="działań"
+        search={filterSearch}
+        onSearchChange={setFilterSearch}
+        searchPlaceholder="Szukaj działań..."
+        showFilters={showFilters}
+        onToggleFilters={() => setShowFilters(f => !f)}
+        hasActiveFilters={!!filterOrg || !!filterStatus || filterOverdue}
+        onClearFilters={() => { setFilterOrg(""); setFilterStatus(""); setFilterOverdue(false); }}
+        columns={COLUMNS}
+        visibleColumns={visibleCols}
+        onToggleColumn={toggleCol}
+        data={filteredAndSorted}
+        exportFilename="dzialania"
+        primaryLabel="Dodaj działanie"
+        onPrimaryAction={openAddForm}
+      />
+
+      {showFilters && (
+        <div className="toolbar" style={{ paddingTop: 0, marginTop: -4, gap: 8, flexWrap: "wrap" }}>
+          <div className="toolbar-left" style={{ alignItems: "center" }}>
+            <select className="form-control" style={{ width: 220 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
+              <option value="">Wszystkie piony</option>
+              {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{"  ".repeat(o.depth)}{o.name}</option>)}
+            </select>
+            <select className="form-control" style={{ width: 160 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+              <option value="">Wszystkie statusy</option>
+              {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <label style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+              <input type="checkbox" checked={filterOverdue} onChange={e => setFilterOverdue(e.target.checked)} />
+              Tylko przeterminowane
+            </label>
+          </div>
         </div>
-        <div className="toolbar-right">
-          <span style={{ fontSize: 12, color: "var(--text-muted)", alignSelf: "center" }}>{filtered.length} / {actions.length}</span>
-          <button className="btn btn-primary btn-sm" onClick={openAddForm}>+ Dodaj dzialanie</button>
-        </div>
-      </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 400px" : "1fr", gap: 14 }}>
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie dzialan...</div>
-          ) : filtered.length === 0 ? (
+          ) : filteredAndSorted.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
               {actions.length === 0 ? "Brak dzialan w systemie. Kliknij '+ Dodaj dzialanie' aby rozpoczac." : "Brak dzialan pasujacych do filtrow."}
             </div>
@@ -281,18 +334,18 @@ export default function ActionsPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Tytul</th>
-                  <th>Pion</th>
-                  <th>Priorytet</th>
-                  <th>Status</th>
-                  <th>Termin</th>
-                  <th>Odpowiedzialny</th>
-                  <th>Powiazania</th>
+                  {visibleCols.has("id") && <SortTh field="id" label="ID" />}
+                  {visibleCols.has("title") && <SortTh field="title" label="Tytuł" />}
+                  {visibleCols.has("org_unit_name") && <SortTh field="org_unit_name" label="Pion" />}
+                  {visibleCols.has("priority_name") && <SortTh field="priority_name" label="Priorytet" />}
+                  {visibleCols.has("status_name") && <SortTh field="status_name" label="Status" />}
+                  {visibleCols.has("due_date") && <SortTh field="due_date" label="Termin" />}
+                  {visibleCols.has("responsible") && <SortTh field="responsible" label="Odpowiedzialny" />}
+                  {visibleCols.has("links") && <th>Powiązania</th>}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(a => {
+                {filteredAndSorted.map(a => {
                   const days = daysUntil(a.due_date);
                   const overdue = a.is_overdue;
                   return (
@@ -305,20 +358,20 @@ export default function ActionsPage() {
                       }}
                       onClick={() => setSelected(selected?.id === a.id ? null : a)}
                     >
-                      <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>D-{a.id}</td>
-                      <td style={{ fontWeight: 500, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.title}</td>
-                      <td style={{ fontSize: 11 }}>{(a.org_unit_id ? orgPathMap.get(a.org_unit_id) : null) ?? a.org_unit_name ?? "—"}</td>
-                      <td>
+                      {visibleCols.has("id") && <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>D-{a.id}</td>}
+                      {visibleCols.has("title") && <td style={{ fontWeight: 500, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.title}</td>}
+                      {visibleCols.has("org_unit_name") && <td style={{ fontSize: 11 }}>{(a.org_unit_id ? orgPathMap.get(a.org_unit_id) : null) ?? a.org_unit_name ?? "—"}</td>}
+                      {visibleCols.has("priority_name") && <td>
                         {a.priority_name ? (
                           <span style={{ fontSize: 12, fontWeight: 500, color: priorityColor(a.priority_name) }}>{a.priority_name}</span>
                         ) : "—"}
-                      </td>
-                      <td>
+                      </td>}
+                      {visibleCols.has("status_name") && <td>
                         {a.status_name ? (
                           <span className="score-badge" style={{ background: `${statusColor(a.status_name)}20`, color: statusColor(a.status_name) }}>{a.status_name}</span>
                         ) : "—"}
-                      </td>
-                      <td>
+                      </td>}
+                      {visibleCols.has("due_date") && <td>
                         {a.due_date ? (
                           <span style={{
                             fontSize: 11, fontFamily: "'JetBrains Mono',monospace",
@@ -328,15 +381,15 @@ export default function ActionsPage() {
                             {overdue && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--red)" }}>!</span>}
                           </span>
                         ) : "—"}
-                      </td>
-                      <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{a.responsible ?? a.owner ?? "—"}</td>
-                      <td>
+                      </td>}
+                      {visibleCols.has("responsible") && <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{a.responsible ?? a.owner ?? "—"}</td>}
+                      {visibleCols.has("links") && <td>
                         {a.links.length > 0 ? (
                           <span className="score-badge" style={{ background: "var(--cyan-dim)", color: "var(--cyan)" }}>{a.links.length}</span>
                         ) : (
                           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>0</span>
                         )}
-                      </td>
+                      </td>}
                     </tr>
                   );
                 })}

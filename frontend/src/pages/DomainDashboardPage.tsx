@@ -125,7 +125,7 @@ function DomainCard({ domain: d, navigate }: { domain: DomainScoreCard; navigate
         {/* Score ring */}
         <div style={{ position: "relative", width: 56, height: 56 }}>
           <svg width="56" height="56" viewBox="0 0 56 56">
-            <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="4" />
+            <circle cx="28" cy="28" r="24" fill="none" stroke="var(--bg-subtle)" strokeWidth="4" />
             <circle cx="28" cy="28" r="24" fill="none"
               stroke={gc} strokeWidth="4"
               strokeDasharray={circ} strokeDashoffset={offset}
@@ -192,7 +192,7 @@ function DomainCard({ domain: d, navigate }: { domain: DomainScoreCard; navigate
               <div key={r.id}
                 style={{
                   display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "4px 0", borderBottom: "1px solid rgba(42,53,84,0.15)", fontSize: 11,
+                  padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11,
                   cursor: "pointer",
                 }}
                 onClick={() => navigate(`/risks?highlight=${r.id}`)}

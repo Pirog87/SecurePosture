@@ -669,7 +669,7 @@ export default function AssetsPage() {
                   {selected.description && (
                     <div style={{ marginTop: 8 }}>
                       <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Opis</div>
-                      <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                         {selected.description}
                       </div>
                     </div>
@@ -701,7 +701,7 @@ export default function AssetsPage() {
                         return (
                           <div key={rel.id} style={{
                             padding: "8px 10px", borderRadius: 6,
-                            background: "rgba(255,255,255,0.02)",
+                            background: "var(--bg-inset)",
                             border: "1px solid var(--border)", fontSize: 12,
                           }}>
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
@@ -733,7 +733,7 @@ export default function AssetsPage() {
 
                   {/* Add relation inline form */}
                   {showAddRel ? (
-                    <form onSubmit={handleAddRelation} style={{ marginTop: 10, padding: 10, borderRadius: 6, border: "1px solid var(--border)", background: "rgba(255,255,255,0.02)" }}>
+                    <form onSubmit={handleAddRelation} style={{ marginTop: 10, padding: 10, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg-inset)" }}>
                       <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>Nowa relacja</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                         <select name="relationship_type" className="form-control" required style={{ fontSize: 12 }}>
@@ -792,7 +792,7 @@ export default function AssetsPage() {
                       {assetHistory.map(entry => (
                         <div key={entry.id} style={{
                           padding: "6px 8px", borderRadius: 4, fontSize: 11,
-                          background: "rgba(255,255,255,0.02)",
+                          background: "var(--bg-inset)",
                           borderLeft: "2px solid var(--blue)",
                         }}>
                           <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -814,7 +814,7 @@ export default function AssetsPage() {
               )}
 
               {/* Action buttons */}
-              <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
+              <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
                 <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => openEditForm(selected)}>Edytuj</button>
                 <button className="btn btn-sm" style={{ flex: 1 }} title="Graf relacji" onClick={() => openGraph(selected)}>Graf</button>
                 <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => handleArchive(selected)}>Archiwizuj</button>
@@ -987,7 +987,7 @@ export default function AssetsPage() {
                 <div style={{ fontSize: 12, fontWeight: 600, color: "var(--red)", marginBottom: 6 }}>
                   Bledy ({importResult.total_errors}):
                 </div>
-                <div style={{ maxHeight: 150, overflowY: "auto", fontSize: 11, color: "var(--text-muted)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                <div style={{ maxHeight: 150, overflowY: "auto", fontSize: 11, color: "var(--text-muted)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                   {importResult.errors.map((e, i) => <div key={i}>{e}</div>)}
                   {importResult.total_errors > importResult.errors.length && (
                     <div style={{ fontStyle: "italic" }}>...i {importResult.total_errors - importResult.errors.length} wiecej</div>
@@ -1366,25 +1366,25 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
         {r.consequence_description && (
           <div style={{ marginTop: 10 }}>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Opis konsekwencji</div>
-            <div style={{ fontSize: 11, background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.consequence_description}</div>
+            <div style={{ fontSize: 11, background: "var(--bg-inset)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.consequence_description}</div>
           </div>
         )}
         {r.existing_controls && (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Istniejace zabezpieczenia</div>
-            <div style={{ fontSize: 11, background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.existing_controls}</div>
+            <div style={{ fontSize: 11, background: "var(--bg-inset)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.existing_controls}</div>
           </div>
         )}
         {r.planned_actions && (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Planowane dzialania</div>
-            <div style={{ fontSize: 11, background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.planned_actions}</div>
+            <div style={{ fontSize: 11, background: "var(--bg-inset)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.planned_actions}</div>
           </div>
         )}
         {r.acceptance_justification && (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Uzasadnienie akceptacji</div>
-            <div style={{ fontSize: 11, background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.acceptance_justification}</div>
+            <div style={{ fontSize: 11, background: "var(--bg-inset)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{r.acceptance_justification}</div>
           </div>
         )}
         {r.threats.length > 0 && (
@@ -1434,7 +1434,7 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
               {linkedRisks.map(risk => (
                 <div key={risk.id} style={{
                   padding: "8px 10px", borderRadius: 6, cursor: "pointer",
-                  background: "rgba(255,255,255,0.02)",
+                  background: "var(--bg-inset)",
                   border: "1px solid var(--border)", fontSize: 12, transition: "border-color 0.2s",
                 }}
                   onClick={() => setPreviewRisk(risk)}
@@ -1536,7 +1536,7 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
                   key={risk.id}
                   style={{
                     padding: "8px 10px", borderRadius: 6, cursor: "pointer",
-                    background: "rgba(255,255,255,0.02)",
+                    background: "var(--bg-inset)",
                     border: "1px solid var(--border)", fontSize: 12,
                     transition: "border-color 0.2s",
                   }}
@@ -1871,7 +1871,7 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
                       {actionResults.map(a => (
                         <div key={a.id} style={{
                           padding: "7px 10px", cursor: "pointer", fontSize: 11,
-                          borderBottom: "1px solid rgba(42,53,84,0.12)",
+                          borderBottom: "1px solid var(--border)",
                           opacity: linkedActionIds.includes(a.id) ? 0.4 : 1,
                         }}
                           onClick={() => !linkedActionIds.includes(a.id) && linkActionToRisk(a)}

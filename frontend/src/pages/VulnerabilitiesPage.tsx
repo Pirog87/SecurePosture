@@ -315,11 +315,11 @@ export default function VulnerabilitiesPage() {
               {selected.description && (
                 <>
                   <SectionHeader number={"\u2463"} label="Opis" />
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>{selected.description}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>{selected.description}</div>
                 </>
               )}
             </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
               <button className="btn btn-sm" style={{ flex: 1, color: "var(--red)" }} onClick={() => { handleArchive(selected.id); setSelected(null); }}>Archiwizuj</button>
             </div>
           </div>

@@ -204,7 +204,7 @@ export default function CisAssessPage() {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-            <div style={{ textAlign: "center", padding: "8px 4px", background: "rgba(255,255,255,0.02)", borderRadius: 8 }}>
+            <div style={{ textAlign: "center", padding: "8px 4px", background: "var(--bg-inset)", borderRadius: 8 }}>
               <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: dimAvgColor(summary.overallAvg) }}>
                 {summary.overallAvg > 0 ? summary.overallAvg.toFixed(2) : "—"}
               </div>
@@ -268,7 +268,7 @@ export default function CisAssessPage() {
                       <div key={sc.id} style={{
                         display: "grid", gridTemplateColumns: "60px 1fr repeat(4, 110px)",
                         gap: 8, alignItems: "center", padding: "8px 0",
-                        borderBottom: "1px solid rgba(42,53,84,0.25)", fontSize: 12,
+                        borderBottom: "1px solid var(--border)", fontSize: 12,
                       }}>
                         <div style={{ fontFamily: "'JetBrains Mono',monospace", color: "var(--text-muted)", fontSize: 11 }}>
                           {sc.sub_id}

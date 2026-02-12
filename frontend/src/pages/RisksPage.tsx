@@ -129,12 +129,33 @@ export default function RisksPage() {
 
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "risks");
 
+  /* ── Pre-filter by org_unit_id from URL (e.g. from dashboard drill-down) ── */
+  const urlOrgUnitId = searchParams.get("org_unit_id");
+  const filteredByOrg = useMemo(() => {
+    if (!urlOrgUnitId) return risks;
+    return risks.filter(r => r.org_unit_id === Number(urlOrgUnitId));
+  }, [risks, urlOrgUnitId]);
+
   const table = useTableFeatures<Risk>({
-    data: risks,
+    data: filteredByOrg,
     storageKey: "risks",
     defaultSort: "risk_score",
     defaultSortDir: "desc",
   });
+
+  /* ── Apply URL filter params (level, impact, prob) as column filters ── */
+  const [urlFiltersApplied, setUrlFiltersApplied] = useState(false);
+  useEffect(() => {
+    if (urlFiltersApplied || risks.length === 0) return;
+    const level = searchParams.get("level");
+    const impact = searchParams.get("impact");
+    const prob = searchParams.get("prob");
+    if (level) table.setColumnFilter("risk_level", level);
+    if (impact) table.setColumnFilter("impact_level", impact);
+    if (prob) table.setColumnFilter("probability_level", prob);
+    if (level || impact || prob) setShowFilters(true);
+    setUrlFiltersApplied(true);
+  }, [risks, urlFiltersApplied]);
 
   const loadLookups = async (): Promise<FormLookups> => {
     if (lookups) return lookups;
@@ -265,6 +286,23 @@ export default function RisksPage() {
           <pre style={{ margin: "8px 0 0", fontSize: 12, color: "#ff6b6b", whiteSpace: "pre-wrap" }}>{error}</pre>
         </div>
       )}
+      {/* URL filter indicator */}
+      {(searchParams.get("level") || searchParams.get("impact") || searchParams.get("prob") || urlOrgUnitId) && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", marginBottom: 12, borderRadius: 8,
+          background: "var(--blue-dim)", border: "1px solid rgba(59,130,246,0.25)", fontSize: 12, color: "var(--blue)",
+        }}>
+          <span style={{ fontWeight: 600 }}>Widok filtrowany z dashboardu:</span>
+          {searchParams.get("level") && <span className="score-badge" style={{ background: "var(--bg-card)", fontSize: 11 }}>Poziom: {searchParams.get("level")}</span>}
+          {searchParams.get("impact") && <span className="score-badge" style={{ background: "var(--bg-card)", fontSize: 11 }}>Wpływ: {searchParams.get("impact")}</span>}
+          {searchParams.get("prob") && <span className="score-badge" style={{ background: "var(--bg-card)", fontSize: 11 }}>Prawd.: {searchParams.get("prob")}</span>}
+          {urlOrgUnitId && <span className="score-badge" style={{ background: "var(--bg-card)", fontSize: 11 }}>Pion ID: {urlOrgUnitId}</span>}
+          <button className="btn btn-sm" style={{ marginLeft: "auto", padding: "3px 10px" }}
+            onClick={() => { window.location.href = "/risks"; }}>
+            Pokaż wszystkie
+          </button>
+        </div>
+      )}
       {/* ─── KPI Stats Cards ─── */}
       <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
@@ -364,7 +402,7 @@ export default function RisksPage() {
               {selected.risk_source && (
                 <div style={{ marginTop: 4 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Zrodlo ryzyka</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                     {selected.risk_source}
                   </div>
                 </div>
@@ -414,7 +452,7 @@ export default function RisksPage() {
               {selected.existing_controls && (
                 <div style={{ marginTop: 4 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Istniejace kontrole</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                     {selected.existing_controls}
                   </div>
                 </div>
@@ -422,7 +460,7 @@ export default function RisksPage() {
               {selected.consequence_description && (
                 <div style={{ marginTop: 4 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Opis konsekwencji</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                     {selected.consequence_description}
                   </div>
                 </div>
@@ -443,7 +481,7 @@ export default function RisksPage() {
               {selected.treatment_plan && (
                 <div style={{ marginTop: 4 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Plan postepowania</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                     {selected.treatment_plan}
                   </div>
                 </div>
@@ -464,7 +502,7 @@ export default function RisksPage() {
               {selected.treatment_resources && (
                 <div style={{ marginTop: 4 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Zasoby</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                     {selected.treatment_resources}
                   </div>
                 </div>
@@ -532,7 +570,7 @@ export default function RisksPage() {
               {selected.planned_actions && (
                 <div style={{ marginTop: 8 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Planowane dzialania</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                     {selected.planned_actions}
                   </div>
                 </div>
@@ -545,8 +583,8 @@ export default function RisksPage() {
                     <div key={a.action_id} style={{
                       display: "flex", justifyContent: "space-between", alignItems: "center",
                       padding: "6px 8px", borderRadius: 6, marginBottom: 4,
-                      background: a.is_overdue ? "rgba(239,68,68,0.06)" : "rgba(255,255,255,0.02)",
-                      border: a.is_overdue ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(42,53,84,0.15)",
+                      background: a.is_overdue ? "rgba(239,68,68,0.06)" : "var(--bg-inset)",
+                      border: a.is_overdue ? "1px solid rgba(239,68,68,0.2)" : "1px solid var(--border)",
                     }}>
                       <div>
                         <div style={{ fontSize: 12, fontWeight: 500 }}>{a.title}</div>
@@ -567,7 +605,7 @@ export default function RisksPage() {
             </div>
 
             {/* Actions */}
-            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12, flexWrap: "wrap" }}>
               <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => openEditForm(selected)}>Edytuj</button>
               {!selected.accepted_by && (
                 <button
@@ -677,7 +715,7 @@ function PlannedSafeguardPicker({ lookups, setLookups, assetId, plannedSafeguard
               marginTop: 2,
             }}>
               {filtered.map(s => (
-                <div key={s.id} style={{ padding: "7px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid rgba(42,53,84,0.12)" }}
+                <div key={s.id} style={{ padding: "7px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--border)" }}
                   onClick={() => { setPlannedSafeguardId(s.id); setSearch(""); }}
                   onMouseEnter={e => (e.currentTarget.style.background = "rgba(34,197,94,0.08)")}
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
@@ -855,7 +893,7 @@ function ActionSearchWithCreate({ riskId, existingLinks, lookups, orgTree, strat
                 {results.map(a => (
                   <div key={a.id} style={{
                     padding: "8px 12px", cursor: "pointer", fontSize: 12,
-                    borderBottom: "1px solid rgba(42,53,84,0.15)",
+                    borderBottom: "1px solid var(--border)",
                     opacity: linked.some(l => l.action_id === a.id) ? 0.4 : 1,
                   }}
                     onClick={() => linkAction(a)}
@@ -1020,7 +1058,7 @@ function TagMultiSelect<T extends { id: number; name: string }>({ label, items, 
             {filtered.map(item => (
               <div key={item.id} style={{
                 padding: "7px 12px", cursor: "pointer", fontSize: 12,
-                borderBottom: "1px solid rgba(42,53,84,0.12)",
+                borderBottom: "1px solid var(--border)",
               }}
                 onClick={() => { onChange([...selectedIds, item.id]); setSearch(""); }}
                 onMouseEnter={e => (e.currentTarget.style.background = color + "12")}
@@ -1325,7 +1363,7 @@ function AssetTab({ assetId, assetName, lookups, orgTree, onSelectAsset, onClear
                   {filtered.map(a => (
                     <div key={a.id} style={{
                       padding: "8px 14px", cursor: "pointer", fontSize: 12,
-                      borderBottom: "1px solid rgba(42,53,84,0.15)",
+                      borderBottom: "1px solid var(--border)",
                       transition: "background 0.1s",
                     }}
                       onClick={() => { onSelectAsset(a); setSearch(""); }}
@@ -1364,7 +1402,7 @@ function AssetTab({ assetId, assetName, lookups, orgTree, onSelectAsset, onClear
           )}
 
           {!showNewForm && !assetName && (
-            <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "rgba(255,255,255,0.02)", borderRadius: 8, border: "1px dashed var(--border)" }}>
+            <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "var(--bg-inset)", borderRadius: 8, border: "1px dashed var(--border)" }}>
               Wyszukaj i wybierz aktywo z rejestru lub dodaj nowe
             </div>
           )}

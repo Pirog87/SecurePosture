@@ -831,7 +831,7 @@ export default function AssetGraphPage() {
                   display: "flex", gap: 10, flexWrap: "wrap",
                   padding: "6px 10px", borderRadius: 6,
                   background: "rgba(6,10,20,0.85)", backdropFilter: "blur(4px)",
-                  border: "1px solid rgba(42,53,84,0.3)",
+                  border: "1px solid var(--border)",
                 }}>
                   {REL_TYPES.map((r) => (
                     <span key={r.value} style={{ fontSize: 10, display: "flex", alignItems: "center", gap: 4 }}>
@@ -846,7 +846,7 @@ export default function AssetGraphPage() {
                   position: "absolute", top: 10, right: 10, zIndex: 2,
                   display: "flex", flexDirection: "column", gap: 4,
                   background: "rgba(6,10,20,0.85)", backdropFilter: "blur(4px)",
-                  border: "1px solid rgba(42,53,84,0.3)", borderRadius: 8, padding: 4,
+                  border: "1px solid var(--border)", borderRadius: 8, padding: 4,
                 }}>
                   <button className="btn btn-sm" onClick={handleZoomIn} style={{ padding: "4px 8px", fontSize: 14, lineHeight: 1 }} title="Przybliż">+</button>
                   <button className="btn btn-sm" onClick={handleZoomOut} style={{ padding: "4px 8px", fontSize: 14, lineHeight: 1 }} title="Oddal">-</button>
@@ -916,7 +916,7 @@ export default function AssetGraphPage() {
                       : graph.nodes.find((n) => n.id === e.source);
                     const direction = e.source === selectedNode.id ? "\u2192" : "\u2190";
                     return (
-                      <div key={e.id} style={{ fontSize: 11, padding: "4px 0", borderBottom: "1px solid rgba(42,53,84,0.15)" }}>
+                      <div key={e.id} style={{ fontSize: 11, padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
                         <span style={{ color: relColor(e.type) }}>{relLabel(e.type)}</span>
                         {" "}<span style={{ color: "var(--text-muted)" }}>{direction}</span>
                         {" "}<span style={{ color: "var(--text-primary)" }}>{other?.name ?? "?"}</span>

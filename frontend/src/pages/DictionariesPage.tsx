@@ -243,11 +243,9 @@ export default function DictionariesPage() {
                 Kod: <code style={{ color: "var(--blue)" }}>{openDict.code}</code> · {activeEntries.length} aktywnych
                 {archivedEntries.length > 0 && <span> · {archivedEntries.length} archiwalnych</span>}
               </span>
-              {!openDict.is_system && (
-                <button className="btn btn-primary btn-sm" onClick={() => { setShowAddEntry(!showAddEntry); setEditEntry(null); }}>
-                  {showAddEntry ? "Anuluj" : "+ Dodaj pozycje"}
-                </button>
-              )}
+              <button className="btn btn-primary btn-sm" onClick={() => { setShowAddEntry(!showAddEntry); setEditEntry(null); }}>
+                {showAddEntry ? "Anuluj" : "+ Dodaj pozycje"}
+              </button>
             </div>
 
             {/* Add Form */}
@@ -307,12 +305,10 @@ export default function DictionariesPage() {
                         <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Aktywny</span>
                       </td>
                       <td>
-                        {!openDict.is_system && (
-                          <div style={{ display: "flex", gap: 4 }}>
-                            <button className="btn btn-sm" onClick={() => { setEditEntry(entry); setShowAddEntry(false); }}>Edytuj</button>
-                            <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => startArchive(entry)}>Archiwizuj</button>
-                          </div>
-                        )}
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button className="btn btn-sm" onClick={() => { setEditEntry(entry); setShowAddEntry(false); }}>Edytuj</button>
+                          <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => startArchive(entry)}>Archiwizuj</button>
+                        </div>
                       </td>
                     </tr>
                   ))

@@ -6,6 +6,9 @@ import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
+import { useTableFeatures } from "../hooks/useTableFeatures";
+import DataTable from "../components/DataTable";
+import StatsCards, { type StatCard } from "../components/StatsCards";
 
 /* ─── Types ─── */
 interface ExceptionRecord {
@@ -82,9 +85,7 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
   );
 }
 
-/* ─── Sort/Filter types ─── */
-type SortField = "ref_id" | "title" | "policy_title" | "org_unit_name" | "risk_score" | "status_name" | "expiry_date";
-type SortDir = "asc" | "desc";
+/* ─── Sort types (removed — handled by useTableFeatures) ─── */
 
 /* ─── Error style for invalid fields ─── */
 const errorBorder = "1px solid var(--red)";
@@ -102,6 +103,16 @@ export default function ExceptionsPage() {
     { key: "risk_score", header: "Ryzyko odst.", format: r => r.risk_score != null ? r.risk_score.toFixed(1) : "" },
     { key: "status_name", header: "Status", format: r => r.status_name ?? "" },
     { key: "expiry_date", header: "Wygasa" },
+    { key: "category_name", header: "Kategoria", format: r => r.category_name ?? "", defaultVisible: false },
+    { key: "asset_name", header: "Aktywo", format: r => r.asset_name ?? "", defaultVisible: false },
+    { key: "requested_by", header: "Wnioskujący", format: r => r.requested_by ?? "", defaultVisible: false },
+    { key: "approved_by", header: "Zatwierdzający", format: r => r.approved_by ?? "", defaultVisible: false },
+    { key: "risk_level_name", header: "Poziom ryzyka", format: r => r.risk_level_name ?? "", defaultVisible: false },
+    { key: "compensating_controls", header: "Kontrole kompensujące", format: r => r.compensating_controls ?? "", defaultVisible: false },
+    { key: "start_date", header: "Data rozpoczęcia", format: r => r.start_date ?? "", defaultVisible: false },
+    { key: "review_date", header: "Data przeglądu", format: r => r.review_date ?? "", defaultVisible: false },
+    { key: "closed_at", header: "Zamknięto", format: r => r.closed_at ?? "", defaultVisible: false },
+    { key: "created_at", header: "Utworzono", format: r => r.created_at?.slice(0, 10) ?? "", defaultVisible: false },
   ];
 
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "exceptions");
@@ -115,17 +126,14 @@ export default function ExceptionsPage() {
   const [editingException, setEditingException] = useState<ExceptionRecord | null>(null);
 
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
-
-  // Sort & filter state
-  const [sortField, setSortField] = useState<SortField>("expiry_date");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const [filterRef, setFilterRef] = useState("");
-  const [filterTitle, setFilterTitle] = useState("");
-  const [filterPolicy, setFilterPolicy] = useState("");
-  const [filterOrgUnit, setFilterOrgUnit] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
   const [showFilters, setShowFilters] = useState(false);
-  const [searchText, setSearchText] = useState("");
+
+  const table = useTableFeatures<ExceptionRecord>({
+    data: exceptions,
+    storageKey: "exceptions",
+    defaultSort: "expiry_date",
+    defaultSortDir: "asc",
+  });
 
   const load = () => {
     api.get<ExceptionRecord[]>("/api/v1/exceptions").then(setExceptions).catch(() => {}).finally(() => setLoading(false));
@@ -190,204 +198,108 @@ export default function ExceptionsPage() {
   const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
   const orgTreeForSelect = lookups?.orgUnits ?? [];
 
-  // Sort & filter
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir(d => d === "asc" ? "desc" : "asc");
-    } else {
-      setSortField(field);
-      setSortDir("asc");
-    }
-  };
-
-  const filteredAndSorted = useMemo(() => {
-    let result = [...exceptions];
-
-    // Apply filters
-    if (filterRef) result = result.filter(e => (e.ref_id ?? "").toLowerCase().includes(filterRef.toLowerCase()));
-    if (filterTitle) result = result.filter(e => e.title.toLowerCase().includes(filterTitle.toLowerCase()));
-    if (filterPolicy) result = result.filter(e => (e.policy_title ?? "").toLowerCase().includes(filterPolicy.toLowerCase()));
-    if (filterOrgUnit) result = result.filter(e => {
-      const path = orgPathMap.get(e.org_unit_id) ?? e.org_unit_name ?? "";
-      return path.toLowerCase().includes(filterOrgUnit.toLowerCase());
-    });
-    if (filterStatus) result = result.filter(e => (e.status_name ?? "").toLowerCase().includes(filterStatus.toLowerCase()));
-
-    // Apply search
-    if (searchText) {
-      const q = searchText.toLowerCase();
-      result = result.filter(e =>
-        e.title.toLowerCase().includes(q) ||
-        (e.ref_id ?? "").toLowerCase().includes(q) ||
-        (e.policy_title ?? "").toLowerCase().includes(q)
-      );
-    }
-
-    // Apply sort
-    result.sort((a, b) => {
-      let cmp = 0;
-      const av = a[sortField];
-      const bv = b[sortField];
-      if (av == null && bv == null) cmp = 0;
-      else if (av == null) cmp = 1;
-      else if (bv == null) cmp = -1;
-      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
-      else cmp = String(av).localeCompare(String(bv));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-
-    return result;
-  }, [exceptions, filterRef, filterTitle, filterPolicy, filterOrgUnit, filterStatus, searchText, sortField, sortDir, orgPathMap]);
-
-  const SortableHeader = ({ field, label }: { field: SortField; label: string }) => (
-    <th
-      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
-      onClick={() => handleSort(field)}
-    >
-      {label}
-      {sortField === field && (
-        <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>
-          {sortDir === "asc" ? "\u25B2" : "\u25BC"}
-        </span>
-      )}
-    </th>
-  );
+  /* ── Dynamic stats ── */
+  const isFiltered = table.filteredCount !== table.totalCount;
+  const statsCards: StatCard[] = useMemo(() => {
+    const src = table.filtered;
+    const allActive = exceptions.filter(e => e.is_active).length;
+    const filteredActive = src.filter(e => e.is_active).length;
+    const expiringSoon = src.filter(e => isExpiringSoon(e.expiry_date)).length;
+    const expiringSoonTotal = exceptions.filter(e => isExpiringSoon(e.expiry_date)).length;
+    const avgRiskF = src.length > 0 ? src.reduce((s, r) => s + (r.risk_score ?? 0), 0) / src.length : 0;
+    const avgRiskT = exceptions.length > 0 ? exceptions.reduce((s, r) => s + (r.risk_score ?? 0), 0) / exceptions.length : 0;
+    return [
+      { label: "Wszystkich wyjątków", value: src.length, total: exceptions.length, color: "var(--blue)" },
+      { label: "Aktywnych", value: filteredActive, total: allActive, color: "var(--green)" },
+      { label: "Wygasających", value: expiringSoon, total: expiringSoonTotal, color: "var(--orange)" },
+      { label: "Śr. ryzyko odst.", value: avgRiskF.toFixed(1), total: avgRiskT.toFixed(1), color: "var(--red)" },
+    ];
+  }, [table.filtered, exceptions]);
 
   return (
     <div>
-      {/* KPI Stats */}
-      <div className="grid-4" style={{ marginBottom: 16 }}>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>{exceptions.length}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Wszystkich wyjątków</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--red)" }}>{exceptions.filter(e => isExpired(e.expiry_date)).length}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Wygasłych</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--orange)" }}>{exceptions.filter(e => isExpiringSoon(e.expiry_date)).length}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Do reoceny (30d)</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>
-            {exceptions.filter(e => e.risk_score != null && e.risk_score >= 221).length}
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Wysokie ryzyko</div>
-        </div>
-      </div>
+      {/* ─── KPI Stats Cards ─── */}
+      <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
       {/* ─── Toolbar ─── */}
       <TableToolbar
-        filteredCount={filteredAndSorted.length}
-        totalCount={exceptions.length}
+        filteredCount={table.filteredCount}
+        totalCount={table.totalCount}
         unitLabel="wyjątków"
-        search={searchText}
-        onSearchChange={setSearchText}
+        search={table.search}
+        onSearchChange={table.setSearch}
         searchPlaceholder="Szukaj wyjątków..."
         showFilters={showFilters}
         onToggleFilters={() => setShowFilters(f => !f)}
-        hasActiveFilters={!!(filterRef || filterTitle || filterPolicy || filterOrgUnit || filterStatus)}
-        onClearFilters={() => { setFilterRef(""); setFilterTitle(""); setFilterPolicy(""); setFilterOrgUnit(""); setFilterStatus(""); }}
+        hasActiveFilters={table.hasActiveFilters}
+        onClearFilters={table.clearAllFilters}
         columns={COLUMNS}
         visibleColumns={visibleCols}
         onToggleColumn={toggleCol}
-        data={filteredAndSorted}
+        data={table.filtered}
         exportFilename="wyjatki"
         primaryLabel="Nowy wyjątek"
         onPrimaryAction={openAddForm}
       />
 
-      {/* ─── Filter row ─── */}
-      {showFilters && (
-        <div className="card" style={{ padding: "10px 14px", marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <input className="form-control" style={{ width: 100, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Ref..." value={filterRef} onChange={e => setFilterRef(e.target.value)} />
-          <input className="form-control" style={{ width: 160, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Tytul..." value={filterTitle} onChange={e => setFilterTitle(e.target.value)} />
-          <input className="form-control" style={{ width: 140, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Polityka..." value={filterPolicy} onChange={e => setFilterPolicy(e.target.value)} />
-          <input className="form-control" style={{ width: 140, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Pion..." value={filterOrgUnit} onChange={e => setFilterOrgUnit(e.target.value)} />
-          <input className="form-control" style={{ width: 120, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Status..." value={filterStatus} onChange={e => setFilterStatus(e.target.value)} />
-          {(filterRef || filterTitle || filterPolicy || filterOrgUnit || filterStatus) && (
-            <button className="btn btn-sm" style={{ fontSize: 11 }}
-              onClick={() => { setFilterRef(""); setFilterTitle(""); setFilterPolicy(""); setFilterOrgUnit(""); setFilterStatus(""); }}>
-              Wyczysc
-            </button>
-          )}
-        </div>
-      )}
-
       {/* ─── Main grid ─── */}
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 14 }}>
         {/* ─── Table ─── */}
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie...</div>
-          ) : filteredAndSorted.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Brak wyjatkow w systemie.</div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {visibleCols.has("ref_id") && <SortableHeader field="ref_id" label="Ref" />}
-                  {visibleCols.has("title") && <SortableHeader field="title" label="Tytul" />}
-                  {visibleCols.has("policy_title") && <SortableHeader field="policy_title" label="Polityka" />}
-                  {visibleCols.has("org_unit_name") && <SortableHeader field="org_unit_name" label="Pion" />}
-                  {visibleCols.has("risk_score") && <SortableHeader field="risk_score" label="Ryzyko odst." />}
-                  {visibleCols.has("status_name") && <SortableHeader field="status_name" label="Status" />}
-                  {visibleCols.has("expiry_date") && <SortableHeader field="expiry_date" label="Wygasa" />}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAndSorted.map(ex => {
-                  const rs = ex.risk_score ?? 0;
-                  return (
-                    <tr
-                      key={ex.id}
-                      style={{
-                        borderLeft: ex.risk_score != null ? `3px solid ${riskColor(rs)}` : undefined,
-                        cursor: "pointer",
-                        background: selected?.id === ex.id ? "var(--bg-card-hover)" : undefined,
-                      }}
-                      onClick={() => setSelected(selected?.id === ex.id ? null : ex)}
-                    >
-                      {visibleCols.has("ref_id") && <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{ex.ref_id}</td>}
-                      {visibleCols.has("title") && <td style={{ fontWeight: 500 }}>{ex.title}</td>}
-                      {visibleCols.has("policy_title") && <td style={{ fontSize: 11 }}>{ex.policy_title ?? "\u2014"}</td>}
-                      {visibleCols.has("org_unit_name") && <td style={{ fontSize: 11 }}>{orgPathMap.get(ex.org_unit_id) ?? ex.org_unit_name}</td>}
-                      {visibleCols.has("risk_score") && <td>
-                        {ex.risk_score != null ? (
-                          <span className="score-badge" style={{ background: riskBg(rs), color: riskColor(rs) }}>
-                            {rs.toFixed(1)} {riskLabel(rs)}
-                          </span>
-                        ) : (
-                          <span style={{ color: "var(--text-muted)" }}>{ex.risk_level_name ?? "\u2014"}</span>
-                        )}
-                      </td>}
-                      {visibleCols.has("status_name") && <td>
-                        <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>
-                          {ex.status_name ?? "\u2014"}
-                        </span>
-                      </td>}
-                      {visibleCols.has("expiry_date") && <td style={{
-                        color: isExpired(ex.expiry_date) ? "var(--red)" : isExpiringSoon(ex.expiry_date) ? "var(--orange)" : undefined,
-                        fontWeight: isExpired(ex.expiry_date) || isExpiringSoon(ex.expiry_date) ? 600 : undefined,
-                        fontSize: 12,
-                      }}>
-                        {ex.expiry_date}
-                        {isExpired(ex.expiry_date) && " (WYGASLY)"}
-                        {isExpiringSoon(ex.expiry_date) && " (reocena)"}
-                      </td>}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <DataTable<ExceptionRecord>
+          columns={COLUMNS}
+          visibleColumns={visibleCols}
+          data={table.pageData}
+          rowKey={r => r.id}
+          selectedKey={selected?.id ?? null}
+          onRowClick={r => setSelected(selected?.id === r.id ? null : r)}
+          rowBorderColor={r => r.risk_score != null ? riskColor(r.risk_score) : undefined}
+          sortField={table.sortField}
+          sortDir={table.sortDir}
+          onSort={table.toggleSort}
+          columnFilters={table.columnFilters}
+          onColumnFilter={table.setColumnFilter}
+          showFilters={showFilters}
+          page={table.page}
+          totalPages={table.totalPages}
+          pageSize={table.pageSize}
+          totalItems={table.totalCount}
+          filteredItems={table.filteredCount}
+          onPageChange={table.setPage}
+          onPageSizeChange={table.setPageSize}
+          loading={loading}
+          emptyMessage="Brak wyjatkow w systemie."
+          emptyFilteredMessage="Brak wyjatkow pasujących do filtrów."
+          renderCell={(ex, key) => {
+            if (key === "ref_id") return <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{ex.ref_id}</span>;
+            if (key === "title") return <span style={{ fontWeight: 500 }}>{ex.title}</span>;
+            if (key === "policy_title") return <span style={{ fontSize: 11 }}>{ex.policy_title ?? "\u2014"}</span>;
+            if (key === "org_unit_name") return <span style={{ fontSize: 11 }}>{orgPathMap.get(ex.org_unit_id) ?? ex.org_unit_name}</span>;
+            if (key === "risk_score") return ex.risk_score != null ? (
+              <span className="score-badge" style={{ background: riskBg(ex.risk_score), color: riskColor(ex.risk_score) }}>
+                {ex.risk_score.toFixed(1)} {riskLabel(ex.risk_score)}
+              </span>
+            ) : (
+              <span style={{ color: "var(--text-muted)" }}>{ex.risk_level_name ?? "\u2014"}</span>
+            );
+            if (key === "status_name") return (
+              <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>
+                {ex.status_name ?? "\u2014"}
+              </span>
+            );
+            if (key === "expiry_date") return (
+              <span style={{
+                color: isExpired(ex.expiry_date) ? "var(--red)" : isExpiringSoon(ex.expiry_date) ? "var(--orange)" : undefined,
+                fontWeight: isExpired(ex.expiry_date) || isExpiringSoon(ex.expiry_date) ? 600 : undefined,
+                fontSize: 12,
+              }}>
+                {ex.expiry_date}
+                {isExpired(ex.expiry_date) && " (WYGASLY)"}
+                {isExpiringSoon(ex.expiry_date) && " (reocena)"}
+              </span>
+            );
+            return undefined;
+          }}
+        />
 
         {/* ─── Detail Panel ─── */}
         {selected && (

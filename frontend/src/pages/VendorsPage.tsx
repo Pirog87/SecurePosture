@@ -3,6 +3,9 @@ import type { DictionaryEntry } from "../types";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
+import { useTableFeatures } from "../hooks/useTableFeatures";
+import DataTable from "../components/DataTable";
+import StatsCards, { type StatCard } from "../components/StatsCards";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -47,6 +50,15 @@ function isExpired(date: string | null): boolean {
   return !!date && new Date(date) < new Date();
 }
 
+function isWithin90Days(date: string | null): boolean {
+  if (!date) return false;
+  const d = new Date(date);
+  const now = new Date();
+  const in90 = new Date();
+  in90.setDate(in90.getDate() + 90);
+  return d >= now && d <= in90;
+}
+
 /* ── sub-components ── */
 function SectionHeader({ number, label }: { number: string; label: string }) {
   return (
@@ -73,22 +85,21 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
 const errorBorder = "1px solid var(--red)";
 const errorShadow = "0 0 0 3px var(--red-dim)";
 
-/* ── sort ── */
-type SortField = "ref_id" | "name" | "category_name" | "criticality_name" | "status_name" | "risk_rating_name" | "risk_score" | "contract_end" | "last_assessment_date" | "next_assessment_date";
-type SortDir = "asc" | "desc";
-
 /* ── column definitions ── */
 const COLUMNS: ColumnDef<VendorRecord>[] = [
-  { key: "ref_id", header: "Ref", format: (r) => r.ref_id ?? "" },
-  { key: "name", header: "Nazwa", format: (r) => r.name },
-  { key: "category_name", header: "Kategoria", format: (r) => r.category_name ?? "" },
-  { key: "criticality_name", header: "Krytycznosc", format: (r) => r.criticality_name ?? "" },
-  { key: "status_name", header: "Status", format: (r) => r.status_name ?? "" },
-  { key: "risk_rating_name", header: "Rating", format: (r) => r.risk_rating_name ?? "" },
-  { key: "risk_score", header: "Wynik", format: (r) => r.risk_score != null ? `${r.risk_score}%` : "" },
-  { key: "contract_end", header: "Koniec umowy", format: (r) => r.contract_end ?? "" },
-  { key: "last_assessment_date", header: "Ostatnia ocena", format: (r) => r.last_assessment_date ?? "" },
-  { key: "next_assessment_date", header: "Nastepna ocena", format: (r) => r.next_assessment_date ?? "" },
+  { key: "ref_id", header: "Ref", defaultVisible: true, format: (r) => r.ref_id ?? "" },
+  { key: "name", header: "Nazwa", defaultVisible: true, format: (r) => r.name },
+  { key: "category_name", header: "Kategoria", defaultVisible: true, format: (r) => r.category_name ?? "" },
+  { key: "criticality_name", header: "Krytycznosc", defaultVisible: true, format: (r) => r.criticality_name ?? "" },
+  { key: "status_name", header: "Status", defaultVisible: true, format: (r) => r.status_name ?? "" },
+  { key: "risk_rating_name", header: "Rating", defaultVisible: true, format: (r) => r.risk_rating_name ?? "" },
+  { key: "risk_score", header: "Wynik", defaultVisible: true, format: (r) => r.risk_score != null ? `${r.risk_score}%` : "" },
+  { key: "contract_end", header: "Koniec umowy", defaultVisible: true, format: (r) => r.contract_end ?? "" },
+  { key: "last_assessment_date", header: "Ostatnia ocena", defaultVisible: true, format: (r) => r.last_assessment_date ?? "" },
+  { key: "next_assessment_date", header: "Nastepna ocena", defaultVisible: true, format: (r) => r.next_assessment_date ?? "" },
+  { key: "contract_owner", header: "Wlasciciel umowy", defaultVisible: false, format: (r) => r.contract_owner ?? "" },
+  { key: "questionnaire_completed", header: "Kwestionariusz", defaultVisible: false, format: (r) => r.questionnaire_completed ? "TAK" : "NIE" },
+  { key: "is_active", header: "Aktywny", defaultVisible: false, format: (r) => r.is_active ? "TAK" : "NIE" },
 ];
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -109,17 +120,18 @@ export default function VendorsPage() {
   const [statuses, setStatuses] = useState<DictionaryEntry[]>([]);
   const [dataAccessLevels, setDataAccessLevels] = useState<DictionaryEntry[]>([]);
 
-  /* Search, sort, filter */
-  const [search, setSearch] = useState("");
-  const [sortField, setSortField] = useState<SortField>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterCriticality, setFilterCriticality] = useState("");
-  const [filterCategory, setFilterCategory] = useState("");
-
   /* Column visibility */
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "vendors");
+
+  /* Table features (search, sort, filter, pagination) */
+  const [showFilters, setShowFilters] = useState(false);
+
+  const table = useTableFeatures<VendorRecord>({
+    data: vendors,
+    storageKey: "vendors",
+    defaultSort: "name",
+    defaultSortDir: "asc",
+  });
 
   /* Form state */
   const [form, setForm] = useState({
@@ -208,99 +220,126 @@ export default function VendorsPage() {
     setSaving(false);
   }
 
-  /* ── sort handler ── */
-  const handleSort = (field: SortField) => {
-    if (sortField === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortField(field); setSortDir("asc"); }
+  /* ── statistics ── */
+  const isHighCriticality = (v: VendorRecord) => {
+    const n = (v.criticality_name ?? "").toLowerCase();
+    return n.includes("wysoki") || n.includes("high") || n.includes("krytyczny") || n.includes("critical");
   };
 
-  /* ── filter helpers ── */
-  const hasFilters = !!filterStatus || !!filterCriticality || !!filterCategory;
-  const clearFilters = () => { setFilterStatus(""); setFilterCriticality(""); setFilterCategory(""); };
+  const statsCards = useMemo((): StatCard[] => {
+    const filteredData = table.filtered;
+    const allData = vendors;
 
-  /* ── filtered + sorted data ── */
-  const filtered = useMemo(() => {
-    let result = [...vendors];
+    const filteredHighCrit = filteredData.filter(isHighCriticality).length;
+    const totalHighCrit = allData.filter(isHighCriticality).length;
 
-    // search: name, ref_id, contract_owner
-    if (search) {
-      const s = search.toLowerCase();
-      result = result.filter((v) =>
-        (v.name ?? "").toLowerCase().includes(s) ||
-        (v.ref_id ?? "").toLowerCase().includes(s) ||
-        (v.contract_owner ?? "").toLowerCase().includes(s)
-      );
-    }
+    const filteredScored = filteredData.filter((v) => v.risk_score != null);
+    const totalScored = allData.filter((v) => v.risk_score != null);
+    const filteredAvg = filteredScored.length > 0
+      ? filteredScored.reduce((s, v) => s + (v.risk_score ?? 0), 0) / filteredScored.length
+      : 0;
+    const totalAvg = totalScored.length > 0
+      ? totalScored.reduce((s, v) => s + (v.risk_score ?? 0), 0) / totalScored.length
+      : 0;
 
-    // filters
-    if (filterStatus) result = result.filter((v) => (v.status_name ?? "").toLowerCase() === filterStatus.toLowerCase());
-    if (filterCriticality) result = result.filter((v) => (v.criticality_name ?? "").toLowerCase() === filterCriticality.toLowerCase());
-    if (filterCategory) result = result.filter((v) => (v.category_name ?? "").toLowerCase() === filterCategory.toLowerCase());
+    const filteredExpiring = filteredData.filter((v) => isWithin90Days(v.contract_end)).length;
+    const totalExpiring = allData.filter((v) => isWithin90Days(v.contract_end)).length;
 
-    // sort
-    result.sort((a, b) => {
-      const av = (a as any)[sortField];
-      const bv = (b as any)[sortField];
-      let cmp = 0;
-      if (av == null && bv == null) cmp = 0;
-      else if (av == null) cmp = 1;
-      else if (bv == null) cmp = -1;
-      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
-      else cmp = String(av).localeCompare(String(bv), "pl");
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-
-    return result;
-  }, [vendors, search, filterStatus, filterCriticality, filterCategory, sortField, sortDir]);
-
-  /* ── statistics ── */
-  const stats = useMemo(() => {
-    const total = vendors.length;
-    const highCriticality = vendors.filter((v) => {
-      const n = (v.criticality_name ?? "").toLowerCase();
-      return n.includes("wysoki") || n.includes("high") || n.includes("krytyczny") || n.includes("critical");
-    }).length;
-    const expiredContracts = vendors.filter((v) => isExpired(v.contract_end)).length;
-    const scored = vendors.filter((v) => v.risk_score != null);
-    const avgRisk = scored.length > 0
-      ? (scored.reduce((s, v) => s + (v.risk_score ?? 0), 0) / scored.length).toFixed(1)
-      : "\u2014";
-    return { total, highCriticality, expiredContracts, avgRisk };
-  }, [vendors]);
-
-  /* ── sortable th ── */
-  const SortTh = ({ field, label }: { field: SortField; label: string }) => (
-    <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }} onClick={() => handleSort(field)}>
-      {label}
-      {sortField === field && <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>}
-    </th>
-  );
+    return [
+      {
+        label: "Wszystkich dostawcow",
+        value: filteredData.length,
+        total: allData.length,
+        color: "var(--blue)",
+      },
+      {
+        label: "Krytycznych",
+        value: filteredHighCrit,
+        total: totalHighCrit,
+        color: "var(--red)",
+      },
+      {
+        label: "Sr. wynik ryzyka",
+        value: filteredAvg,
+        total: totalAvg,
+        color: "var(--orange, #ea580c)",
+        formatValue: (v) => typeof v === "number" ? `${v.toFixed(1)}%` : `${v}%`,
+      },
+      {
+        label: "Umowy wygasajace",
+        value: filteredExpiring,
+        total: totalExpiring,
+        color: "var(--purple, #7c3aed)",
+      },
+    ];
+  }, [vendors, table.filtered]);
 
   /* ── validation helper ── */
   const fieldErr = (ok: boolean) => tried && !ok ? { border: errorBorder, boxShadow: errorShadow } : {};
+
+  /* ── renderCell for DataTable ── */
+  const renderCell = (row: VendorRecord, colKey: string) => {
+    switch (colKey) {
+      case "name":
+        return <span style={{ fontWeight: 500 }}>{row.name}</span>;
+      case "criticality_name":
+        if (!row.criticality_name) return "\u2014";
+        return (
+          <span
+            className="score-badge"
+            style={{
+              background: isHighCriticality(row) ? "var(--red-dim)" : "var(--blue-dim)",
+              color: isHighCriticality(row) ? "var(--red)" : "var(--blue)",
+            }}
+          >
+            {row.criticality_name}
+          </span>
+        );
+      case "risk_rating_name":
+        if (!row.risk_rating_name) return "\u2014";
+        return (
+          <span
+            className="score-badge"
+            style={{
+              background: ratingBg(row.risk_rating_name),
+              color: ratingColor(row.risk_rating_name),
+              fontWeight: 600,
+            }}
+          >
+            {row.risk_rating_name}
+          </span>
+        );
+      case "risk_score":
+        if (row.risk_score == null) return "\u2014";
+        return (
+          <span style={{ fontFamily: "'JetBrains Mono',monospace", color: ratingColor(row.risk_rating_name) }}>
+            {row.risk_score}%
+          </span>
+        );
+      case "contract_end":
+        if (!row.contract_end) return "\u2014";
+        return (
+          <span style={{
+            fontSize: 12,
+            color: isExpired(row.contract_end) ? "var(--red)" : undefined,
+            fontWeight: isExpired(row.contract_end) ? 600 : undefined,
+          }}>
+            {row.contract_end}{isExpired(row.contract_end) ? " !" : ""}
+          </span>
+        );
+      default:
+        return undefined;
+    }
+  };
 
   /* ═══ RENDER ═══ */
   return (
     <div>
       {/* ── Statistics Cards ── */}
-      <div className="grid-4">
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>{stats.total}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Dostawcow ogolnie</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: stats.highCriticality > 0 ? "var(--red)" : "var(--green)" }}>{stats.highCriticality}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Wysoka krytycznosc</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: stats.expiredContracts > 0 ? "var(--red)" : "var(--green)" }}>{stats.expiredContracts}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Wygasle umowy</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>{stats.avgRisk}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Sredni risk score</div>
-        </div>
-      </div>
+      <StatsCards
+        cards={statsCards}
+        isFiltered={table.filteredCount !== table.totalCount}
+      />
 
       {/* ── Error State ── */}
       {error && (
@@ -312,160 +351,54 @@ export default function VendorsPage() {
 
       {/* ── TableToolbar ── */}
       <TableToolbar
-        filteredCount={filtered.length}
-        totalCount={vendors.length}
+        filteredCount={table.filteredCount}
+        totalCount={table.totalCount}
         unitLabel="dostawcow"
-        search={search}
-        onSearchChange={setSearch}
+        search={table.search}
+        onSearchChange={table.setSearch}
         searchPlaceholder="Szukaj (nazwa, ref, wlasciciel)..."
         showFilters={showFilters}
         onToggleFilters={() => setShowFilters((f) => !f)}
-        hasActiveFilters={hasFilters}
-        onClearFilters={clearFilters}
+        hasActiveFilters={table.hasActiveFilters}
+        onClearFilters={table.clearAllFilters}
         columns={COLUMNS}
         visibleColumns={visibleCols}
         onToggleColumn={toggleCol}
-        data={filtered}
+        data={table.filtered}
         exportFilename="dostawcy"
         primaryLabel="Nowy dostawca"
         onPrimaryAction={() => { resetForm(); setShowForm(true); }}
       />
 
-      {/* ── Collapsible Filters ── */}
-      {showFilters && (
-        <div className="card" style={{ padding: 12, marginBottom: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <select
-            className="form-control"
-            style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-          >
-            <option value="">Wszystkie statusy</option>
-            {statuses.map((d) => <option key={d.id} value={d.label}>{d.label}</option>)}
-          </select>
-          <select
-            className="form-control"
-            style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterCriticality}
-            onChange={(e) => setFilterCriticality(e.target.value)}
-          >
-            <option value="">Wszystkie krytycznosci</option>
-            {criticalities.map((d) => <option key={d.id} value={d.label}>{d.label}</option>)}
-          </select>
-          <select
-            className="form-control"
-            style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterCategory}
-            onChange={(e) => setFilterCategory(e.target.value)}
-          >
-            <option value="">Wszystkie kategorie</option>
-            {categories.map((d) => <option key={d.id} value={d.label}>{d.label}</option>)}
-          </select>
-        </div>
-      )}
-
       {/* ── Main Grid: Table + Detail Panel ── */}
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 14 }}>
 
-        {/* ── Table ── */}
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie...</div>
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              {vendors.length === 0 ? "Brak dostawcow w systemie." : "Brak dostawcow pasujacych do filtrow."}
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {visibleCols.has("ref_id") && <SortTh field="ref_id" label="Ref" />}
-                  {visibleCols.has("name") && <SortTh field="name" label="Nazwa" />}
-                  {visibleCols.has("category_name") && <SortTh field="category_name" label="Kategoria" />}
-                  {visibleCols.has("criticality_name") && <SortTh field="criticality_name" label="Krytycznosc" />}
-                  {visibleCols.has("status_name") && <SortTh field="status_name" label="Status" />}
-                  {visibleCols.has("risk_rating_name") && <SortTh field="risk_rating_name" label="Rating" />}
-                  {visibleCols.has("risk_score") && <SortTh field="risk_score" label="Wynik" />}
-                  {visibleCols.has("contract_end") && <SortTh field="contract_end" label="Koniec umowy" />}
-                  {visibleCols.has("last_assessment_date") && <SortTh field="last_assessment_date" label="Ostatnia ocena" />}
-                  {visibleCols.has("next_assessment_date") && <SortTh field="next_assessment_date" label="Nastepna ocena" />}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((v) => (
-                  <tr
-                    key={v.id}
-                    style={{
-                      cursor: "pointer",
-                      background: selected?.id === v.id ? "var(--bg-card-hover)" : undefined,
-                    }}
-                    onClick={() => setSelected(selected?.id === v.id ? null : v)}
-                  >
-                    {visibleCols.has("ref_id") && (
-                      <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{v.ref_id ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("name") && (
-                      <td style={{ fontWeight: 500 }}>{v.name}</td>
-                    )}
-                    {visibleCols.has("category_name") && (
-                      <td style={{ fontSize: 12 }}>{v.category_name ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("criticality_name") && (
-                      <td style={{ fontSize: 12 }}>{v.criticality_name ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("status_name") && (
-                      <td>
-                        {v.status_name ? (
-                          <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>
-                            {v.status_name}
-                          </span>
-                        ) : "\u2014"}
-                      </td>
-                    )}
-                    {visibleCols.has("risk_rating_name") && (
-                      <td>
-                        {v.risk_rating_name ? (
-                          <span
-                            className="score-badge"
-                            style={{ background: ratingBg(v.risk_rating_name), color: ratingColor(v.risk_rating_name), fontWeight: 600 }}
-                          >
-                            {v.risk_rating_name}
-                          </span>
-                        ) : "\u2014"}
-                      </td>
-                    )}
-                    {visibleCols.has("risk_score") && (
-                      <td style={{ fontFamily: "'JetBrains Mono',monospace" }}>
-                        {v.risk_score != null ? `${v.risk_score}%` : "\u2014"}
-                      </td>
-                    )}
-                    {visibleCols.has("contract_end") && (
-                      <td style={{
-                        fontSize: 12,
-                        color: isExpired(v.contract_end) ? "var(--red)" : undefined,
-                        fontWeight: isExpired(v.contract_end) ? 600 : undefined,
-                      }}>
-                        {v.contract_end ?? "\u2014"}{isExpired(v.contract_end) ? " !" : ""}
-                      </td>
-                    )}
-                    {visibleCols.has("last_assessment_date") && (
-                      <td style={{ fontSize: 12 }}>{v.last_assessment_date ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("next_assessment_date") && (
-                      <td style={{
-                        fontSize: 12,
-                        color: isExpired(v.next_assessment_date) ? "var(--red)" : undefined,
-                        fontWeight: isExpired(v.next_assessment_date) ? 600 : undefined,
-                      }}>
-                        {v.next_assessment_date ?? "\u2014"}{isExpired(v.next_assessment_date) ? " !" : ""}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        {/* ── DataTable ── */}
+        <DataTable<VendorRecord>
+          columns={COLUMNS}
+          visibleColumns={visibleCols}
+          data={table.pageData}
+          renderCell={renderCell}
+          onRowClick={(row) => setSelected(selected?.id === row.id ? null : row)}
+          rowKey={(row) => row.id}
+          selectedKey={selected?.id ?? null}
+          sortField={table.sortField}
+          sortDir={table.sortDir}
+          onSort={table.toggleSort}
+          columnFilters={table.columnFilters}
+          onColumnFilter={table.setColumnFilter}
+          showFilters={showFilters}
+          page={table.page}
+          totalPages={table.totalPages}
+          pageSize={table.pageSize}
+          totalItems={table.totalCount}
+          filteredItems={table.filteredCount}
+          onPageChange={table.setPage}
+          onPageSizeChange={table.setPageSize}
+          loading={loading}
+          emptyMessage="Brak dostawcow w systemie."
+          emptyFilteredMessage="Brak dostawcow pasujacych do filtrow."
+        />
 
         {/* ── Detail Panel (sticky right sidebar 420px) ── */}
         {selected && (

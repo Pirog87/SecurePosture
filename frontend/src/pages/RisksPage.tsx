@@ -7,6 +7,9 @@ import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
+import { useTableFeatures } from "../hooks/useTableFeatures";
+import DataTable from "../components/DataTable";
+import StatsCards, { type StatCard } from "../components/StatsCards";
 
 /* ─── Risk score helpers ─── */
 function riskColor(R: number) { return R >= 221 ? "var(--red)" : R >= 31 ? "var(--orange)" : "var(--green)"; }
@@ -54,9 +57,7 @@ interface FormLookups {
   asset_types: { id: number; label: string }[];
 }
 
-/* ─── Sort types ─── */
-type SortField = "id" | "asset_name" | "org_unit_name" | "risk_category_name" | "security_area_name" | "risk_score" | "status_name" | "owner";
-type SortDir = "asc" | "desc";
+/* ─── Sort types (removed — handled by useTableFeatures) ─── */
 
 /* ═══════════════════════════════════════════════════════════════════
    RisksPage — main page component
@@ -74,16 +75,7 @@ export default function RisksPage() {
   const [accepting, setAccepting] = useState(false);
 
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
-
-  // Sort & filter state
-  const [sortField, setSortField] = useState<SortField>("risk_score");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [showFilters, setShowFilters] = useState(false);
-  const [filterAsset, setFilterAsset] = useState("");
-  const [filterOrg, setFilterOrg] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterLevel, setFilterLevel] = useState("");
-  const [filterOwner, setFilterOwner] = useState("");
 
   const loadRisks = () => {
     setError(null);
@@ -109,18 +101,40 @@ export default function RisksPage() {
 
   const COLUMNS: ColumnDef<Risk>[] = [
     { key: "id", header: "ID", format: r => `R-${r.id}` },
+    { key: "code", header: "Kod", format: r => r.code ?? "", defaultVisible: false },
     { key: "asset_name", header: "Aktywo" },
     { key: "org_unit_name", header: "Pion", format: r => r.org_unit_name ?? "" },
     { key: "risk_category_name", header: "Kategoria", format: r => r.risk_category_name ?? "" },
     { key: "security_area_name", header: "Domena", format: r => r.security_area_name ?? "" },
     { key: "risk_score", header: "Ocena (R)", format: r => (r.risk_score ?? 0).toFixed(1) },
+    { key: "risk_level", header: "Poziom", format: r => r.risk_level ?? "", defaultVisible: false },
     { key: "status_name", header: "Status", format: r => r.status_name ?? "" },
+    { key: "strategy_name", header: "Strategia", format: r => r.strategy_name ?? "", defaultVisible: false },
     { key: "owner", header: "Wlasciciel", format: r => r.owner ?? "" },
+    { key: "identification_source_name", header: "Źródło ident.", format: r => r.identification_source_name ?? "", defaultVisible: false },
+    { key: "asset_category_name", header: "Kat. aktywa", format: r => r.asset_category_name ?? "", defaultVisible: false },
+    { key: "sensitivity_name", header: "Wrażliwość", format: r => r.sensitivity_name ?? "", defaultVisible: false },
+    { key: "criticality_name", header: "Krytyczność", format: r => r.criticality_name ?? "", defaultVisible: false },
+    { key: "impact_level", header: "Wpływ (W)", format: r => String(r.impact_level), defaultVisible: false },
+    { key: "probability_level", header: "Prawd. (P)", format: r => String(r.probability_level), defaultVisible: false },
+    { key: "safeguard_rating", header: "Zabezp. (Z)", format: r => String(r.safeguard_rating), defaultVisible: false },
+    { key: "residual_risk", header: "Ryzyko rezyd.", format: r => r.residual_risk != null ? r.residual_risk.toFixed(1) : "", defaultVisible: false },
+    { key: "treatment_deadline", header: "Termin real.", format: r => r.treatment_deadline?.slice(0, 10) ?? "", defaultVisible: false },
+    { key: "accepted_by", header: "Akceptował", format: r => r.accepted_by ?? "", defaultVisible: false },
+    { key: "next_review_date", header: "Następny przegląd", format: r => r.next_review_date?.slice(0, 10) ?? "", defaultVisible: false },
+    { key: "identified_at", header: "Zidentyfikowano", format: r => r.identified_at?.slice(0, 10) ?? "", defaultVisible: false },
+    { key: "last_review_at", header: "Ostatni przegląd", format: r => r.last_review_at?.slice(0, 10) ?? "", defaultVisible: false },
+    { key: "created_at", header: "Utworzono", format: r => r.created_at?.slice(0, 10) ?? "", defaultVisible: false },
   ];
 
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "risks");
 
-  const [searchText, setSearchText] = useState("");
+  const table = useTableFeatures<Risk>({
+    data: risks,
+    storageKey: "risks",
+    defaultSort: "risk_score",
+    defaultSortDir: "desc",
+  });
 
   const loadLookups = async (): Promise<FormLookups> => {
     if (lookups) return lookups;
@@ -219,71 +233,23 @@ export default function RisksPage() {
     }
   };
 
-  // Sort
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDir(d => d === "asc" ? "desc" : "asc");
-    } else {
-      setSortField(field);
-      setSortDir("asc");
-    }
-  };
-
-  // Filter & sort
-  const filteredAndSorted = useMemo(() => {
-    let result = [...risks];
-
-    if (filterAsset) result = result.filter(r => r.asset_name.toLowerCase().includes(filterAsset.toLowerCase()));
-    if (filterOrg) result = result.filter(r => {
-      const path = orgPathMap.get(r.org_unit_id) ?? r.org_unit_name ?? "";
-      return path.toLowerCase().includes(filterOrg.toLowerCase());
-    });
-    if (filterStatus) result = result.filter(r => (r.status_name ?? "").toLowerCase().includes(filterStatus.toLowerCase()));
-    if (filterLevel) result = result.filter(r => r.risk_level === filterLevel);
-    if (filterOwner) result = result.filter(r => (r.owner ?? "").toLowerCase().includes(filterOwner.toLowerCase()));
-
-    if (searchText) {
-      const q = searchText.toLowerCase();
-      result = result.filter(r =>
-        r.asset_name.toLowerCase().includes(q) ||
-        (r.org_unit_name ?? "").toLowerCase().includes(q) ||
-        (r.owner ?? "").toLowerCase().includes(q) ||
-        (r.status_name ?? "").toLowerCase().includes(q) ||
-        (r.risk_category_name ?? "").toLowerCase().includes(q) ||
-        (r.security_area_name ?? "").toLowerCase().includes(q)
-      );
-    }
-
-    result.sort((a, b) => {
-      let cmp = 0;
-      const av = (a as any)[sortField];
-      const bv = (b as any)[sortField];
-      if (av == null && bv == null) cmp = 0;
-      else if (av == null) cmp = 1;
-      else if (bv == null) cmp = -1;
-      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
-      else cmp = String(av).localeCompare(String(bv));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-
-    return result;
-  }, [risks, filterAsset, filterOrg, filterStatus, filterLevel, filterOwner, searchText, sortField, sortDir, orgPathMap]);
-
-  const hasFilters = filterAsset || filterOrg || filterStatus || filterLevel || filterOwner;
-
-  const SortableHeader = ({ field, label }: { field: SortField; label: string }) => (
-    <th
-      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
-      onClick={() => handleSort(field)}
-    >
-      {label}
-      {sortField === field && (
-        <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>
-          {sortDir === "asc" ? "\u25B2" : "\u25BC"}
-        </span>
-      )}
-    </th>
-  );
+  /* ── Dynamic stats ── */
+  const isFiltered = table.filteredCount !== table.totalCount;
+  const statsCards: StatCard[] = useMemo(() => {
+    const src = table.filtered;
+    const highF = src.filter(r => (r.risk_score ?? 0) >= 221).length;
+    const medF = src.filter(r => { const s = r.risk_score ?? 0; return s >= 31 && s < 221; }).length;
+    const avgF = src.length > 0 ? src.reduce((s, r) => s + (r.risk_score ?? 0), 0) / src.length : 0;
+    const highT = risks.filter(r => (r.risk_score ?? 0) >= 221).length;
+    const medT = risks.filter(r => { const s = r.risk_score ?? 0; return s >= 31 && s < 221; }).length;
+    const avgT = risks.length > 0 ? risks.reduce((s, r) => s + (r.risk_score ?? 0), 0) / risks.length : 0;
+    return [
+      { label: "Wszystkich ryzyk", value: src.length, total: risks.length, color: "var(--blue)" },
+      { label: "Wysokich", value: highF, total: highT, color: "var(--red)" },
+      { label: "Średnich", value: medF, total: medT, color: "var(--orange)" },
+      { label: "Średnia ocena", value: avgF.toFixed(1), total: avgT.toFixed(1), color: "var(--purple)" },
+    ];
+  }, [table.filtered, risks]);
 
   // Helper: is a date overdue?
   const isOverdue = (dateStr: string | null | undefined) => {
@@ -300,135 +266,70 @@ export default function RisksPage() {
         </div>
       )}
       {/* ─── KPI Stats Cards ─── */}
-      {(() => {
-        const highRiskCount = risks.filter(r => (r.risk_score ?? 0) >= 221).length;
-        const mediumRiskCount = risks.filter(r => { const s = r.risk_score ?? 0; return s >= 31 && s < 221; }).length;
-        const lowRiskCount = risks.filter(r => (r.risk_score ?? 0) < 31).length;
-        void lowRiskCount; // used implicitly via total - high - medium
-        const avgRisk = risks.length > 0 ? risks.reduce((s, r) => s + (r.risk_score ?? 0), 0) / risks.length : 0;
-        return (
-          <div className="grid-4" style={{ marginBottom: 16 }}>
-            <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>{risks.length}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Wszystkich ryzyk</div>
-            </div>
-            <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--red)" }}>{highRiskCount}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Wysokich</div>
-            </div>
-            <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--orange)" }}>{mediumRiskCount}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Srednich</div>
-            </div>
-            <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>{avgRisk.toFixed(1)}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Srednia ocena</div>
-            </div>
-          </div>
-        );
-      })()}
+      <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
       {/* ─── Toolbar ─── */}
       <TableToolbar
-        filteredCount={filteredAndSorted.length}
-        totalCount={risks.length}
+        filteredCount={table.filteredCount}
+        totalCount={table.totalCount}
         unitLabel="ryzyk"
-        search={searchText}
-        onSearchChange={setSearchText}
+        search={table.search}
+        onSearchChange={table.setSearch}
         searchPlaceholder="Szukaj ryzyk..."
         showFilters={showFilters}
         onToggleFilters={() => setShowFilters(f => !f)}
-        hasActiveFilters={!!(filterAsset || filterOrg || filterStatus || filterLevel || filterOwner)}
-        onClearFilters={() => { setFilterAsset(""); setFilterOrg(""); setFilterStatus(""); setFilterLevel(""); setFilterOwner(""); }}
+        hasActiveFilters={table.hasActiveFilters}
+        onClearFilters={table.clearAllFilters}
         columns={COLUMNS}
         visibleColumns={visibleCols}
         onToggleColumn={toggleCol}
-        data={filteredAndSorted}
+        data={table.filtered}
         exportFilename="ryzyka"
         primaryLabel="Dodaj ryzyko"
         onPrimaryAction={openAddForm}
       />
 
-      {/* ─── Filter row ─── */}
-      {showFilters && (
-        <div className="card" style={{ padding: "10px 14px", marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <input className="form-control" style={{ width: 150, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Aktywo..." value={filterAsset} onChange={e => setFilterAsset(e.target.value)} />
-          <input className="form-control" style={{ width: 150, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Pion..." value={filterOrg} onChange={e => setFilterOrg(e.target.value)} />
-          <input className="form-control" style={{ width: 120, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Status..." value={filterStatus} onChange={e => setFilterStatus(e.target.value)} />
-          <select className="form-control" style={{ width: 130, padding: "5px 8px", fontSize: 11 }}
-            value={filterLevel} onChange={e => setFilterLevel(e.target.value)}>
-            <option value="">Poziom...</option>
-            <option value="high">Wysokie</option>
-            <option value="medium">Srednie</option>
-            <option value="low">Niskie</option>
-          </select>
-          <input className="form-control" style={{ width: 120, padding: "5px 8px", fontSize: 11 }}
-            placeholder="Wlasciciel..." value={filterOwner} onChange={e => setFilterOwner(e.target.value)} />
-          {hasFilters && (
-            <button className="btn btn-sm" style={{ fontSize: 11 }}
-              onClick={() => { setFilterAsset(""); setFilterOrg(""); setFilterStatus(""); setFilterLevel(""); setFilterOwner(""); }}>
-              Wyczysc
-            </button>
-          )}
-        </div>
-      )}
-
       {/* ─── Main grid: table + detail panel ─── */}
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 14 }}>
 
         {/* ─── Risk Table ─── */}
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie ryzyk...</div>
-          ) : filteredAndSorted.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              {risks.length === 0 ? "Brak ryzyk w systemie." : "Brak ryzyk pasujacych do filtrow."}
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {visibleCols.has("id") && <SortableHeader field="id" label="ID" />}
-                  {visibleCols.has("asset_name") && <SortableHeader field="asset_name" label="Aktywo" />}
-                  {visibleCols.has("org_unit_name") && <SortableHeader field="org_unit_name" label="Pion" />}
-                  {visibleCols.has("risk_category_name") && <SortableHeader field="risk_category_name" label="Kategoria" />}
-                  {visibleCols.has("security_area_name") && <SortableHeader field="security_area_name" label="Domena" />}
-                  {visibleCols.has("risk_score") && <SortableHeader field="risk_score" label="Ocena (R)" />}
-                  {visibleCols.has("status_name") && <SortableHeader field="status_name" label="Status" />}
-                  {visibleCols.has("owner") && <SortableHeader field="owner" label="Wlasciciel" />}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAndSorted.map((r) => (
-                  <tr key={r.id}
-                    style={{
-                      borderLeft: `3px solid ${riskColor(r.risk_score ?? 0)}`,
-                      cursor: "pointer",
-                      background: selected?.id === r.id ? "var(--bg-card-hover)" : undefined,
-                    }}
-                    onClick={() => setSelected(selected?.id === r.id ? null : r)}
-                  >
-                    {visibleCols.has("id") && <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>R-{r.id}</td>}
-                    {visibleCols.has("asset_name") && <td style={{ fontWeight: 500 }}>{r.asset_name}</td>}
-                    {visibleCols.has("org_unit_name") && <td style={{ fontSize: 11 }}>{orgPathMap.get(r.org_unit_id) ?? r.org_unit_name}</td>}
-                    {visibleCols.has("risk_category_name") && <td style={{ fontSize: 11 }}>{r.risk_category_name ?? "\u2014"}</td>}
-                    {visibleCols.has("security_area_name") && <td style={{ fontSize: 11 }}>{r.security_area_name ?? "\u2014"}</td>}
-                    {visibleCols.has("risk_score") && <td>
-                      <span className="score-badge" style={{ background: riskBg(r.risk_score ?? 0), color: riskColor(r.risk_score ?? 0) }}>
-                        {(r.risk_score ?? 0).toFixed(1)} {riskLabel(r.risk_score ?? 0)}
-                      </span>
-                    </td>}
-                    {visibleCols.has("status_name") && <td><span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{r.status_name ?? "\u2014"}</span></td>}
-                    {visibleCols.has("owner") && <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.owner ?? "\u2014"}</td>}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <DataTable<Risk>
+          columns={COLUMNS}
+          visibleColumns={visibleCols}
+          data={table.pageData}
+          rowKey={r => r.id}
+          selectedKey={selected?.id ?? null}
+          onRowClick={r => setSelected(selected?.id === r.id ? null : r)}
+          rowBorderColor={r => riskColor(r.risk_score ?? 0)}
+          sortField={table.sortField}
+          sortDir={table.sortDir}
+          onSort={table.toggleSort}
+          columnFilters={table.columnFilters}
+          onColumnFilter={table.setColumnFilter}
+          showFilters={showFilters}
+          page={table.page}
+          totalPages={table.totalPages}
+          pageSize={table.pageSize}
+          totalItems={table.totalCount}
+          filteredItems={table.filteredCount}
+          onPageChange={table.setPage}
+          onPageSizeChange={table.setPageSize}
+          loading={loading}
+          emptyMessage="Brak ryzyk w systemie."
+          emptyFilteredMessage="Brak ryzyk pasujących do filtrów."
+          renderCell={(r, key) => {
+            if (key === "id") return <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>R-{r.id}</span>;
+            if (key === "asset_name") return <span style={{ fontWeight: 500 }}>{r.asset_name}</span>;
+            if (key === "org_unit_name") return <span style={{ fontSize: 11 }}>{orgPathMap.get(r.org_unit_id) ?? r.org_unit_name}</span>;
+            if (key === "risk_score") return (
+              <span className="score-badge" style={{ background: riskBg(r.risk_score ?? 0), color: riskColor(r.risk_score ?? 0) }}>
+                {(r.risk_score ?? 0).toFixed(1)} {riskLabel(r.risk_score ?? 0)}
+              </span>
+            );
+            if (key === "status_name") return <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{r.status_name ?? "\u2014"}</span>;
+            return undefined;
+          }}
+        />
 
         {/* ─── Detail Panel ─── */}
         {selected && (

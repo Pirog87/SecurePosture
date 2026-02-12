@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState, Fragment } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DictionaryEntry, OrgUnitTreeNode } from "../types";
 import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
+import { useTableFeatures } from "../hooks/useTableFeatures";
+import DataTable from "../components/DataTable";
+import StatsCards, { type StatCard } from "../components/StatsCards";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -80,14 +83,10 @@ function statusLabel(status: string): string {
 const errorBorder = "1px solid var(--red)";
 const errorShadow = "0 0 0 3px var(--red-dim)";
 
-/* ── sort types ── */
-
-type SortField = "ref_id" | "title" | "audit_type_name" | "framework" | "auditor" | "org_unit_name" | "status" | "start_date" | "overall_rating_name" | "findings_count";
-type SortDir = "asc" | "desc";
-
 /* ── column definitions ── */
 
 const COLUMNS: ColumnDef<AuditRecord>[] = [
+  { key: "id", header: "ID", format: r => String(r.id), defaultVisible: false },
   { key: "ref_id", header: "Ref", format: (r) => r.ref_id ?? "" },
   { key: "title", header: "Tytul", format: (r) => r.title },
   { key: "audit_type_name", header: "Typ", format: (r) => r.audit_type_name ?? "" },
@@ -96,6 +95,7 @@ const COLUMNS: ColumnDef<AuditRecord>[] = [
   { key: "org_unit_name", header: "Jednostka", format: (r) => r.org_unit_name ?? "" },
   { key: "status", header: "Status", format: (r) => statusLabel(r.status) },
   { key: "start_date", header: "Rozpoczecie", format: (r) => r.start_date ?? "" },
+  { key: "end_date", header: "Zakończenie", format: (r) => r.end_date ?? "" },
   { key: "overall_rating_name", header: "Ocena", format: (r) => r.overall_rating_name ?? "" },
   { key: "findings_count", header: "Findings", format: (r) => r.findings_count },
 ];
@@ -119,15 +119,16 @@ export default function AuditsPage() {
   const [expandedAudit, setExpandedAudit] = useState<number | null>(null);
   const [findings, setFindings] = useState<FindingRecord[]>([]);
 
-  // Search, sort, filter
-  const [search, setSearch] = useState("");
-  const [sortField, setSortField] = useState<SortField>("ref_id");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterType, setFilterType] = useState("");
-
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "audits");
+
+  const [showFilters, setShowFilters] = useState(false);
+
+  const table = useTableFeatures<AuditRecord>({
+    data: audits,
+    storageKey: "audits",
+    defaultSort: "start_date",
+    defaultSortDir: "desc",
+  });
 
   // Form state
   const [form, setForm] = useState({
@@ -223,92 +224,29 @@ export default function AuditsPage() {
     }
   }
 
-  // Sort helper
-  const handleSort = (field: SortField) => {
-    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortField(field); setSortDir("asc"); }
-  };
-
-  const hasFilters = !!filterStatus || !!filterType;
-  const clearFilters = () => { setFilterStatus(""); setFilterType(""); };
-
-  // Filtered & sorted
-  const filtered = useMemo(() => {
-    let result = [...audits];
-
-    if (search) {
-      const s = search.toLowerCase();
-      result = result.filter(a =>
-        (a.title ?? "").toLowerCase().includes(s) ||
-        (a.ref_id ?? "").toLowerCase().includes(s) ||
-        (a.auditor ?? "").toLowerCase().includes(s) ||
-        (a.framework ?? "").toLowerCase().includes(s) ||
-        (a.org_unit_name ?? "").toLowerCase().includes(s)
-      );
-    }
-
-    if (filterStatus) result = result.filter(a => a.status === filterStatus);
-    if (filterType) result = result.filter(a => (a.audit_type_name ?? "").toLowerCase().includes(filterType.toLowerCase()));
-
-    result.sort((a, b) => {
-      const av = (a as any)[sortField];
-      const bv = (b as any)[sortField];
-      let cmp = 0;
-      if (av == null && bv == null) cmp = 0;
-      else if (av == null) cmp = 1;
-      else if (bv == null) cmp = -1;
-      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
-      else cmp = String(av).localeCompare(String(bv), "pl");
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return result;
-  }, [audits, search, filterStatus, filterType, sortField, sortDir]);
-
-  // Stats
-  const stats = useMemo(() => {
-    const total = audits.length;
-    const inProgress = audits.filter(a => a.status === "in_progress").length;
-    const completed = audits.filter(a => a.status === "completed").length;
-    const totalFindings = audits.reduce((s, a) => s + a.findings_count, 0);
-    return { total, inProgress, completed, totalFindings };
-  }, [audits]);
-
-  // Sortable header component
-  const SortTh = ({ field, label }: { field: SortField; label: string }) => (
-    <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }} onClick={() => handleSort(field)}>
-      {label}
-      {sortField === field && <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>}
-    </th>
-  );
-
   // Validation helper
   const fieldErr = (ok: boolean) => tried && !ok ? { border: errorBorder, boxShadow: errorShadow } : {};
 
-  // Visible column count for colspan
-  const visColCount = COLUMNS.filter(c => visibleCols.has(c.key)).length;
+  /* ── Dynamic stats ── */
+  const isFiltered = table.filteredCount !== table.totalCount;
+  const statsCards: StatCard[] = useMemo(() => {
+    const src = table.filtered;
+    const inProgressF = src.filter(a => a.status === "in_progress").length;
+    const completedF = src.filter(a => a.status === "completed").length;
+    const avgFindingsF = src.length > 0 ? src.reduce((s, a) => s + a.findings_count, 0) / src.length : 0;
+    const inProgressT = audits.filter(a => a.status === "in_progress").length;
+    const completedT = audits.filter(a => a.status === "completed").length;
+    const avgFindingsT = audits.length > 0 ? audits.reduce((s, a) => s + a.findings_count, 0) / audits.length : 0;
+    return [
+      { label: "Wszystkich audytów", value: src.length, total: audits.length, color: "var(--blue)" },
+      { label: "W trakcie", value: inProgressF, total: inProgressT, color: "var(--orange)" },
+      { label: "Zakończonych", value: completedF, total: completedT, color: "var(--green)" },
+      { label: "Średnia findings", value: avgFindingsF.toFixed(1), total: avgFindingsT.toFixed(1), color: "var(--purple)" },
+    ];
+  }, [table.filtered, audits]);
 
   return (
     <div>
-      {/* Statistics cards */}
-      <div className="grid-4">
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>{stats.total}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Wszystkich audytow</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: stats.inProgress > 0 ? "var(--orange)" : "var(--green)" }}>{stats.inProgress}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>W trakcie</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--green)" }}>{stats.completed}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Zakonczonych</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: stats.totalFindings > 0 ? "var(--red)" : "var(--green)" }}>{stats.totalFindings}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Lacznie findings</div>
-        </div>
-      </div>
-
       {/* Error state */}
       {error && (
         <div className="card" style={{ background: "#3a1a1a", borderColor: "#e74c3c", marginBottom: 16, padding: 16 }}>
@@ -317,173 +255,123 @@ export default function AuditsPage() {
         </div>
       )}
 
+      {/* Statistics cards */}
+      <StatsCards cards={statsCards} isFiltered={isFiltered} />
+
       {/* Toolbar: search, filters toggle, column picker, export, primary action */}
       <TableToolbar
-        filteredCount={filtered.length}
-        totalCount={audits.length}
+        filteredCount={table.filteredCount}
+        totalCount={table.totalCount}
         unitLabel="audytow"
-        search={search}
-        onSearchChange={setSearch}
+        search={table.search}
+        onSearchChange={table.setSearch}
         searchPlaceholder="Szukaj (tytul, ref, audytor, framework)..."
         showFilters={showFilters}
         onToggleFilters={() => setShowFilters(f => !f)}
-        hasActiveFilters={hasFilters}
-        onClearFilters={clearFilters}
+        hasActiveFilters={table.hasActiveFilters}
+        onClearFilters={table.clearAllFilters}
         columns={COLUMNS}
         visibleColumns={visibleCols}
         onToggleColumn={toggleCol}
-        data={filtered}
+        data={table.filtered}
         exportFilename="audyty"
         primaryLabel="Nowy audyt"
         onPrimaryAction={() => { resetForm(); setShowForm(true); }}
       />
 
-      {/* Collapsible filters */}
-      {showFilters && (
-        <div className="card" style={{ padding: 12, marginBottom: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <select className="form-control" style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">Wszystkie statusy</option>
-            <option value="planned">Planowany</option>
-            <option value="in_progress">W trakcie</option>
-            <option value="completed">Zakończony</option>
-            <option value="cancelled">Anulowany</option>
-          </select>
-          <select className="form-control" style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterType} onChange={e => setFilterType(e.target.value)}>
-            <option value="">Wszystkie typy</option>
-            {auditTypes.map(d => <option key={d.id} value={d.label}>{d.label}</option>)}
-          </select>
+      {/* Main table */}
+      <DataTable<AuditRecord>
+        columns={COLUMNS}
+        visibleColumns={visibleCols}
+        data={table.pageData}
+        rowKey={r => r.id}
+        selectedKey={expandedAudit}
+        onRowClick={r => loadFindings(r.id)}
+        rowBorderColor={r => statusColor(r.status)}
+        sortField={table.sortField}
+        sortDir={table.sortDir}
+        onSort={table.toggleSort}
+        columnFilters={table.columnFilters}
+        onColumnFilter={table.setColumnFilter}
+        showFilters={showFilters}
+        page={table.page}
+        totalPages={table.totalPages}
+        pageSize={table.pageSize}
+        totalItems={table.totalCount}
+        filteredItems={table.filteredCount}
+        onPageChange={table.setPage}
+        onPageSizeChange={table.setPageSize}
+        loading={loading}
+        emptyMessage="Brak audytow w systemie."
+        emptyFilteredMessage="Brak audytow pasujacych do filtrow."
+        renderCell={(r, key) => {
+          if (key === "status") return (
+            <span className="score-badge" style={{ background: statusBg(r.status), color: statusColor(r.status) }}>
+              {statusLabel(r.status)}
+            </span>
+          );
+          if (key === "findings_count") return (
+            <span style={{
+              fontWeight: r.findings_count > 0 ? 700 : undefined,
+              fontFamily: "'JetBrains Mono',monospace",
+              color: r.findings_count > 0 ? "var(--red)" : undefined,
+            }}>
+              {r.findings_count}
+            </span>
+          );
+          if (key === "overall_rating_name") return r.overall_rating_name ? (
+            <span style={{ color: "var(--blue)", fontWeight: 500 }}>{r.overall_rating_name}</span>
+          ) : (
+            <span>{"\u2014"}</span>
+          );
+          return undefined;
+        }}
+      />
+
+      {/* Expanded findings sub-table */}
+      {expandedAudit != null && (
+        <div className="card" style={{ marginTop: 0, borderTop: "none", borderTopLeftRadius: 0, borderTopRightRadius: 0, padding: "8px 16px" }}>
+          <strong style={{ fontSize: 12 }}>Findings ({findings.length}):</strong>
+          {findings.length === 0 && (
+            <p style={{ color: "var(--text-muted)", margin: "4px 0", fontSize: 12 }}>Brak findingów</p>
+          )}
+          {findings.length > 0 && (
+            <table className="data-table" style={{ marginTop: 8 }}>
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Tytul</th>
+                  <th>Typ</th>
+                  <th>Waznosc</th>
+                  <th>Status</th>
+                  <th>Wlasciciel</th>
+                  <th>SLA</th>
+                </tr>
+              </thead>
+              <tbody>
+                {findings.map(f => (
+                  <tr key={f.id}>
+                    <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{f.ref_id ?? "\u2014"}</td>
+                    <td style={{ fontWeight: 500, fontSize: 12 }}>{f.title}</td>
+                    <td style={{ fontSize: 12 }}>{f.finding_type_name ?? "\u2014"}</td>
+                    <td style={{ fontSize: 12 }}>{f.severity_name ?? "\u2014"}</td>
+                    <td style={{ fontSize: 12 }}>{f.status_name ?? "\u2014"}</td>
+                    <td style={{ fontSize: 12 }}>{f.remediation_owner ?? "\u2014"}</td>
+                    <td style={{
+                      fontSize: 12,
+                      color: f.sla_deadline && new Date(f.sla_deadline) < new Date() ? "var(--red)" : undefined,
+                      fontWeight: f.sla_deadline && new Date(f.sla_deadline) < new Date() ? 600 : undefined,
+                    }}>
+                      {f.sla_deadline ?? "\u2014"}
+                      {f.sla_deadline && new Date(f.sla_deadline) < new Date() ? " !" : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
-
-      {/* Main table */}
-      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie...</div>
-        ) : filtered.length === 0 ? (
-          <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-            {audits.length === 0 ? "Brak audytow w systemie." : "Brak audytow pasujacych do filtrow."}
-          </div>
-        ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                {visibleCols.has("ref_id") && <SortTh field="ref_id" label="Ref" />}
-                {visibleCols.has("title") && <SortTh field="title" label="Tytul" />}
-                {visibleCols.has("audit_type_name") && <SortTh field="audit_type_name" label="Typ" />}
-                {visibleCols.has("framework") && <SortTh field="framework" label="Framework" />}
-                {visibleCols.has("auditor") && <SortTh field="auditor" label="Audytor" />}
-                {visibleCols.has("org_unit_name") && <SortTh field="org_unit_name" label="Jednostka" />}
-                {visibleCols.has("status") && <SortTh field="status" label="Status" />}
-                {visibleCols.has("start_date") && <SortTh field="start_date" label="Rozpoczecie" />}
-                {visibleCols.has("overall_rating_name") && <SortTh field="overall_rating_name" label="Ocena" />}
-                {visibleCols.has("findings_count") && <SortTh field="findings_count" label="Findings" />}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(a => (
-                <Fragment key={a.id}>
-                  <tr
-                    onClick={() => loadFindings(a.id)}
-                    style={{
-                      cursor: "pointer",
-                      borderLeft: `3px solid ${statusColor(a.status)}`,
-                      background: expandedAudit === a.id ? "var(--bg-card-hover)" : undefined,
-                    }}
-                  >
-                    {visibleCols.has("ref_id") && (
-                      <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{a.ref_id ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("title") && (
-                      <td style={{ fontWeight: 500 }}>{a.title}</td>
-                    )}
-                    {visibleCols.has("audit_type_name") && (
-                      <td style={{ fontSize: 12 }}>{a.audit_type_name ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("framework") && (
-                      <td style={{ fontSize: 12 }}>{a.framework ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("auditor") && (
-                      <td style={{ fontSize: 12 }}>{a.auditor}</td>
-                    )}
-                    {visibleCols.has("org_unit_name") && (
-                      <td style={{ fontSize: 12 }}>{a.org_unit_name ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("status") && (
-                      <td>
-                        <span className="score-badge" style={{ background: statusBg(a.status), color: statusColor(a.status) }}>
-                          {statusLabel(a.status)}
-                        </span>
-                      </td>
-                    )}
-                    {visibleCols.has("start_date") && (
-                      <td style={{ fontSize: 12 }}>{a.start_date ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("overall_rating_name") && (
-                      <td style={{ fontSize: 12 }}>{a.overall_rating_name ?? "\u2014"}</td>
-                    )}
-                    {visibleCols.has("findings_count") && (
-                      <td style={{ fontWeight: a.findings_count > 0 ? 700 : undefined, fontFamily: "'JetBrains Mono',monospace", color: a.findings_count > 0 ? "var(--red)" : undefined }}>
-                        {a.findings_count}
-                      </td>
-                    )}
-                  </tr>
-
-                  {/* Expanded findings sub-table */}
-                  {expandedAudit === a.id && (
-                    <tr>
-                      <td colSpan={visColCount} style={{ padding: 0 }}>
-                        <div style={{ padding: "8px 16px", background: "rgba(255,255,255,0.02)" }}>
-                          <strong style={{ fontSize: 12 }}>Findings ({findings.length}):</strong>
-                          {findings.length === 0 && (
-                            <p style={{ color: "var(--text-muted)", margin: "4px 0", fontSize: 12 }}>Brak findingów</p>
-                          )}
-                          {findings.length > 0 && (
-                            <table className="data-table" style={{ marginTop: 8 }}>
-                              <thead>
-                                <tr>
-                                  <th>Ref</th>
-                                  <th>Tytul</th>
-                                  <th>Typ</th>
-                                  <th>Waznosc</th>
-                                  <th>Status</th>
-                                  <th>Wlasciciel</th>
-                                  <th>SLA</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {findings.map(f => (
-                                  <tr key={f.id}>
-                                    <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{f.ref_id ?? "\u2014"}</td>
-                                    <td style={{ fontWeight: 500, fontSize: 12 }}>{f.title}</td>
-                                    <td style={{ fontSize: 12 }}>{f.finding_type_name ?? "\u2014"}</td>
-                                    <td style={{ fontSize: 12 }}>{f.severity_name ?? "\u2014"}</td>
-                                    <td style={{ fontSize: 12 }}>{f.status_name ?? "\u2014"}</td>
-                                    <td style={{ fontSize: 12 }}>{f.remediation_owner ?? "\u2014"}</td>
-                                    <td style={{
-                                      fontSize: 12,
-                                      color: f.sla_deadline && new Date(f.sla_deadline) < new Date() ? "var(--red)" : undefined,
-                                      fontWeight: f.sla_deadline && new Date(f.sla_deadline) < new Date() ? 600 : undefined,
-                                    }}>
-                                      {f.sla_deadline ?? "\u2014"}
-                                      {f.sla_deadline && new Date(f.sla_deadline) < new Date() ? " !" : ""}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </Fragment>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
 
       {/* Form Modal */}
       <Modal open={showForm} onClose={() => setShowForm(false)} title="Nowy audyt" wide>

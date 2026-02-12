@@ -71,7 +71,8 @@ async def list_units(
         OrgUnitOut(
             id=u.id, parent_id=u.parent_id, level_id=u.level_id, level_name=ln,
             name=u.name, symbol=u.symbol, owner=u.owner,
-            security_contact=u.security_contact, description=u.description,
+            security_contact=u.security_contact, it_coordinator=u.it_coordinator,
+            description=u.description,
             is_active=u.is_active, created_at=u.created_at,
             deactivated_at=u.deactivated_at, updated_at=u.updated_at,
         )
@@ -107,7 +108,8 @@ async def get_tree(
         nodes[u.id] = OrgUnitTreeNode(
             id=u.id, parent_id=u.parent_id, level_id=u.level_id,
             level_name=ln, name=u.name, symbol=u.symbol,
-            owner=u.owner, is_active=u.is_active,
+            owner=u.owner, security_contact=u.security_contact,
+            it_coordinator=u.it_coordinator, is_active=u.is_active,
         )
     roots: list[OrgUnitTreeNode] = []
     for node in nodes.values():
@@ -145,7 +147,8 @@ async def create_unit(body: OrgUnitCreate, s: AsyncSession = Depends(get_session
         id=unit.id, parent_id=unit.parent_id, level_id=unit.level_id,
         level_name=level.name if level else None,
         name=unit.name, symbol=unit.symbol, owner=unit.owner,
-        security_contact=unit.security_contact, description=unit.description,
+        security_contact=unit.security_contact, it_coordinator=unit.it_coordinator,
+        description=unit.description,
         is_active=unit.is_active, created_at=unit.created_at,
         deactivated_at=unit.deactivated_at, updated_at=unit.updated_at,
     )
@@ -170,7 +173,8 @@ async def update_unit(unit_id: int, body: OrgUnitUpdate, s: AsyncSession = Depen
         id=unit.id, parent_id=unit.parent_id, level_id=unit.level_id,
         level_name=level.name if level else None,
         name=unit.name, symbol=unit.symbol, owner=unit.owner,
-        security_contact=unit.security_contact, description=unit.description,
+        security_contact=unit.security_contact, it_coordinator=unit.it_coordinator,
+        description=unit.description,
         is_active=unit.is_active, created_at=unit.created_at,
         deactivated_at=unit.deactivated_at, updated_at=unit.updated_at,
     )

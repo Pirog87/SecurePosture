@@ -26,6 +26,7 @@ class OrgUnit(Base):
     symbol: Mapped[str] = mapped_column(String(30), nullable=False)
     owner: Mapped[str | None] = mapped_column(String(200))
     security_contact: Mapped[str | None] = mapped_column(String(200))
+    it_coordinator: Mapped[str | None] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

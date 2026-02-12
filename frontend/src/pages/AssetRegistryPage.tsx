@@ -223,6 +223,7 @@ export default function AssetRegistryPage() {
   }, [assets, filterOrgIds, filterType, filterSearch, sortField, sortDir]);
 
   const uniqueTypes = [...new Map(assets.filter(a => a.asset_type_id).map(a => [a.asset_type_id, { id: a.asset_type_id!, name: a.asset_type_name! }])).values()];
+  const uniqueOrgs = [...new Map(assets.filter(a => a.org_unit_id).map(a => [a.org_unit_id, { id: a.org_unit_id!, name: a.org_unit_name! }])).values()];
 
   // Stats
   const totalActive = assets.filter(a => a.is_active).length;

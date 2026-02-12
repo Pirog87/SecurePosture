@@ -167,15 +167,14 @@ interface ContextOverview {
 }
 
 /* ─── Helpers ─── */
-type Tab = "structure" | "overview" | "issues" | "obligations" | "stakeholders" | "scope" | "risk_appetite" | "reviews";
+type Tab = "info" | "issues" | "obligations" | "stakeholders" | "scope" | "risk_appetite" | "reviews";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
-  { key: "structure", label: "Jednostka", icon: "🏢" },
-  { key: "overview", label: "Przegląd", icon: "📊" },
+  { key: "info", label: "Informacje", icon: "🏢" },
   { key: "issues", label: "Czynniki", icon: "🔍" },
   { key: "obligations", label: "Zobowiązania", icon: "📜" },
   { key: "stakeholders", label: "Interesariusze", icon: "👥" },
-  { key: "scope", label: "Zakres SZBI", icon: "🎯" },
+  { key: "scope", label: "Zakres SZ", icon: "🎯" },
   { key: "risk_appetite", label: "Apetyt na ryzyko", icon: "⚖️" },
   { key: "reviews", label: "Przeglądy", icon: "🔄" },
 ];
@@ -380,7 +379,7 @@ export default function OrgContextPage() {
   /* ─── State ─── */
   const [orgUnits, setOrgUnits] = useState<OrgUnitTreeNode[]>([]);
   const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [activeTab, setActiveTab] = useState<Tab>("info");
   const [loading, setLoading] = useState(true);
   const [treeLoading, setTreeLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -394,12 +393,13 @@ export default function OrgContextPage() {
   const [issues, setIssues] = useState<ContextIssue[]>([]);
   const [obligations, setObligations] = useState<ContextObligation[]>([]);
   const [stakeholders, setStakeholders] = useState<ContextStakeholder[]>([]);
-  const [scope, setScope] = useState<ContextScope | null>(null);
+  const [scopes, setScopes] = useState<ContextScope[]>([]);
   const [riskAppetite, setRiskAppetite] = useState<ContextRiskAppetite | null>(null);
   const [reviews, setReviews] = useState<ContextReview[]>([]);
 
   // Search
   const [search, setSearch] = useState("");
+  const [treeSearch, setTreeSearch] = useState("");
 
   // Forms
   const [showIssueForm, setShowIssueForm] = useState(false);
@@ -409,10 +409,13 @@ export default function OrgContextPage() {
   const [saving, setSaving] = useState(false);
   const [tried, setTried] = useState(false);
 
-  // Detail
+  // Detail & Edit
   const [selectedIssue, setSelectedIssue] = useState<ContextIssue | null>(null);
   const [selectedObl, setSelectedObl] = useState<ContextObligation | null>(null);
   const [selectedStk, setSelectedStk] = useState<ContextStakeholder | null>(null);
+  const [editingIssueId, setEditingIssueId] = useState<number | null>(null);
+  const [editingOblId, setEditingOblId] = useState<number | null>(null);
+  const [editingStkId, setEditingStkId] = useState<number | null>(null);
 
   // Structure tab state
   const [levels, setLevels] = useState<OrgLevel[]>([]);
@@ -500,7 +503,7 @@ export default function OrgContextPage() {
         api.get<ContextIssue[]>(base + "/issues"),
         api.get<ContextObligation[]>(base + "/obligations"),
         api.get<ContextStakeholder[]>(base + "/stakeholders"),
-        api.get<ContextScope | null>(base + "/scope").catch(() => null),
+        api.get<ContextScope[]>(base + "/scope").catch(() => []),
         api.get<ContextRiskAppetite | null>(base + "/risk-appetite").catch(() => null),
         api.get<ContextReview[]>(base + "/reviews"),
       ]);
@@ -509,7 +512,7 @@ export default function OrgContextPage() {
       setIssues(iss);
       setObligations(obl);
       setStakeholders(stk);
-      setScope(scp);
+      setScopes(scp ?? []);
       setRiskAppetite(ra);
       setReviews(rev);
       // Update overview in tree map
@@ -546,6 +549,7 @@ export default function OrgContextPage() {
       symbol: fd.get("symbol") as string,
       owner: (fd.get("owner") as string) || null,
       security_contact: (fd.get("security_contact") as string) || null,
+      it_coordinator: (fd.get("it_coordinator") as string) || null,
       description: (fd.get("description") as string) || null,
     };
     try {
@@ -701,6 +705,59 @@ export default function OrgContextPage() {
     setSaving(false);
   }
 
+  /* ─── Update helpers ─── */
+  async function updateIssue(id: number) {
+    if (!selectedUnitId || !issueForm.title) { setTried(true); return; }
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = { ...issueForm };
+      if (!payload.impact_level) delete payload.impact_level;
+      if (!payload.relevance) delete payload.relevance;
+      if (!payload.review_date) delete payload.review_date;
+      await api.put(`/api/v1/org-units/${selectedUnitId}/context/issues/${id}`, payload);
+      setEditingIssueId(null);
+      setShowIssueForm(false);
+      setIssueForm({ ...emptyIssueForm });
+      setTried(false);
+      loadContextData(selectedUnitId);
+    } catch (e: unknown) { setError(String(e)); }
+    setSaving(false);
+  }
+
+  async function updateObligation(id: number) {
+    if (!selectedUnitId || !oblForm.custom_name) { setTried(true); return; }
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = { ...oblForm };
+      if (!payload.effective_from) delete payload.effective_from;
+      await api.put(`/api/v1/org-units/${selectedUnitId}/context/obligations/${id}`, payload);
+      setEditingOblId(null);
+      setShowOblForm(false);
+      setOblForm({ ...emptyOblForm });
+      setTried(false);
+      loadContextData(selectedUnitId);
+    } catch (e: unknown) { setError(String(e)); }
+    setSaving(false);
+  }
+
+  async function updateStakeholder(id: number) {
+    if (!selectedUnitId || !stkForm.name) { setTried(true); return; }
+    setSaving(true);
+    try {
+      const payload: Record<string, unknown> = { ...stkForm };
+      if (!payload.requirements_type) delete payload.requirements_type;
+      if (!payload.influence_level) delete payload.influence_level;
+      if (!payload.relevance) delete payload.relevance;
+      await api.put(`/api/v1/org-units/${selectedUnitId}/context/stakeholders/${id}`, payload);
+      setEditingStkId(null);
+      setShowStkForm(false);
+      setStkForm({ ...emptyStkForm });
+      setTried(false);
+      loadContextData(selectedUnitId);
+    } catch (e: unknown) { setError(String(e)); }
+    setSaving(false);
+  }
+
   /* ─── Delete helpers ─── */
   async function deleteIssue(id: number) {
     if (!selectedUnitId) return;
@@ -722,6 +779,65 @@ export default function OrgContextPage() {
     setSelectedStk(null);
     loadContextData(selectedUnitId);
   }
+
+  /* ─── Open edit helpers ─── */
+  function openEditIssue(issue: ContextIssue) {
+    setEditingIssueId(issue.id);
+    setIssueForm({
+      issue_type: issue.issue_type,
+      title: issue.title,
+      description: issue.description ?? "",
+      impact_level: issue.impact_level ?? "",
+      relevance: issue.relevance ?? "",
+      response_action: issue.response_action ?? "",
+      review_date: issue.review_date ?? "",
+    });
+    setShowIssueForm(true);
+  }
+
+  function openEditObligation(obl: ContextObligation) {
+    setEditingOblId(obl.id);
+    setOblForm({
+      obligation_type: obl.obligation_type,
+      custom_name: obl.custom_name ?? "",
+      description: obl.description ?? "",
+      responsible_person: obl.responsible_person ?? "",
+      compliance_status: obl.compliance_status ?? "not_assessed",
+      effective_from: obl.effective_from ?? "",
+    });
+    setShowOblForm(true);
+  }
+
+  function openEditStakeholder(stk: ContextStakeholder) {
+    setEditingStkId(stk.id);
+    setStkForm({
+      stakeholder_type: stk.stakeholder_type,
+      name: stk.name,
+      description: stk.description ?? "",
+      needs_expectations: stk.needs_expectations ?? "",
+      requirements_type: stk.requirements_type ?? "",
+      influence_level: stk.influence_level ?? "",
+      relevance: stk.relevance ?? "",
+    });
+    setShowStkForm(true);
+  }
+
+  /* ─── Tree filtering ─── */
+  const filteredTree = useMemo(() => {
+    if (!treeSearch) return orgUnits;
+    const s = treeSearch.toLowerCase();
+    function filterNodes(nodes: OrgUnitTreeNode[]): OrgUnitTreeNode[] {
+      const result: OrgUnitTreeNode[] = [];
+      for (const n of nodes) {
+        const childMatches = filterNodes(n.children);
+        if (n.name.toLowerCase().includes(s) || n.symbol.toLowerCase().includes(s) || childMatches.length > 0) {
+          result.push({ ...n, children: childMatches.length > 0 ? childMatches : n.children.length > 0 && n.name.toLowerCase().includes(s) ? n.children : childMatches });
+        }
+      }
+      return result;
+    }
+    return filterNodes(orgUnits);
+  }, [orgUnits, treeSearch]);
 
   /* ─── Filtered data ─── */
   const filteredIssues = useMemo(() => {
@@ -763,9 +879,18 @@ export default function OrgContextPage() {
           overflowY: "auto",
           background: "var(--bg-card)",
         }}>
-          <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>Struktura organizacyjna</span>
-            <button className="btn btn-sm btn-primary" style={{ fontSize: 11, padding: "2px 8px" }} onClick={openAddUnitForm}>+ Dodaj</button>
+          <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>Struktura organizacyjna</span>
+              <button className="btn btn-sm btn-primary" style={{ fontSize: 11, padding: "2px 8px" }} onClick={openAddUnitForm}>+ Dodaj</button>
+            </div>
+            <input
+              className="form-control"
+              placeholder="Szukaj jednostki..."
+              value={treeSearch}
+              onChange={e => setTreeSearch(e.target.value)}
+              style={{ fontSize: 12, padding: "4px 8px" }}
+            />
           </div>
           {treeLoading ? (
             <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ładowanie...</div>
@@ -773,7 +898,7 @@ export default function OrgContextPage() {
             <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Brak jednostek</div>
           ) : (
             <div style={{ padding: "4px 0" }}>
-              {orgUnits.map(n => (
+              {filteredTree.map(n => (
                 <ContextTreeNode
                   key={n.id}
                   node={n}
@@ -836,8 +961,7 @@ export default function OrgContextPage() {
               <div style={{ flex: 1, padding: 16, overflowY: "auto" }}>
                 {loading && <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Ładowanie...</div>}
 
-                {!loading && activeTab === "structure" && renderStructure()}
-                {!loading && activeTab === "overview" && overview && renderOverview()}
+                {!loading && activeTab === "info" && renderInfo()}
                 {!loading && activeTab === "issues" && renderIssues()}
                 {!loading && activeTab === "obligations" && renderObligations()}
                 {!loading && activeTab === "stakeholders" && renderStakeholders()}
@@ -863,7 +987,7 @@ export default function OrgContextPage() {
 
   /* ═══════════════ TAB RENDERERS ═══════════════ */
 
-  function renderStructure() {
+  function renderInfo() {
     if (!selectedUnit) return <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 40 }}>Wybierz jednostkę z drzewa</div>;
 
     if (editingUnit) {
@@ -884,12 +1008,12 @@ export default function OrgContextPage() {
               <input className="form-control" value={(unitForm.owner as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, owner: e.target.value || null })} />
             </div>
             <div className="form-group">
-              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Security Contact</label>
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Koordynator bezpieczeństwa</label>
               <input className="form-control" value={(unitForm.security_contact as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, security_contact: e.target.value || null })} />
             </div>
             <div className="form-group">
-              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Opis</label>
-              <textarea className="form-control" rows={2} value={(unitForm.description as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, description: e.target.value || null })} />
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Koordynator IT</label>
+              <input className="form-control" value={(unitForm.it_coordinator as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, it_coordinator: e.target.value || null })} />
             </div>
             <div className="form-group">
               <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Status</label>
@@ -897,6 +1021,10 @@ export default function OrgContextPage() {
                 <option value="active">Aktywna</option>
                 <option value="inactive">Nieaktywna</option>
               </select>
+            </div>
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Opis</label>
+              <textarea className="form-control" rows={2} value={(unitForm.description as string) ?? ""} onChange={e => setUnitForm({ ...unitForm, description: e.target.value || null })} />
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
@@ -909,6 +1037,7 @@ export default function OrgContextPage() {
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Atrybuty jednostki */}
         <div className="card" style={{ padding: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <h3 style={{ margin: 0, fontSize: 15 }}>Atrybuty jednostki</h3>
@@ -921,6 +1050,7 @@ export default function OrgContextPage() {
                   symbol: selectedUnit.symbol,
                   owner: selectedUnit.owner,
                   security_contact: selectedUnit.security_contact,
+                  it_coordinator: (selectedUnit as any).it_coordinator ?? null,
                   description: selectedUnit.description,
                   is_active: selectedUnit.is_active,
                 });
@@ -929,10 +1059,11 @@ export default function OrgContextPage() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, fontSize: 13 }}>
             <DetailRow label="Nazwa" value={selectedUnit.name} />
-            <DetailRow label="Symbol" value={selectedUnit.symbol} />
             <DetailRow label="Poziom" value={selectedUnit.level_name} />
+            <DetailRow label="Symbol" value={selectedUnit.symbol} />
             <DetailRow label="Właściciel biznesowy" value={selectedUnit.owner} />
-            <DetailRow label="Security Contact" value={selectedUnit.security_contact} />
+            <DetailRow label="Koordynator bezpieczeństwa" value={selectedUnit.security_contact} />
+            <DetailRow label="Koordynator IT" value={(selectedUnit as any).it_coordinator} />
             <DetailRow label="Status" value={selectedUnit.is_active ? "Aktywna" : "Nieaktywna"} color={selectedUnit.is_active ? "var(--green)" : "var(--red)"} />
             {selectedUnit.description && (
               <div style={{ gridColumn: "span 2" }}>
@@ -941,25 +1072,116 @@ export default function OrgContextPage() {
             )}
           </div>
         </div>
-        {general && (
-          <div className="card" style={{ padding: 20 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: 15 }}>Dane kontekstowe</h3>
-              <button className="btn btn-sm" onClick={() => { setEditingGeneral(true); setGeneralForm({ headcount: general.headcount, mission_vision: general.mission_vision, key_products_services: general.key_products_services, strategic_objectives: general.strategic_objectives, key_processes_notes: general.key_processes_notes, context_status: general.context_status, context_reviewer: general.context_reviewer }); }}>Edytuj</button>
+
+        {/* Zakresy SZ - tagi klikalne */}
+        {scopes.length > 0 && (
+          <div className="card" style={{ padding: 16 }}>
+            <h3 style={{ margin: "0 0 10px 0", fontSize: 15 }}>Zakresy Systemów Zarządzania</h3>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {scopes.map(s => (
+                <span
+                  key={s.id}
+                  onClick={() => setActiveTab("scope")}
+                  style={{
+                    padding: "4px 12px",
+                    borderRadius: 12,
+                    fontSize: 12,
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    background: s.inherited ? "var(--blue-dim)" : "var(--green-dim)",
+                    color: s.inherited ? "var(--blue)" : "var(--green)",
+                    border: `1px solid ${s.inherited ? "var(--blue)" : "var(--green)"}`,
+                  }}
+                >
+                  {s.management_system_name ?? "Zakres"} (v{s.version})
+                  {s.inherited && <span style={{ marginLeft: 4, fontSize: 10 }}>odz.</span>}
+                </span>
+              ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 13 }}>
-              <DetailRow label="Zatrudnienie" value={general.headcount ?? "—"} />
-              <DetailRow label="Status kontekstu" value={statusLabel(general.context_status)} color={statusColor(general.context_status)} />
-              <DetailRow label="Przeglądający" value={general.context_reviewer} />
-              <DetailRow label="Ostatni przegląd" value={general.context_review_date} />
-              <DetailRow label="Następny przegląd" value={general.context_next_review} />
-            </div>
-            {general.mission_vision && <div style={{ marginTop: 12 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Misja / Wizja</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.mission_vision}</div></div>}
-            {general.key_products_services && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Kluczowe produkty / usługi</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.key_products_services}</div></div>}
-            {general.strategic_objectives && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Cele strategiczne</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.strategic_objectives}</div></div>}
-            {general.key_processes_notes && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Uwagi o kluczowych procesach</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.key_processes_notes}</div></div>}
           </div>
         )}
+
+        {/* Podsumowanie kontekstu - KPI cards */}
+        {overview && (
+          <div className="grid-4">
+            <div className="card" style={{ padding: 16 }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Status kontekstu</div>
+              <div style={{ fontSize: 18, fontWeight: 600, color: statusColor(overview.context_status) }}>{statusLabel(overview.context_status)}</div>
+            </div>
+            <div className="card" style={{ padding: 16, cursor: "pointer" }} onClick={() => setActiveTab("issues")}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Czynniki</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.issues_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.issues_own} wł.)</span></div>
+            </div>
+            <div className="card" style={{ padding: 16, cursor: "pointer" }} onClick={() => setActiveTab("obligations")}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Zobowiązania</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.obligations_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.obligations_own} wł.)</span></div>
+            </div>
+            <div className="card" style={{ padding: 16, cursor: "pointer" }} onClick={() => setActiveTab("stakeholders")}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Interesariusze</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.stakeholders_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.stakeholders_own} wł.)</span></div>
+            </div>
+          </div>
+        )}
+
+        {/* Dane kontekstowe + Podsumowanie sekcji */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          {general && (
+            <div className="card" style={{ padding: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                <h3 style={{ margin: 0, fontSize: 15 }}>Dane kontekstowe</h3>
+                <button className="btn btn-sm" onClick={() => { setEditingGeneral(true); setGeneralForm({ headcount: general.headcount, mission_vision: general.mission_vision, key_products_services: general.key_products_services, strategic_objectives: general.strategic_objectives, key_processes_notes: general.key_processes_notes, context_status: general.context_status, context_reviewer: general.context_reviewer }); }}>Edytuj</button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
+                <DetailRow label="Zatrudnienie" value={general.headcount ?? "—"} />
+                <DetailRow label="Status" value={statusLabel(general.context_status)} color={statusColor(general.context_status)} />
+                <DetailRow label="Przeglądający" value={general.context_reviewer} />
+                <DetailRow label="Ostatni przegląd" value={general.context_review_date} />
+                <DetailRow label="Następny przegląd" value={general.context_next_review} />
+              </div>
+              {general.mission_vision && <div style={{ marginTop: 12 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Misja / Wizja</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.mission_vision}</div></div>}
+              {general.key_products_services && <div style={{ marginTop: 8 }}><div style={{ fontSize: 12, color: "var(--text-muted)" }}>Kluczowe produkty / usługi</div><div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{general.key_products_services}</div></div>}
+            </div>
+          )}
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {overview && (
+              <>
+                <div className="card" style={{ padding: 16 }}>
+                  <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Zakres SZ</h3>
+                  {overview.has_scope ? (
+                    <div style={{ fontSize: 13 }}>
+                      <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Zdefiniowany ({scopes.length})</span>
+                      {overview.scope_inherited && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>(odziedziczony)</span>}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Nie zdefiniowano</div>
+                  )}
+                </div>
+                <div className="card" style={{ padding: 16 }}>
+                  <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Apetyt na ryzyko</h3>
+                  {overview.has_risk_appetite ? (
+                    <div style={{ fontSize: 13 }}>
+                      <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Zdefiniowany</span>
+                      {overview.risk_appetite_inherited && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>(odziedziczony)</span>}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Nie zdefiniowano</div>
+                  )}
+                </div>
+                <div className="card" style={{ padding: 16 }}>
+                  <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Przeglądy</h3>
+                  <div style={{ fontSize: 13 }}>
+                    <DetailRow label="Liczba przeglądów" value={overview.reviews_count} />
+                    <DetailRow label="Ostatni przegląd" value={overview.last_review_date ?? "—"} />
+                    <DetailRow label="Następny przegląd" value={overview.next_review_date ?? "—"} />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Edit general modal */}
         {editingGeneral && (
           <Modal open={editingGeneral} onClose={() => setEditingGeneral(false)} title="Edytuj dane kontekstowe" wide>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -1004,84 +1226,6 @@ export default function OrgContextPage() {
             </div>
           </Modal>
         )}
-      </div>
-    );
-  }
-
-  function renderOverview() {
-    if (!overview || !general) return null;
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {/* Status */}
-        <div className="grid-4">
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Status kontekstu</div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: statusColor(overview.context_status) }}>{statusLabel(overview.context_status)}</div>
-          </div>
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Czynniki</div>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.issues_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.issues_own} własnych, {overview.issues_inherited} odziedziczonych)</span></div>
-          </div>
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Zobowiązania</div>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.obligations_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.obligations_own} wł., {overview.obligations_inherited} odz.)</span></div>
-          </div>
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Interesariusze</div>
-            <div style={{ fontSize: 18, fontWeight: 600 }}>{overview.stakeholders_count} <span style={{ fontSize: 12, color: "var(--text-muted)" }}>({overview.stakeholders_own} wł., {overview.stakeholders_inherited} odz.)</span></div>
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          {/* General info */}
-          <div className="card" style={{ padding: 16 }}>
-            <h3 style={{ margin: "0 0 12px 0", fontSize: 15 }}>Dane ogólne</h3>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-              <DetailRow label="Jednostka" value={general.name} />
-              <DetailRow label="Zatrudnienie" value={general.headcount ?? "—"} />
-              <DetailRow label="Status" value={statusLabel(general.context_status)} color={statusColor(general.context_status)} />
-              <DetailRow label="Przeglądający" value={general.context_reviewer} />
-              <DetailRow label="Ostatni przegląd" value={general.context_review_date} />
-              <DetailRow label="Następny przegląd" value={general.context_next_review} />
-            </div>
-          </div>
-
-          {/* Scope & Risk Appetite summary */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div className="card" style={{ padding: 16 }}>
-              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Zakres SZBI</h3>
-              {overview.has_scope ? (
-                <div style={{ fontSize: 13 }}>
-                  <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Zdefiniowany</span>
-                  {overview.scope_inherited && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>(odziedziczony)</span>}
-                </div>
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Nie zdefiniowano</div>
-              )}
-            </div>
-            <div className="card" style={{ padding: 16 }}>
-              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Apetyt na ryzyko</h3>
-              {overview.has_risk_appetite ? (
-                <div style={{ fontSize: 13 }}>
-                  <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)" }}>Zdefiniowany</span>
-                  {overview.risk_appetite_inherited && <span style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)" }}>(odziedziczony)</span>}
-                </div>
-              ) : (
-                <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Nie zdefiniowano</div>
-              )}
-            </div>
-            <div className="card" style={{ padding: 16 }}>
-              <h3 style={{ margin: "0 0 8px 0", fontSize: 15 }}>Przeglądy</h3>
-              <div style={{ fontSize: 13 }}>
-                <DetailRow label="Liczba przeglądów" value={overview.reviews_count} />
-                <DetailRow label="Ostatni przegląd" value={overview.last_review_date ?? "—"} />
-                <DetailRow label="Następny przegląd" value={overview.next_review_date ?? "—"} />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Edit general modal */}
       </div>
     );
   }
@@ -1145,7 +1289,10 @@ export default function OrgContextPage() {
             {selectedIssue.description && <div style={{ marginTop: 8 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Opis</div><div style={{ whiteSpace: "pre-wrap" }}>{selectedIssue.description}</div></div>}
             {selectedIssue.response_action && <div style={{ marginTop: 8 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Działanie</div><div style={{ whiteSpace: "pre-wrap" }}>{selectedIssue.response_action}</div></div>}
             {!selectedIssue.inherited && (
-              <button className="btn btn-sm" style={{ marginTop: 12, color: "var(--red)" }} onClick={() => deleteIssue(selectedIssue.id)}>Dezaktywuj</button>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button className="btn btn-sm btn-primary" onClick={() => openEditIssue(selectedIssue)}>Edytuj</button>
+                <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => deleteIssue(selectedIssue.id)}>Dezaktywuj</button>
+              </div>
             )}
           </div>
         )}
@@ -1210,7 +1357,10 @@ export default function OrgContextPage() {
             <DetailRow label="Jednostka" value={selectedObl.org_unit_name} />
             {selectedObl.description && <div style={{ marginTop: 8 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Opis</div><div style={{ whiteSpace: "pre-wrap" }}>{selectedObl.description}</div></div>}
             {!selectedObl.inherited && (
-              <button className="btn btn-sm" style={{ marginTop: 12, color: "var(--red)" }} onClick={() => deleteObligation(selectedObl.id)}>Dezaktywuj</button>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button className="btn btn-sm btn-primary" onClick={() => openEditObligation(selectedObl)}>Edytuj</button>
+                <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => deleteObligation(selectedObl.id)}>Dezaktywuj</button>
+              </div>
             )}
           </div>
         )}
@@ -1276,7 +1426,10 @@ export default function OrgContextPage() {
             <DetailRow label="Jednostka" value={selectedStk.org_unit_name} />
             {selectedStk.needs_expectations && <div style={{ marginTop: 8 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Potrzeby / oczekiwania</div><div style={{ whiteSpace: "pre-wrap" }}>{selectedStk.needs_expectations}</div></div>}
             {!selectedStk.inherited && (
-              <button className="btn btn-sm" style={{ marginTop: 12, color: "var(--red)" }} onClick={() => deleteStakeholder(selectedStk.id)}>Dezaktywuj</button>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button className="btn btn-sm btn-primary" onClick={() => openEditStakeholder(selectedStk)}>Edytuj</button>
+                <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => deleteStakeholder(selectedStk.id)}>Dezaktywuj</button>
+              </div>
             )}
           </div>
         )}
@@ -1284,33 +1437,61 @@ export default function OrgContextPage() {
     );
   }
 
-  /* ─── SCOPE ─── */
+  /* ─── SCOPE (multi-scope) ─── */
   function renderScope() {
     return (
-      <div className="card" style={{ padding: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 15 }}>Zakres Systemu Zarządzania Bezpieczeństwem Informacji</h3>
-          <button className="btn btn-sm btn-primary" onClick={() => { setScopeForm(scope ? { scope_statement: scope.scope_statement, in_scope_description: scope.in_scope_description, out_of_scope_description: scope.out_of_scope_description, geographic_boundaries: scope.geographic_boundaries, technology_boundaries: scope.technology_boundaries, organizational_boundaries: scope.organizational_boundaries, interfaces_dependencies: scope.interfaces_dependencies } : {}); setShowScopeForm(true); }}>
-            {scope && !scope.inherited ? "Edytuj" : "Zdefiniuj własny"}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ margin: 0, fontSize: 15 }}>Zakresy Systemów Zarządzania</h3>
+          <button className="btn btn-sm btn-primary" onClick={() => { setScopeForm({}); setShowScopeForm(true); }}>
+            + Dodaj zakres
           </button>
         </div>
-        {!scope ? (
-          <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 30 }}>Zakres nie został zdefiniowany dla tej jednostki ani jednostek nadrzędnych.</div>
+        {scopes.length === 0 ? (
+          <div className="card" style={{ textAlign: "center", color: "var(--text-muted)", padding: 30 }}>Zakres nie został zdefiniowany dla tej jednostki ani jednostek nadrzędnych.</div>
         ) : (
-          <div style={{ fontSize: 13 }}>
-            {scope.inherited && <div style={{ marginBottom: 12, padding: "8px 12px", background: "var(--blue-dim)", borderRadius: 6, fontSize: 12 }}>Odziedziczono z: <strong>{scope.org_unit_name}</strong> (wersja {scope.version})</div>}
-            <DetailRow label="Wersja" value={scope.version} />
-            <DetailRow label="Zatwierdzony przez" value={scope.approved_by} />
-            <DetailRow label="Data zatwierdzenia" value={scope.approved_date} />
-            {scope.scope_statement && <div style={{ marginTop: 12 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Oświadczenie o zakresie</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{scope.scope_statement}</div></div>}
-            {scope.in_scope_description && <div style={{ marginTop: 10 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>W zakresie</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{scope.in_scope_description}</div></div>}
-            {scope.out_of_scope_description && <div style={{ marginTop: 10 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Poza zakresem</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{scope.out_of_scope_description}</div></div>}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 14 }}>
-              {scope.geographic_boundaries && <div><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Granice geograficzne</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{scope.geographic_boundaries}</div></div>}
-              {scope.technology_boundaries && <div><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Granice technologiczne</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{scope.technology_boundaries}</div></div>}
-              {scope.organizational_boundaries && <div><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Granice organizacyjne</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{scope.organizational_boundaries}</div></div>}
+          scopes.map(sc => (
+            <div key={sc.id} className="card" style={{ padding: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                <h4 style={{ margin: 0, fontSize: 14 }}>
+                  <span style={{ padding: "2px 8px", borderRadius: 8, fontSize: 12, background: sc.inherited ? "var(--blue-dim)" : "var(--green-dim)", color: sc.inherited ? "var(--blue)" : "var(--green)", marginRight: 8 }}>
+                    {sc.management_system_name ?? "Ogólny"}
+                  </span>
+                  Wersja {sc.version}
+                </h4>
+                {!sc.inherited && (
+                  <button className="btn btn-sm" onClick={() => {
+                    setScopeForm({
+                      management_system_id: sc.management_system_id,
+                      scope_statement: sc.scope_statement,
+                      in_scope_description: sc.in_scope_description,
+                      out_of_scope_description: sc.out_of_scope_description,
+                      geographic_boundaries: sc.geographic_boundaries,
+                      technology_boundaries: sc.technology_boundaries,
+                      organizational_boundaries: sc.organizational_boundaries,
+                      interfaces_dependencies: sc.interfaces_dependencies,
+                      approved_by: sc.approved_by,
+                      approved_date: sc.approved_date,
+                    });
+                    setShowScopeForm(true);
+                  }}>Edytuj</button>
+                )}
+              </div>
+              <div style={{ fontSize: 13 }}>
+                {sc.inherited && <div style={{ marginBottom: 12, padding: "8px 12px", background: "var(--blue-dim)", borderRadius: 6, fontSize: 12 }}>Odziedziczono z: <strong>{sc.org_unit_name}</strong></div>}
+                <DetailRow label="Zatwierdzony przez" value={sc.approved_by} />
+                <DetailRow label="Data zatwierdzenia" value={sc.approved_date} />
+                {sc.scope_statement && <div style={{ marginTop: 12 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Oświadczenie o zakresie</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{sc.scope_statement}</div></div>}
+                {sc.in_scope_description && <div style={{ marginTop: 10 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>W zakresie</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{sc.in_scope_description}</div></div>}
+                {sc.out_of_scope_description && <div style={{ marginTop: 10 }}><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Poza zakresem</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{sc.out_of_scope_description}</div></div>}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 14 }}>
+                  {sc.geographic_boundaries && <div><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Granice geograficzne</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{sc.geographic_boundaries}</div></div>}
+                  {sc.technology_boundaries && <div><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Granice technologiczne</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{sc.technology_boundaries}</div></div>}
+                  {sc.organizational_boundaries && <div><div style={{ color: "var(--text-muted)", fontSize: 12 }}>Granice organizacyjne</div><div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{sc.organizational_boundaries}</div></div>}
+                </div>
+              </div>
             </div>
-          </div>
+          ))
         )}
       </div>
     );
@@ -1393,7 +1574,7 @@ export default function OrgContextPage() {
 
   function renderIssueModal() {
     return (
-      <Modal open={showIssueForm} onClose={() => { setShowIssueForm(false); setTried(false); }} title="Nowy czynnik kontekstowy">
+      <Modal open={showIssueForm} onClose={() => { setShowIssueForm(false); setEditingIssueId(null); setTried(false); }} title={editingIssueId ? "Edytuj czynnik" : "Nowy czynnik kontekstowy"}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div>
             <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Typ *</label>
@@ -1440,8 +1621,8 @@ export default function OrgContextPage() {
           <textarea className="form-control" rows={2} value={issueForm.response_action} onChange={e => setIssueForm({ ...issueForm, response_action: e.target.value })} />
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-          <button className="btn" onClick={() => { setShowIssueForm(false); setTried(false); }}>Anuluj</button>
-          <button className="btn btn-primary" onClick={saveIssue} disabled={saving}>{saving ? "Zapisywanie..." : "Zapisz"}</button>
+          <button className="btn" onClick={() => { setShowIssueForm(false); setEditingIssueId(null); setTried(false); }}>Anuluj</button>
+          <button className="btn btn-primary" onClick={() => editingIssueId ? updateIssue(editingIssueId) : saveIssue()} disabled={saving}>{saving ? "Zapisywanie..." : "Zapisz"}</button>
         </div>
       </Modal>
     );
@@ -1449,7 +1630,7 @@ export default function OrgContextPage() {
 
   function renderObligationModal() {
     return (
-      <Modal open={showOblForm} onClose={() => { setShowOblForm(false); setTried(false); }} title="Nowe zobowiązanie">
+      <Modal open={showOblForm} onClose={() => { setShowOblForm(false); setEditingOblId(null); setTried(false); }} title={editingOblId ? "Edytuj zobowiązanie" : "Nowe zobowiązanie"}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div>
             <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Typ *</label>
@@ -1490,8 +1671,8 @@ export default function OrgContextPage() {
           </div>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-          <button className="btn" onClick={() => { setShowOblForm(false); setTried(false); }}>Anuluj</button>
-          <button className="btn btn-primary" onClick={saveObligation} disabled={saving}>{saving ? "Zapisywanie..." : "Zapisz"}</button>
+          <button className="btn" onClick={() => { setShowOblForm(false); setEditingOblId(null); setTried(false); }}>Anuluj</button>
+          <button className="btn btn-primary" onClick={() => editingOblId ? updateObligation(editingOblId) : saveObligation()} disabled={saving}>{saving ? "Zapisywanie..." : "Zapisz"}</button>
         </div>
       </Modal>
     );
@@ -1499,7 +1680,7 @@ export default function OrgContextPage() {
 
   function renderStakeholderModal() {
     return (
-      <Modal open={showStkForm} onClose={() => { setShowStkForm(false); setTried(false); }} title="Nowy interesariusz">
+      <Modal open={showStkForm} onClose={() => { setShowStkForm(false); setEditingStkId(null); setTried(false); }} title={editingStkId ? "Edytuj interesariusza" : "Nowy interesariusz"}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div>
             <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Typ *</label>
@@ -1551,8 +1732,8 @@ export default function OrgContextPage() {
           </div>
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-          <button className="btn" onClick={() => { setShowStkForm(false); setTried(false); }}>Anuluj</button>
-          <button className="btn btn-primary" onClick={saveStakeholder} disabled={saving}>{saving ? "Zapisywanie..." : "Zapisz"}</button>
+          <button className="btn" onClick={() => { setShowStkForm(false); setEditingStkId(null); setTried(false); }}>Anuluj</button>
+          <button className="btn btn-primary" onClick={() => editingStkId ? updateStakeholder(editingStkId) : saveStakeholder()} disabled={saving}>{saving ? "Zapisywanie..." : "Zapisz"}</button>
         </div>
       </Modal>
     );
@@ -1597,7 +1778,11 @@ export default function OrgContextPage() {
 
   function renderScopeModal() {
     return (
-      <Modal open={showScopeForm} onClose={() => setShowScopeForm(false)} title="Zakres SZBI" wide>
+      <Modal open={showScopeForm} onClose={() => setShowScopeForm(false)} title="Zakres Systemu Zarządzania" wide>
+        <div style={{ marginBottom: 10 }}>
+          <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Norma ISO (ze słownika management_system)</label>
+          <input className="form-control" placeholder="ID wpisu słownika (np. ISO 27001)" value={(scopeForm.management_system_id as number | null) ?? ""} onChange={e => setScopeForm({ ...scopeForm, management_system_id: e.target.value ? Number(e.target.value) : null })} />
+        </div>
         <div>
           <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Oświadczenie o zakresie</label>
           <textarea className="form-control" rows={3} value={(scopeForm.scope_statement as string) ?? ""} onChange={e => setScopeForm({ ...scopeForm, scope_statement: e.target.value || null })} />
@@ -1683,8 +1868,12 @@ export default function OrgContextPage() {
               <input name="owner" className="form-control" placeholder="np. Jan Kowalski" />
             </div>
             <div className="form-group">
-              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Security Contact</label>
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Koordynator bezpieczeństwa</label>
               <input name="security_contact" className="form-control" placeholder="np. Anna Nowak" />
+            </div>
+            <div className="form-group">
+              <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Koordynator IT</label>
+              <input name="it_coordinator" className="form-control" placeholder="np. Piotr Wiśniewski" />
             </div>
             <div className="form-group" style={{ gridColumn: "span 2" }}>
               <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Opis</label>

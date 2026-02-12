@@ -3,15 +3,6 @@ import { api } from "../services/api";
 import type { CisControl, CisAssessment, OrgUnitTreeNode, DictionaryTypeWithEntries } from "../types";
 import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 
-function flattenTree(nodes: OrgUnitTreeNode[], depth = 0): { id: number; name: string; depth: number }[] {
-  const result: { id: number; name: string; depth: number }[] = [];
-  for (const n of nodes) {
-    result.push({ id: n.id, name: n.name, depth });
-    result.push(...flattenTree(n.children, depth + 1));
-  }
-  return result;
-}
-
 const dimColors: Record<string, string> = {
   policy: "var(--blue)", impl: "var(--green)", auto: "var(--purple)", report: "var(--cyan)",
 };

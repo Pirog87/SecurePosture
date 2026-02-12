@@ -91,6 +91,10 @@ export default function CmdbAdminPage() {
       .finally(() => setCategoryLoading(false));
   }, []);
 
+  const loadRelTypes = useCallback(() => {
+    api.get<RelationshipType[]>("/api/v1/asset-categories/relationship-types/all?include_inactive=true").then(setRelTypes).catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadTree();
     loadRelTypes();
@@ -111,7 +115,7 @@ export default function CmdbAdminPage() {
 
   // ═══════════════════ CATEGORY CRUD ═══════════════════
 
-  const openAddCategory = (parentId?: number | null) => {
+  const openAddCategory = (_parentId?: number | null) => {
     setEditCat(null);
     setShowCatForm(true);
   };
@@ -243,10 +247,6 @@ export default function CmdbAdminPage() {
   };
 
   // ═══════════════════ RELATIONSHIP TYPE CRUD ═══════════════════
-
-  const loadRelTypes = useCallback(() => {
-    api.get<RelationshipType[]>("/api/v1/asset-categories/relationship-types/all?include_inactive=true").then(setRelTypes).catch(() => {});
-  }, []);
 
   const openAddRelType = () => { setEditRelType(null); setShowRelTypeForm(true); };
   const openEditRelType = (rt: RelationshipType) => { setEditRelType(rt); setShowRelTypeForm(true); };

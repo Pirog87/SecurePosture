@@ -118,6 +118,7 @@ export interface Safeguard {
 // Asset
 export interface Asset {
   id: number;
+  ref_id: string | null;
   name: string;
   asset_type_id: number | null;
   asset_type_name: string | null;

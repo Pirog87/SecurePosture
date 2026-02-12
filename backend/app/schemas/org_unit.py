@@ -34,6 +34,7 @@ class OrgUnitOut(BaseModel):
     symbol: str
     owner: str | None = None
     security_contact: str | None = None
+    it_coordinator: str | None = None
     description: str | None = None
     is_active: bool = True
     created_at: datetime
@@ -49,6 +50,7 @@ class OrgUnitCreate(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=30)
     owner: str | None = Field(None, max_length=200)
     security_contact: str | None = Field(None, max_length=200)
+    it_coordinator: str | None = Field(None, max_length=200)
     description: str | None = None
 
 
@@ -59,6 +61,7 @@ class OrgUnitUpdate(BaseModel):
     symbol: str | None = Field(None, min_length=1, max_length=30)
     owner: str | None = Field(None, max_length=200)
     security_contact: str | None = Field(None, max_length=200)
+    it_coordinator: str | None = Field(None, max_length=200)
     description: str | None = None
     is_active: bool | None = None
 
@@ -73,5 +76,7 @@ class OrgUnitTreeNode(BaseModel):
     name: str
     symbol: str
     owner: str | None = None
+    security_contact: str | None = None
+    it_coordinator: str | None = None
     is_active: bool = True
     children: list["OrgUnitTreeNode"] = []

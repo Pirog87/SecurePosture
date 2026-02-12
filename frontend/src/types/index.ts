@@ -46,6 +46,7 @@ export interface OrgUnit {
   symbol: string;
   owner: string | null;
   security_contact: string | null;
+  it_coordinator: string | null;
   description: string | null;
   is_active: boolean;
   deactivated_at: string | null;

@@ -803,41 +803,53 @@ async def _get_effective_scope(
 
 @router.get(
     PREFIX + "/scope",
-    response_model=OrgContextScopeOut | None,
-    summary="Pobierz zakres SZBI (z dziedziczeniem)",
-    description="Zwraca własny zakres lub odziedziczony z najbliższej nadrzędnej jednostki.",
+    response_model=list[OrgContextScopeOut],
+    summary="Pobierz zakresy SZ (z dziedziczeniem)",
+    description="Zwraca listę zakresów — własne + odziedziczone z nadrzędnych jednostek.",
 )
 async def get_scope(
     org_unit_id: int,
     s: AsyncSession = Depends(get_session),
 ):
     await _get_org_unit(s, org_unit_id)
-    scope, inherited = await _get_effective_scope(s, org_unit_id)
-    if not scope:
-        return None
-    unit_name = await _get_unit_name(s, scope.org_unit_id)
-    ms_name = await _get_dict_name(s, scope.management_system_id)
-    return OrgContextScopeOut(
-        id=scope.id, org_unit_id=scope.org_unit_id, org_unit_name=unit_name,
-        management_system_id=scope.management_system_id, management_system_name=ms_name,
-        scope_statement=scope.scope_statement,
-        in_scope_description=scope.in_scope_description,
-        out_of_scope_description=scope.out_of_scope_description,
-        geographic_boundaries=scope.geographic_boundaries,
-        technology_boundaries=scope.technology_boundaries,
-        organizational_boundaries=scope.organizational_boundaries,
-        interfaces_dependencies=scope.interfaces_dependencies,
-        approved_by=scope.approved_by, approved_date=scope.approved_date,
-        version=scope.version, is_active=scope.is_active, inherited=inherited,
-        created_at=scope.created_at, updated_at=scope.updated_at,
-    )
+    # Collect all active scopes from self + ancestors
+    chain = await _get_ancestor_chain(s, org_unit_id)
+    result: list[OrgContextScopeOut] = []
+    seen_ms_ids: set[int | None] = set()
+    for uid in reversed(chain):  # self first, then up
+        q = select(OrgContextScope).where(
+            OrgContextScope.org_unit_id == uid, OrgContextScope.is_active.is_(True)
+        ).order_by(OrgContextScope.version.desc())
+        scopes = (await s.execute(q)).scalars().all()
+        inherited = uid != org_unit_id
+        for scope in scopes:
+            if scope.management_system_id in seen_ms_ids:
+                continue  # own scope overrides inherited for same MS
+            seen_ms_ids.add(scope.management_system_id)
+            unit_name = await _get_unit_name(s, scope.org_unit_id)
+            ms_name = await _get_dict_name(s, scope.management_system_id)
+            result.append(OrgContextScopeOut(
+                id=scope.id, org_unit_id=scope.org_unit_id, org_unit_name=unit_name,
+                management_system_id=scope.management_system_id, management_system_name=ms_name,
+                scope_statement=scope.scope_statement,
+                in_scope_description=scope.in_scope_description,
+                out_of_scope_description=scope.out_of_scope_description,
+                geographic_boundaries=scope.geographic_boundaries,
+                technology_boundaries=scope.technology_boundaries,
+                organizational_boundaries=scope.organizational_boundaries,
+                interfaces_dependencies=scope.interfaces_dependencies,
+                approved_by=scope.approved_by, approved_date=scope.approved_date,
+                version=scope.version, is_active=scope.is_active, inherited=inherited,
+                created_at=scope.created_at, updated_at=scope.updated_at,
+            ))
+    return result
 
 
 @router.post(
     PREFIX + "/scope",
     response_model=OrgContextScopeOut,
     status_code=201,
-    summary="Utwórz/nadpisz zakres SZBI dla tej jednostki",
+    summary="Utwórz/nadpisz zakres SZ dla tej jednostki",
 )
 async def create_scope(
     org_unit_id: int,
@@ -845,16 +857,18 @@ async def create_scope(
     s: AsyncSession = Depends(get_session),
 ):
     await _get_org_unit(s, org_unit_id)
-    # Check if own scope exists — bump version
+    # Check if own scope exists for same management_system_id — bump version
     q = select(OrgContextScope).where(
-        OrgContextScope.org_unit_id == org_unit_id, OrgContextScope.is_active.is_(True)
+        OrgContextScope.org_unit_id == org_unit_id,
+        OrgContextScope.is_active.is_(True),
+        OrgContextScope.management_system_id == body.management_system_id,
     ).order_by(OrgContextScope.version.desc()).limit(1)
     existing = (await s.execute(q)).scalar_one_or_none()
     new_version = (existing.version + 1) if existing else 1
 
     scope = OrgContextScope(org_unit_id=org_unit_id, version=new_version, **body.model_dump())
     s.add(scope)
-    # Deactivate previous version
+    # Deactivate previous version for same MS
     if existing:
         existing.is_active = False
     await s.commit()

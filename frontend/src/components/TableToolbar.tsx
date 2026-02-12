@@ -42,6 +42,9 @@ interface Props<T> {
   /** Primary action button */
   primaryLabel?: string;
   onPrimaryAction?: () => void;
+
+  /** Secondary action buttons */
+  secondaryActions?: { label: string; onClick: () => void }[];
 }
 
 export default function TableToolbar<T>(props: Props<T>) {
@@ -51,7 +54,7 @@ export default function TableToolbar<T>(props: Props<T>) {
     showFilters, onToggleFilters, hasActiveFilters, onClearFilters,
     columns, visibleColumns, onToggleColumn,
     data, exportFilename = "export",
-    primaryLabel, onPrimaryAction,
+    primaryLabel, onPrimaryAction, secondaryActions,
   } = props;
 
   const [showColPicker, setShowColPicker] = useState(false);
@@ -174,6 +177,12 @@ export default function TableToolbar<T>(props: Props<T>) {
             </div>
           )}
         </div>
+
+        {secondaryActions?.map((action) => (
+          <button key={action.label} className="btn btn-sm" style={{ fontSize: 11 }} onClick={action.onClick}>
+            {action.label}
+          </button>
+        ))}
 
         {primaryLabel && onPrimaryAction && (
           <button className="btn btn-primary btn-sm" onClick={onPrimaryAction}>

@@ -1,7 +1,12 @@
 """
 Asset registry module — /api/v1/assets
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+import csv
+import io
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -302,3 +307,105 @@ async def get_asset_graph(s: AsyncSession = Depends(get_session)):
             ))
 
     return AssetGraph(nodes=nodes, edges=edges)
+
+
+# ═══════════════════ CSV IMPORT ═══════════════════
+
+@router.post("/import/csv", summary="Import aktywow z CSV")
+async def import_csv(
+    file: UploadFile = File(...),
+    asset_category_id: int | None = Query(None),
+    s: AsyncSession = Depends(get_session),
+):
+    """Import assets from CSV file. Expected columns: name (required),
+    owner, description, location, plus any custom attribute keys."""
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(400, "Plik musi byc w formacie CSV")
+
+    content = await file.read()
+    try:
+        text = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = content.decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text), delimiter=";")
+    if not reader.fieldnames:
+        # Try comma-separated
+        reader = csv.DictReader(io.StringIO(text), delimiter=",")
+    if not reader.fieldnames:
+        raise HTTPException(400, "Nie mozna odczytac naglowkow CSV")
+
+    core_fields = {"name", "owner", "description", "location"}
+    created = 0
+    errors = []
+
+    for row_num, row in enumerate(reader, start=2):
+        name = (row.get("name") or "").strip()
+        if not name:
+            errors.append(f"Wiersz {row_num}: brak nazwy")
+            continue
+
+        custom_attrs = {}
+        for k, v in row.items():
+            if k and k not in core_fields and v and v.strip():
+                custom_attrs[k] = v.strip()
+
+        asset = Asset(
+            name=name,
+            owner=(row.get("owner") or "").strip() or None,
+            description=(row.get("description") or "").strip() or None,
+            location=(row.get("location") or "").strip() or None,
+            asset_category_id=asset_category_id,
+            custom_attributes=custom_attrs if custom_attrs else None,
+        )
+        s.add(asset)
+        await s.flush()
+        asset.ref_id = f"AST-{asset.id:04d}"
+        created += 1
+
+    await s.commit()
+    return JSONResponse({
+        "status": "ok",
+        "created": created,
+        "errors": errors[:20],
+        "total_errors": len(errors),
+    })
+
+
+# ═══════════════════ BULK OPERATIONS ═══════════════════
+
+@router.post("/bulk/archive", summary="Archiwizuj wiele aktywow")
+async def bulk_archive(
+    body: dict,
+    s: AsyncSession = Depends(get_session),
+):
+    asset_ids: list[int] = body.get("asset_ids", [])
+    if not asset_ids:
+        raise HTTPException(400, "Brak asset_ids")
+    q = select(Asset).where(Asset.id.in_(asset_ids))
+    assets = (await s.execute(q)).scalars().all()
+    count = 0
+    for a in assets:
+        a.is_active = False
+        count += 1
+    await s.commit()
+    return {"status": "ok", "archived": count}
+
+
+@router.post("/bulk/assign-category", summary="Przypisz kategorie do wielu aktywow")
+async def bulk_assign_category(
+    body: dict,
+    s: AsyncSession = Depends(get_session),
+):
+    asset_ids: list[int] = body.get("asset_ids", [])
+    category_id: int | None = body.get("asset_category_id")
+    if not asset_ids:
+        raise HTTPException(400, "Brak asset_ids")
+    q = select(Asset).where(Asset.id.in_(asset_ids))
+    assets = (await s.execute(q)).scalars().all()
+    count = 0
+    for a in assets:
+        a.asset_category_id = category_id
+        count += 1
+    await s.commit()
+    return {"status": "ok", "updated": count}

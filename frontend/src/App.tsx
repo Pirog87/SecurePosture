@@ -27,6 +27,7 @@ import VendorsPage from "./pages/VendorsPage";
 import AwarenessPage from "./pages/AwarenessPage";
 import SecurityScorePage from "./pages/SecurityScorePage";
 import OrgContextPage from "./pages/OrgContextPage";
+import CmdbAdminPage from "./pages/CmdbAdminPage";
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="assets" element={<AssetsPage />} />
           <Route path="assets/legacy" element={<AssetRegistryPage />} />
           <Route path="assets/graph" element={<Navigate to="/assets" replace />} />
+          <Route path="assets/admin" element={<CmdbAdminPage />} />
           <Route path="risks" element={<RisksPage />} />
           <Route path="reviews" element={<ReviewsPage />} />
           <Route path="frameworks" element={<FrameworksPage />} />

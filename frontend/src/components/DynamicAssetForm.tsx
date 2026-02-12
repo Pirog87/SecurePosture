@@ -1,5 +1,6 @@
-import { useState, useMemo } from "react";
-import type { CategoryFieldDefinition } from "../types";
+import { useState, useEffect, useMemo } from "react";
+import { api } from "../services/api";
+import type { Asset, CategoryFieldDefinition } from "../types";
 
 /* ═══════════════════════════════════════════════
    DynamicAssetForm
@@ -267,6 +268,20 @@ function FieldRenderer({ field, value, onChange, readOnly }: {
       );
     }
 
+    case "reference":
+      return (
+        <div className="form-group" style={gridStyle}>
+          {labelEl}
+          <ReferenceField
+            field={field}
+            value={value}
+            onChange={onChange}
+            readOnly={readOnly}
+            inputStyle={inputStyle}
+          />
+        </div>
+      );
+
     case "textarea":
       return (
         <div className="form-group" style={gridStyle}>
@@ -303,6 +318,58 @@ function FieldRenderer({ field, value, onChange, readOnly }: {
         </div>
       );
   }
+}
+
+/* ── Reference field: loads assets from a specific category ── */
+function ReferenceField({ field, value, onChange, readOnly, inputStyle }: {
+  field: CategoryFieldDefinition;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  readOnly: boolean;
+  inputStyle: React.CSSProperties;
+}) {
+  const [refAssets, setRefAssets] = useState<Asset[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (field.reference_category_id) {
+      setLoading(true);
+      api.get<Asset[]>(`/api/v1/assets?asset_category_id=${field.reference_category_id}`)
+        .then(setRefAssets)
+        .catch(() => setRefAssets([]))
+        .finally(() => setLoading(false));
+    }
+  }, [field.reference_category_id]);
+
+  const selectedName = useMemo(() => {
+    if (!value) return null;
+    const asset = refAssets.find(a => a.id === Number(value));
+    return asset?.name || `Asset #${value}`;
+  }, [value, refAssets]);
+
+  if (readOnly) {
+    return (
+      <div style={{ fontSize: 13, padding: "4px 0" }}>
+        {selectedName || "\u2014"}
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={value != null ? String(value) : ""}
+      onChange={e => onChange(e.target.value ? Number(e.target.value) : null)}
+      required={field.is_required}
+      className="form-control"
+      style={inputStyle}
+      disabled={loading}
+    >
+      <option value="">{loading ? "Ladowanie..." : "Wybierz aktyw..."}</option>
+      {refAssets.map(a => (
+        <option key={a.id} value={a.id}>{a.name}</option>
+      ))}
+    </select>
+  );
 }
 
 /* ── Parse options from JSON ── */

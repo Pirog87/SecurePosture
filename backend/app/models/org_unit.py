@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -31,6 +31,17 @@ class OrgUnit(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     deactivated_at: Mapped[datetime | None] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    # Context extension fields (ISO 27001 clause 4)
+    headcount: Mapped[int | None] = mapped_column(Integer)
+    context_review_date: Mapped[date | None] = mapped_column(Date)
+    context_next_review: Mapped[date | None] = mapped_column(Date)
+    context_reviewer: Mapped[str | None] = mapped_column(String(200))
+    context_status: Mapped[str | None] = mapped_column(String(30))  # draft / in_review / approved / needs_update
+    mission_vision: Mapped[str | None] = mapped_column(Text)
+    key_products_services: Mapped[str | None] = mapped_column(Text)
+    strategic_objectives: Mapped[str | None] = mapped_column(Text)
+    key_processes_notes: Mapped[str | None] = mapped_column(Text)
 
     parent: Mapped["OrgUnit | None"] = relationship(remote_side=[id])
     level: Mapped["OrgLevel"] = relationship()

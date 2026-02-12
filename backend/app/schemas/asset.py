@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +37,13 @@ class AssetOut(BaseModel):
     status_name: str | None = None
     last_scan_date: date | None = None
     notes: str | None = None
+    # CMDB Phase 2: category tree + custom attributes
+    asset_category_id: int | None = None
+    asset_category_name: str | None = None
+    asset_category_code: str | None = None
+    asset_category_icon: str | None = None
+    asset_category_color: str | None = None
+    custom_attributes: dict[str, Any] | None = None
     is_active: bool = True
     risk_count: int = 0
     created_at: datetime
@@ -66,6 +74,9 @@ class AssetCreate(BaseModel):
     status_id: int | None = None
     last_scan_date: date | None = None
     notes: str | None = None
+    # CMDB Phase 2
+    asset_category_id: int | None = None
+    custom_attributes: dict[str, Any] | None = None
 
 
 class AssetRelationshipOut(BaseModel):
@@ -132,4 +143,7 @@ class AssetUpdate(BaseModel):
     status_id: int | None = None
     last_scan_date: date | None = None
     notes: str | None = None
+    # CMDB Phase 2
+    asset_category_id: int | None = None
+    custom_attributes: dict[str, Any] | None = None
     is_active: bool | None = None

@@ -10,6 +10,7 @@ import CatalogsPage from "./pages/CatalogsPage";
 import DictionariesPage from "./pages/DictionariesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AssetGraphPage from "./pages/AssetGraphPage";
+import AssetsPage from "./pages/AssetsPage";
 import ActionsPage from "./pages/ActionsPage";
 import AuditPage from "./pages/AuditPage";
 import DomainDashboardPage from "./pages/DomainDashboardPage";
@@ -35,8 +36,9 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="security-score" element={<SecurityScorePage />} />
           <Route path="domains" element={<DomainDashboardPage />} />
-          <Route path="assets" element={<AssetRegistryPage />} />
-          <Route path="assets/graph" element={<AssetGraphPage />} />
+          <Route path="assets" element={<AssetsPage />} />
+          <Route path="assets/legacy" element={<AssetRegistryPage />} />
+          <Route path="assets/graph" element={<Navigate to="/assets" replace />} />
           <Route path="risks" element={<RisksPage />} />
           <Route path="reviews" element={<ReviewsPage />} />
           <Route path="frameworks" element={<FrameworksPage />} />

@@ -5,6 +5,7 @@ from .org_unit import OrgLevel, OrgUnit
 from .security_area import SecurityArea, SecurityDomain, DomainCisControl
 from .catalog import Threat, Vulnerability, Safeguard
 from .asset import Asset, AssetRelationship
+from .asset_category import AssetCategory, CategoryFieldDefinition, RelationshipType
 from .risk import Risk, RiskSafeguard, RiskReview, RiskReviewConfig
 from .cis import CisControl, CisSubControl, CisAttackMapping, CisAssessment, CisAssessmentAnswer
 from .vulnerability import VulnerabilityRecord
@@ -44,6 +45,7 @@ __all__ = [
     "SecurityArea", "SecurityDomain", "DomainCisControl",
     "Threat", "Vulnerability", "Safeguard",
     "Asset", "AssetRelationship",
+    "AssetCategory", "CategoryFieldDefinition", "RelationshipType",
     "Risk", "RiskSafeguard", "RiskReview", "RiskReviewConfig",
     "Action", "ActionLink", "ActionHistory",
     "CisControl", "CisSubControl", "CisAttackMapping", "CisAssessment", "CisAssessmentAnswer",

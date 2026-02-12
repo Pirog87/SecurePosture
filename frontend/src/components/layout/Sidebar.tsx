@@ -25,8 +25,7 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "Zarządzanie Ryzykiem",
     items: [
-      { to: "/assets", icon: "🖥️", label: "Rejestr Aktywów" },
-      { to: "/assets/graph", icon: "🔗", label: "Graf Aktywów" },
+      { to: "/assets", icon: "🖥️", label: "Aktywa (CMDB)" },
       { to: "/risks", icon: "⚠️", label: "Rejestr Ryzyk" },
       { to: "/reviews", icon: "🔄", label: "Przeglądy" },
       { to: "/actions", icon: "🎯", label: "Działania" },

@@ -7,6 +7,7 @@ from app.database import check_db_connection
 from app.middleware.audit_auto import install_audit_listeners, set_audit_context
 from app.routers.action import router as action_router
 from app.routers.asset import router as asset_router
+from app.routers.asset_category import router as asset_category_router
 from app.routers.audit import router as audit_router
 from app.routers.catalog import router as catalog_router
 from app.routers.assessment import router as assessment_router
@@ -69,6 +70,7 @@ app.include_router(org_unit_router)
 app.include_router(security_area_router)
 app.include_router(catalog_router)
 app.include_router(asset_router)
+app.include_router(asset_category_router)
 app.include_router(risk_router)
 app.include_router(risk_review_router)
 app.include_router(action_router)

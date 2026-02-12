@@ -25,6 +25,7 @@ class Action(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     effectiveness_rating: Mapped[int | None] = mapped_column(Integer)
     effectiveness_notes: Mapped[str | None] = mapped_column(Text)
+    implementation_notes: Mapped[str | None] = mapped_column(Text)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
@@ -56,4 +57,19 @@ class ActionHistory(Base):
     old_value: Mapped[str | None] = mapped_column(Text)
     new_value: Mapped[str | None] = mapped_column(Text)
     changed_by: Mapped[str | None] = mapped_column(String(200))
+    change_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ActionAttachment(Base):
+    """File attachments for action implementation evidence"""
+    __tablename__ = "action_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    action_id: Mapped[int] = mapped_column(ForeignKey("actions.id", ondelete="CASCADE"), nullable=False)
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(200))
+    uploaded_by: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

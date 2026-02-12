@@ -350,6 +350,13 @@ export interface ActionLink {
   entity_type: string;
   entity_id: number;
   entity_name: string | null;
+  entity_extra: {
+    risk_score?: number;
+    risk_level?: string;
+    status_name?: string;
+    org_unit_name?: string;
+    other_action_count?: number;
+  } | null;
   created_at: string;
 }
 
@@ -359,6 +366,17 @@ export interface ActionHistory {
   old_value: string | null;
   new_value: string | null;
   changed_by: string | null;
+  change_reason: string | null;
+  created_at: string;
+}
+
+export interface ActionAttachment {
+  id: number;
+  filename: string;
+  original_name: string;
+  file_size: number;
+  content_type: string | null;
+  uploaded_by: string | null;
   created_at: string;
 }
 
@@ -380,10 +398,12 @@ export interface Action {
   completed_at: string | null;
   effectiveness_rating: number | null;
   effectiveness_notes: string | null;
+  implementation_notes: string | null;
   is_active: boolean;
   is_overdue: boolean;
   links: ActionLink[];
   history: ActionHistory[];
+  attachments: ActionAttachment[];
   created_at: string;
   updated_at: string;
 }

@@ -8,6 +8,7 @@ class ActionLinkOut(BaseModel):
     entity_type: str
     entity_id: int
     entity_name: str | None = None
+    entity_extra: dict | None = None  # extra info about linked entity (score, level, etc.)
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -18,6 +19,18 @@ class ActionHistoryOut(BaseModel):
     old_value: str | None = None
     new_value: str | None = None
     changed_by: str | None = None
+    change_reason: str | None = None
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class ActionAttachmentOut(BaseModel):
+    id: int
+    filename: str
+    original_name: str
+    file_size: int
+    content_type: str | None = None
+    uploaded_by: str | None = None
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -40,10 +53,12 @@ class ActionOut(BaseModel):
     completed_at: datetime | None = None
     effectiveness_rating: int | None = None
     effectiveness_notes: str | None = None
+    implementation_notes: str | None = None
     is_active: bool = True
     is_overdue: bool = False
     links: list[ActionLinkOut] = []
     history: list[ActionHistoryOut] = []
+    attachments: list[ActionAttachmentOut] = []
     created_at: datetime
     updated_at: datetime
     model_config = {"from_attributes": True}
@@ -75,9 +90,13 @@ class ActionUpdate(BaseModel):
     completed_at: datetime | None = None
     effectiveness_rating: int | None = Field(None, ge=1, le=5)
     effectiveness_notes: str | None = None
+    implementation_notes: str | None = None
     links: list[dict] | None = None
+    change_reason: str | None = None  # reason/justification for the change
 
 
 class ActionCloseRequest(BaseModel):
     effectiveness_rating: int = Field(..., ge=1, le=5)
     effectiveness_notes: str | None = None
+    implementation_notes: str | None = None
+    change_reason: str | None = None

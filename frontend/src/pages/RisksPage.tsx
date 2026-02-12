@@ -4,6 +4,8 @@ import { api } from "../services/api";
 import type { Risk, Asset, OrgUnitTreeNode, SecurityArea, Threat, Vulnerability, Safeguard, DictionaryTypeWithEntries, Action } from "../types";
 import { flattenTree, buildPathMap } from "../utils/orgTree";
 import Modal from "../components/Modal";
+import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
+import { useColumnVisibility } from "../hooks/useColumnVisibility";
 
 /* ─── Risk score helpers ─── */
 function riskColor(R: number) { return R >= 221 ? "var(--red)" : R >= 31 ? "var(--orange)" : "var(--green)"; }
@@ -103,6 +105,21 @@ export default function RisksPage() {
   }, []);
 
   const orgPathMap = useMemo(() => buildPathMap(orgTree), [orgTree]);
+
+  const COLUMNS: ColumnDef<Risk>[] = [
+    { key: "id", header: "ID", format: r => `R-${r.id}` },
+    { key: "asset_name", header: "Aktywo" },
+    { key: "org_unit_name", header: "Pion", format: r => r.org_unit_name ?? "" },
+    { key: "risk_category_name", header: "Kategoria", format: r => r.risk_category_name ?? "" },
+    { key: "security_area_name", header: "Domena", format: r => r.security_area_name ?? "" },
+    { key: "risk_score", header: "Ocena (R)", format: r => (r.risk_score ?? 0).toFixed(1) },
+    { key: "status_name", header: "Status", format: r => r.status_name ?? "" },
+    { key: "owner", header: "Wlasciciel", format: r => r.owner ?? "" },
+  ];
+
+  const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "risks");
+
+  const [searchText, setSearchText] = useState("");
 
   const loadLookups = async (): Promise<FormLookups> => {
     if (lookups) return lookups;
@@ -224,6 +241,18 @@ export default function RisksPage() {
     if (filterLevel) result = result.filter(r => r.risk_level === filterLevel);
     if (filterOwner) result = result.filter(r => (r.owner ?? "").toLowerCase().includes(filterOwner.toLowerCase()));
 
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      result = result.filter(r =>
+        r.asset_name.toLowerCase().includes(q) ||
+        (r.org_unit_name ?? "").toLowerCase().includes(q) ||
+        (r.owner ?? "").toLowerCase().includes(q) ||
+        (r.status_name ?? "").toLowerCase().includes(q) ||
+        (r.risk_category_name ?? "").toLowerCase().includes(q) ||
+        (r.security_area_name ?? "").toLowerCase().includes(q)
+      );
+    }
+
     result.sort((a, b) => {
       let cmp = 0;
       const av = (a as any)[sortField];
@@ -237,7 +266,7 @@ export default function RisksPage() {
     });
 
     return result;
-  }, [risks, filterAsset, filterOrg, filterStatus, filterLevel, filterOwner, sortField, sortDir, orgPathMap]);
+  }, [risks, filterAsset, filterOrg, filterStatus, filterLevel, filterOwner, searchText, sortField, sortDir, orgPathMap]);
 
   const hasFilters = filterAsset || filterOrg || filterStatus || filterLevel || filterOwner;
 
@@ -269,24 +298,55 @@ export default function RisksPage() {
           <pre style={{ margin: "8px 0 0", fontSize: 12, color: "#ff6b6b", whiteSpace: "pre-wrap" }}>{error}</pre>
         </div>
       )}
+      {/* ─── KPI Stats Cards ─── */}
+      {(() => {
+        const highRiskCount = risks.filter(r => (r.risk_score ?? 0) >= 221).length;
+        const mediumRiskCount = risks.filter(r => { const s = r.risk_score ?? 0; return s >= 31 && s < 221; }).length;
+        const lowRiskCount = risks.filter(r => (r.risk_score ?? 0) < 31).length;
+        void lowRiskCount; // used implicitly via total - high - medium
+        const avgRisk = risks.length > 0 ? risks.reduce((s, r) => s + (r.risk_score ?? 0), 0) / risks.length : 0;
+        return (
+          <div className="grid-4" style={{ marginBottom: 16 }}>
+            <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
+              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>{risks.length}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Wszystkich ryzyk</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
+              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--red)" }}>{highRiskCount}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Wysokich</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
+              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--orange)" }}>{mediumRiskCount}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Srednich</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
+              <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>{avgRisk.toFixed(1)}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Srednia ocena</div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ─── Toolbar ─── */}
-      <div className="toolbar">
-        <div className="toolbar-left">
-          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            {filteredAndSorted.length}{filteredAndSorted.length !== risks.length ? ` / ${risks.length}` : ""} ryzyk
-          </span>
-          <button
-            className="btn btn-sm"
-            style={{ fontSize: 11, color: showFilters ? "var(--blue)" : undefined }}
-            onClick={() => setShowFilters(f => !f)}
-          >
-            Filtry {showFilters ? "\u25B2" : "\u25BC"}
-          </button>
-        </div>
-        <div className="toolbar-right">
-          <button className="btn btn-primary btn-sm" onClick={openAddForm}>+ Dodaj ryzyko</button>
-        </div>
-      </div>
+      <TableToolbar
+        filteredCount={filteredAndSorted.length}
+        totalCount={risks.length}
+        unitLabel="ryzyk"
+        search={searchText}
+        onSearchChange={setSearchText}
+        searchPlaceholder="Szukaj ryzyk..."
+        showFilters={showFilters}
+        onToggleFilters={() => setShowFilters(f => !f)}
+        hasActiveFilters={!!(filterAsset || filterOrg || filterStatus || filterLevel || filterOwner)}
+        onClearFilters={() => { setFilterAsset(""); setFilterOrg(""); setFilterStatus(""); setFilterLevel(""); setFilterOwner(""); }}
+        columns={COLUMNS}
+        visibleColumns={visibleCols}
+        onToggleColumn={toggleCol}
+        data={filteredAndSorted}
+        exportFilename="ryzyka"
+        primaryLabel="Dodaj ryzyko"
+        onPrimaryAction={openAddForm}
+      />
 
       {/* ─── Filter row ─── */}
       {showFilters && (
@@ -330,14 +390,14 @@ export default function RisksPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <SortableHeader field="id" label="ID" />
-                  <SortableHeader field="asset_name" label="Aktywo" />
-                  <SortableHeader field="org_unit_name" label="Pion" />
-                  <SortableHeader field="risk_category_name" label="Kategoria" />
-                  <SortableHeader field="security_area_name" label="Domena" />
-                  <SortableHeader field="risk_score" label="Ocena (R)" />
-                  <SortableHeader field="status_name" label="Status" />
-                  <SortableHeader field="owner" label="Wlasciciel" />
+                  {visibleCols.has("id") && <SortableHeader field="id" label="ID" />}
+                  {visibleCols.has("asset_name") && <SortableHeader field="asset_name" label="Aktywo" />}
+                  {visibleCols.has("org_unit_name") && <SortableHeader field="org_unit_name" label="Pion" />}
+                  {visibleCols.has("risk_category_name") && <SortableHeader field="risk_category_name" label="Kategoria" />}
+                  {visibleCols.has("security_area_name") && <SortableHeader field="security_area_name" label="Domena" />}
+                  {visibleCols.has("risk_score") && <SortableHeader field="risk_score" label="Ocena (R)" />}
+                  {visibleCols.has("status_name") && <SortableHeader field="status_name" label="Status" />}
+                  {visibleCols.has("owner") && <SortableHeader field="owner" label="Wlasciciel" />}
                 </tr>
               </thead>
               <tbody>
@@ -350,18 +410,18 @@ export default function RisksPage() {
                     }}
                     onClick={() => setSelected(selected?.id === r.id ? null : r)}
                   >
-                    <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>R-{r.id}</td>
-                    <td style={{ fontWeight: 500 }}>{r.asset_name}</td>
-                    <td style={{ fontSize: 11 }}>{orgPathMap.get(r.org_unit_id) ?? r.org_unit_name}</td>
-                    <td style={{ fontSize: 11 }}>{r.risk_category_name ?? "\u2014"}</td>
-                    <td style={{ fontSize: 11 }}>{r.security_area_name ?? "\u2014"}</td>
-                    <td>
+                    {visibleCols.has("id") && <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>R-{r.id}</td>}
+                    {visibleCols.has("asset_name") && <td style={{ fontWeight: 500 }}>{r.asset_name}</td>}
+                    {visibleCols.has("org_unit_name") && <td style={{ fontSize: 11 }}>{orgPathMap.get(r.org_unit_id) ?? r.org_unit_name}</td>}
+                    {visibleCols.has("risk_category_name") && <td style={{ fontSize: 11 }}>{r.risk_category_name ?? "\u2014"}</td>}
+                    {visibleCols.has("security_area_name") && <td style={{ fontSize: 11 }}>{r.security_area_name ?? "\u2014"}</td>}
+                    {visibleCols.has("risk_score") && <td>
                       <span className="score-badge" style={{ background: riskBg(r.risk_score ?? 0), color: riskColor(r.risk_score ?? 0) }}>
                         {(r.risk_score ?? 0).toFixed(1)} {riskLabel(r.risk_score ?? 0)}
                       </span>
-                    </td>
-                    <td><span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{r.status_name ?? "\u2014"}</span></td>
-                    <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.owner ?? "\u2014"}</td>
+                    </td>}
+                    {visibleCols.has("status_name") && <td><span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{r.status_name ?? "\u2014"}</span></td>}
+                    {visibleCols.has("owner") && <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{r.owner ?? "\u2014"}</td>}
                   </tr>
                 ))}
               </tbody>

@@ -4,6 +4,8 @@ import { api } from "../services/api";
 import type { Asset, OrgUnitTreeNode, DictionaryTypeWithEntries } from "../types";
 import { flattenTree, buildPathMap, collectDescendantIds } from "../utils/orgTree";
 import Modal from "../components/Modal";
+import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
+import { useColumnVisibility } from "../hooks/useColumnVisibility";
 
 /* Exception reference for asset detail */
 interface AssetExceptionRef {
@@ -36,6 +38,9 @@ interface FormLookups {
   criticalities: { id: number; label: string }[];
 }
 
+type SortField = "id" | "name" | "asset_type_name" | "category_name" | "org_unit_name" | "owner" | "criticality_name" | "risk_count";
+type SortDir = "asc" | "desc";
+
 export default function AssetRegistryPage() {
   const navigate = useNavigate();
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -53,6 +58,28 @@ export default function AssetRegistryPage() {
   const [filterOrg, setFilterOrg] = useState("");
   const [filterType, setFilterType] = useState("");
   const [filterSearch, setFilterSearch] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+
+  const [sortField, setSortField] = useState<SortField>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const COLUMNS: ColumnDef<Asset>[] = [
+    { key: "id", header: "ID" },
+    { key: "name", header: "Nazwa" },
+    { key: "asset_type_name", header: "Typ", format: r => r.asset_type_name ?? "" },
+    { key: "category_name", header: "Kategoria", format: r => r.category_name ?? "" },
+    { key: "org_unit_name", header: "Jednostka org.", format: r => r.org_unit_name ?? "" },
+    { key: "owner", header: "Właściciel", format: r => r.owner ?? "" },
+    { key: "criticality_name", header: "Krytyczność", format: r => r.criticality_name ?? "" },
+    { key: "risk_count", header: "Ryzyka", format: r => String(r.risk_count) },
+  ];
+
+  const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "assets");
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortField(field); setSortDir("asc"); }
+  };
 
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
 
@@ -175,18 +202,30 @@ export default function AssetRegistryPage() {
     return new Set(collectDescendantIds(orgTree, Number(filterOrg)));
   }, [filterOrg, orgTree]);
 
-  const filtered = assets.filter(a => {
-    if (filterOrgIds && a.org_unit_id && !filterOrgIds.has(a.org_unit_id)) return false;
-    if (filterType && String(a.asset_type_id) !== filterType) return false;
-    if (filterSearch && !a.name.toLowerCase().includes(filterSearch.toLowerCase())) return false;
-    return true;
-  });
+  const filteredAndSorted = useMemo(() => {
+    let result = assets.filter(a => {
+      if (filterOrgIds && a.org_unit_id && !filterOrgIds.has(a.org_unit_id)) return false;
+      if (filterType && String(a.asset_type_id) !== filterType) return false;
+      if (filterSearch && !a.name.toLowerCase().includes(filterSearch.toLowerCase())) return false;
+      return true;
+    });
+    result.sort((a, b) => {
+      let cmp = 0;
+      const av = (a as any)[sortField];
+      const bv = (b as any)[sortField];
+      if (av == null && bv == null) cmp = 0;
+      else if (av == null) cmp = 1;
+      else if (bv == null) cmp = -1;
+      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+      else cmp = String(av).localeCompare(String(bv));
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return result;
+  }, [assets, filterOrgIds, filterType, filterSearch, sortField, sortDir]);
 
   const flatFilterUnits = flattenTree(orgTree);
   const uniqueOrgs = flatFilterUnits.map(u => ({ id: u.id, name: u.name, depth: u.depth }));
   const uniqueTypes = [...new Map(assets.filter(a => a.asset_type_id).map(a => [a.asset_type_id, { id: a.asset_type_id!, name: a.asset_type_name! }])).values()];
-
-  const hasFilters = filterOrg || filterType || filterSearch;
 
   // Stats
   const totalActive = assets.filter(a => a.is_active).length;
@@ -214,38 +253,44 @@ export default function AssetRegistryPage() {
         </div>
       </div>
 
-      <div className="toolbar">
-        <div className="toolbar-left">
-          <input
-            className="form-control"
-            style={{ width: 220 }}
-            placeholder="Szukaj aktywów..."
-            value={filterSearch}
-            onChange={e => setFilterSearch(e.target.value)}
-          />
-          <select className="form-control" style={{ width: 220 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
+      <TableToolbar
+        filteredCount={filteredAndSorted.length}
+        totalCount={assets.length}
+        unitLabel="aktywów"
+        search={filterSearch}
+        onSearchChange={setFilterSearch}
+        searchPlaceholder="Szukaj aktywów..."
+        showFilters={showFilters}
+        onToggleFilters={() => setShowFilters(f => !f)}
+        hasActiveFilters={!!filterOrg || !!filterType}
+        onClearFilters={() => { setFilterOrg(""); setFilterType(""); }}
+        columns={COLUMNS}
+        visibleColumns={visibleCols}
+        onToggleColumn={toggleCol}
+        data={filteredAndSorted}
+        exportFilename="aktywa"
+        primaryLabel="Dodaj aktyw"
+        onPrimaryAction={openAddForm}
+      />
+
+      {showFilters && (
+        <div className="card" style={{ padding: "10px 14px", marginBottom: 12, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <select className="form-control" style={{ width: 220, padding: "5px 8px", fontSize: 11 }} value={filterOrg} onChange={e => setFilterOrg(e.target.value)}>
             <option value="">Wszystkie piony</option>
             {uniqueOrgs.map(o => <option key={o.id} value={o.id}>{"  ".repeat(o.depth)}{o.name}</option>)}
           </select>
-          <select className="form-control" style={{ width: 160 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
+          <select className="form-control" style={{ width: 160, padding: "5px 8px", fontSize: 11 }} value={filterType} onChange={e => setFilterType(e.target.value)}>
             <option value="">Wszystkie typy</option>
             {uniqueTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
-          {hasFilters && (
-            <button className="btn btn-sm" onClick={() => { setFilterOrg(""); setFilterType(""); setFilterSearch(""); }}>Wyczyść filtry</button>
-          )}
         </div>
-        <div className="toolbar-right">
-          <span style={{ fontSize: 12, color: "var(--text-muted)", alignSelf: "center" }}>{filtered.length} / {assets.length}</span>
-          <button className="btn btn-primary btn-sm" onClick={openAddForm}>+ Dodaj aktyw</button>
-        </div>
-      </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 380px" : "1fr", gap: 14 }}>
         <div className="card" style={{ padding: 0, overflow: "hidden" }}>
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ładowanie aktywów...</div>
-          ) : filtered.length === 0 ? (
+          ) : filteredAndSorted.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
               {assets.length === 0 ? "Brak aktywów w systemie. Kliknij '+ Dodaj aktyw' aby rozpocząć." : "Brak aktywów pasujących do filtrów."}
             </div>
@@ -253,49 +298,59 @@ export default function AssetRegistryPage() {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Nazwa</th>
-                  <th>Typ</th>
-                  <th>Kategoria</th>
-                  <th>Jednostka org.</th>
-                  <th>Właściciel</th>
-                  <th>Krytyczność</th>
-                  <th>Ryzyka</th>
+                  {COLUMNS.filter(c => visibleCols.has(c.key)).map(c => (
+                    <th
+                      key={c.key}
+                      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+                      onClick={() => handleSort(c.key as SortField)}
+                    >
+                      {c.header}
+                      {sortField === c.key && <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(a => (
+                {filteredAndSorted.map(a => (
                   <tr
                     key={a.id}
                     style={{ cursor: "pointer", background: selected?.id === a.id ? "var(--bg-card-hover)" : undefined }}
                     onClick={() => setSelected(selected?.id === a.id ? null : a)}
                   >
-                    <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{a.id}</td>
-                    <td style={{ fontWeight: 500 }}>{a.name}</td>
-                    <td>
-                      {a.asset_type_name ? (
-                        <span className="score-badge" style={{ background: "var(--purple-dim)", color: "var(--purple)" }}>{a.asset_type_name}</span>
-                      ) : "—"}
-                    </td>
-                    <td>
-                      {a.category_name ? (
-                        <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{a.category_name}</span>
-                      ) : "—"}
-                    </td>
-                    <td style={{ fontSize: 11 }}>{(a.org_unit_id ? orgPathMap.get(a.org_unit_id) : null) ?? a.org_unit_name ?? "—"}</td>
-                    <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{a.owner ?? "—"}</td>
-                    <td>
-                      {a.criticality_name ? (
-                        <span style={{ fontSize: 12, fontWeight: 500, color: critColor(a.criticality_name) }}>{a.criticality_name}</span>
-                      ) : "—"}
-                    </td>
-                    <td>
-                      {a.risk_count > 0 ? (
-                        <span className="score-badge" style={{ background: "var(--red-dim)", color: "var(--red)" }}>{a.risk_count}</span>
-                      ) : (
-                        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>0</span>
-                      )}
-                    </td>
+                    {visibleCols.has("id") && <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{a.id}</td>}
+                    {visibleCols.has("name") && <td style={{ fontWeight: 500 }}>{a.name}</td>}
+                    {visibleCols.has("asset_type_name") && (
+                      <td>
+                        {a.asset_type_name ? (
+                          <span className="score-badge" style={{ background: "var(--purple-dim)", color: "var(--purple)" }}>{a.asset_type_name}</span>
+                        ) : "\u2014"}
+                      </td>
+                    )}
+                    {visibleCols.has("category_name") && (
+                      <td>
+                        {a.category_name ? (
+                          <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{a.category_name}</span>
+                        ) : "\u2014"}
+                      </td>
+                    )}
+                    {visibleCols.has("org_unit_name") && <td style={{ fontSize: 11 }}>{(a.org_unit_id ? orgPathMap.get(a.org_unit_id) : null) ?? a.org_unit_name ?? "\u2014"}</td>}
+                    {visibleCols.has("owner") && <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{a.owner ?? "\u2014"}</td>}
+                    {visibleCols.has("criticality_name") && (
+                      <td>
+                        {a.criticality_name ? (
+                          <span style={{ fontSize: 12, fontWeight: 500, color: critColor(a.criticality_name) }}>{a.criticality_name}</span>
+                        ) : "\u2014"}
+                      </td>
+                    )}
+                    {visibleCols.has("risk_count") && (
+                      <td>
+                        {a.risk_count > 0 ? (
+                          <span className="score-badge" style={{ background: "var(--red-dim)", color: "var(--red)" }}>{a.risk_count}</span>
+                        ) : (
+                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>0</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

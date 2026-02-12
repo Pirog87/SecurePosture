@@ -106,6 +106,8 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         owner=risk.owner,
         planned_actions=risk.planned_actions,
         treatment_plan=risk.treatment_plan,
+        planned_safeguard_id=risk.planned_safeguard_id,
+        planned_safeguard_name=(await s.get(Safeguard, risk.planned_safeguard_id)).name if risk.planned_safeguard_id else None,
         treatment_deadline=risk.treatment_deadline,
         treatment_resources=risk.treatment_resources,
         residual_risk=float(risk.residual_risk) if risk.residual_risk is not None else None,

@@ -70,6 +70,8 @@ class RiskOut(BaseModel):
     owner: str | None = None
     planned_actions: str | None = None
     treatment_plan: str | None = None
+    planned_safeguard_id: int | None = None
+    planned_safeguard_name: str | None = None
     treatment_deadline: date | None = None
     treatment_resources: str | None = None
     residual_risk: float | None = None
@@ -126,6 +128,7 @@ class RiskCreate(BaseModel):
     owner: str | None = Field(None, max_length=200)
     planned_actions: str | None = None
     treatment_plan: str | None = None
+    planned_safeguard_id: int | None = None
     treatment_deadline: date | None = None
     treatment_resources: str | None = None
     residual_risk: float | None = None
@@ -173,6 +176,7 @@ class RiskUpdate(BaseModel):
     owner: str | None = Field(None, max_length=200)
     planned_actions: str | None = None
     treatment_plan: str | None = None
+    planned_safeguard_id: int | None = None
     treatment_deadline: date | None = None
     treatment_resources: str | None = None
     residual_risk: float | None = None

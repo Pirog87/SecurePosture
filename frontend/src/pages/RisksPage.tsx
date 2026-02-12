@@ -477,6 +477,11 @@ export default function RisksPage() {
                   </div>
                 </div>
               )}
+              {selected.planned_safeguard_name && (
+                <DetailRow label="Planowane zabezpieczenie" value={
+                  <span style={{ color: "var(--green)", fontWeight: 500 }}>{selected.planned_safeguard_name}</span>
+                } />
+              )}
               <DetailRow label="Termin realizacji" value={
                 selected.treatment_deadline ? (
                   <span style={{ color: isOverdue(selected.treatment_deadline) ? "var(--red)" : undefined }}>
@@ -630,13 +635,134 @@ export default function RisksPage() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   ActionSearch — searchable action picker for linking to risks
+   PlannedSafeguardPicker — pick safeguard for treatment plan
    ═══════════════════════════════════════════════════════════════════ */
-function ActionSearch({ riskId, existingLinks }: { riskId: number | null; existingLinks: { action_id: number; title: string }[] }) {
+
+function PlannedSafeguardPicker({ lookups, setLookups, assetId, plannedSafeguardId, setPlannedSafeguardId }: {
+  lookups: FormLookups;
+  setLookups: React.Dispatch<React.SetStateAction<FormLookups | null>>;
+  assetId: number | null;
+  plannedSafeguardId: number | null;
+  setPlannedSafeguardId: (id: number | null) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
+  const assetTypeId = selectedAsset?.asset_type_id ?? null;
+
+  const available = assetTypeId
+    ? lookups.safeguards.filter(s => s.asset_type_id === assetTypeId || s.asset_type_id === null)
+    : lookups.safeguards;
+
+  const filtered = search.length >= 1
+    ? available.filter(s => s.name.toLowerCase().includes(search.toLowerCase())).slice(0, 8)
+    : [];
+
+  const selected = plannedSafeguardId ? lookups.safeguards.find(s => s.id === plannedSafeguardId) : null;
+
+  const handleAdd = async () => {
+    if (!search.trim()) return;
+    setAdding(true);
+    try {
+      const created = await api.post<Safeguard>("/api/v1/safeguards", { name: search.trim(), asset_type_id: assetTypeId });
+      setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
+      setPlannedSafeguardId(created.id);
+      setSearch("");
+    } catch (err) {
+      alert("Blad: " + err);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="form-group" style={{ gridColumn: "span 2" }}>
+      <label>Planowane zabezpieczenie <span style={{ fontSize: 10, color: "var(--text-muted)" }}>(wdrazane w ramach planu postepowania)</span></label>
+      {selected ? (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "6px 12px", background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.2)",
+          borderRadius: 6,
+        }}>
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: "var(--green)" }}>{selected.name}</span>
+          <button type="button" className="btn btn-sm" style={{ fontSize: 10, color: "var(--red)", padding: "0 6px" }}
+            onClick={() => setPlannedSafeguardId(null)}>&#10005;</button>
+        </div>
+      ) : (
+        <div style={{ position: "relative" }}>
+          <input
+            className="form-control"
+            style={{ fontSize: 12 }}
+            placeholder="Szukaj zabezpieczenia lub wpisz nowe..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          {search.length >= 1 && (
+            <div style={{
+              position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+              background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
+              maxHeight: 200, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+              marginTop: 2,
+            }}>
+              {filtered.map(s => (
+                <div key={s.id} style={{ padding: "7px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid rgba(42,53,84,0.12)" }}
+                  onClick={() => { setPlannedSafeguardId(s.id); setSearch(""); }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "rgba(34,197,94,0.08)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  {s.name}
+                </div>
+              ))}
+              <div style={{ padding: "7px 12px", cursor: "pointer", fontSize: 12, color: "var(--green)", fontWeight: 500 }}
+                onClick={handleAdd}
+                onMouseEnter={e => (e.currentTarget.style.background = "rgba(34,197,94,0.08)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              >
+                {adding ? "Dodawanie..." : `+ Dodaj "${search}" do katalogu zabezpieczen`}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   ActionSearchWithCreate — search + inline create actions for risk
+   ═══════════════════════════════════════════════════════════════════ */
+
+function ActionSearchWithCreate({ riskId, existingLinks, lookups, flatUnits, strategyId }: {
+  riskId: number | null;
+  existingLinks: { action_id: number; title: string }[];
+  lookups: FormLookups;
+  flatUnits: { id: number; name: string; depth: number }[];
+  strategyId: number | null;
+}) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Action[]>([]);
   const [searching, setSearching] = useState(false);
   const [linked, setLinked] = useState<{ action_id: number; title: string }[]>(existingLinks);
+  const [showNewForm, setShowNewForm] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  // New action form state
+  const [newTitle, setNewTitle] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newOwner, setNewOwner] = useState("");
+  const [newResponsible, setNewResponsible] = useState("");
+  const [newDueDate, setNewDueDate] = useState("");
+  const [newOrgUnitId, setNewOrgUnitId] = useState<number | null>(null);
+
+  // Determine if strategy requires action
+  const strategyLabel = strategyId ? lookups.strategies.find(s => s.id === strategyId)?.label : null;
+  const requiresAction = strategyLabel && (
+    strategyLabel.toLowerCase().includes("modyfikacja")
+    || strategyLabel.toLowerCase().includes("transfer")
+    || strategyLabel.toLowerCase().includes("unikanie")
+  );
 
   useEffect(() => {
     if (query.length < 2) { setResults([]); return; }
@@ -687,11 +813,45 @@ function ActionSearch({ riskId, existingLinks }: { riskId: number | null; existi
     }
   };
 
+  const handleCreateAction = async () => {
+    if (!newTitle || !riskId) return;
+    setCreating(true);
+    try {
+      const links = [{ entity_type: "risk", entity_id: riskId }];
+      const created = await api.post<Action>("/api/v1/actions", {
+        title: newTitle,
+        description: newDescription || null,
+        owner: newOwner || null,
+        responsible: newResponsible || null,
+        due_date: newDueDate || null,
+        org_unit_id: newOrgUnitId,
+        links,
+      });
+      setLinked([...linked, { action_id: created.id, title: created.title }]);
+      setShowNewForm(false);
+      setNewTitle(""); setNewDescription(""); setNewOwner("");
+      setNewResponsible(""); setNewDueDate(""); setNewOrgUnitId(null);
+    } catch (err) {
+      alert("Blad tworzenia: " + err);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   return (
     <div style={{ marginTop: 8 }}>
-      <label style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4, display: "block" }}>
-        Powiazane dzialania ({linked.length})
-      </label>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+        <label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          Powiazane dzialania ({linked.length})
+          {requiresAction && linked.length === 0 && (
+            <span style={{ color: "var(--orange)", marginLeft: 8, fontWeight: 600 }}>
+              Strategia "{strategyLabel}" wymaga zaplanowania dzialania
+            </span>
+          )}
+        </label>
+      </div>
+
+      {/* Linked actions list */}
       {linked.map(l => (
         <div key={l.action_id} style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -703,48 +863,110 @@ function ActionSearch({ riskId, existingLinks }: { riskId: number | null; existi
             onClick={() => unlinkAction(l.action_id)}>&#10005;</button>
         </div>
       ))}
-      {riskId && (
-        <div style={{ position: "relative" }}>
-          <input
-            className="form-control"
-            style={{ fontSize: 12 }}
-            placeholder="Szukaj dzialania po tytule, wlascicielu..."
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-          />
-          {searching && <span style={{ position: "absolute", right: 8, top: 8, fontSize: 10, color: "var(--text-muted)" }}>...</span>}
-          {results.length > 0 && (
-            <div style={{
-              position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
-              background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
-              maxHeight: 200, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-            }}>
-              {results.map(a => (
-                <div key={a.id} style={{
-                  padding: "8px 12px", cursor: "pointer", fontSize: 12,
-                  borderBottom: "1px solid rgba(42,53,84,0.15)",
-                  opacity: linked.some(l => l.action_id === a.id) ? 0.4 : 1,
-                }}
-                  onClick={() => linkAction(a)}
-                >
-                  <div style={{ fontWeight: 500 }}>{a.title}</div>
-                  <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                    {a.owner && <span>{a.owner}</span>}
-                    {a.status_name && <span> | {a.status_name}</span>}
-                    {a.due_date && <span> | {a.due_date.slice(0, 10)}</span>}
+
+      {riskId && !showNewForm && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <input
+              className="form-control"
+              style={{ fontSize: 12 }}
+              placeholder="Szukaj istniejacego dzialania po tytule, wlascicielu..."
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+            />
+            {searching && <span style={{ position: "absolute", right: 8, top: 8, fontSize: 10, color: "var(--text-muted)" }}>...</span>}
+            {results.length > 0 && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+                background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
+                maxHeight: 200, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+              }}>
+                {results.map(a => (
+                  <div key={a.id} style={{
+                    padding: "8px 12px", cursor: "pointer", fontSize: 12,
+                    borderBottom: "1px solid rgba(42,53,84,0.15)",
+                    opacity: linked.some(l => l.action_id === a.id) ? 0.4 : 1,
+                  }}
+                    onClick={() => linkAction(a)}
+                    onMouseEnter={e => (e.currentTarget.style.background = "rgba(59,130,246,0.08)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <div style={{ fontWeight: 500 }}>{a.title}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                      {a.owner && <span>{a.owner}</span>}
+                      {a.status_name && <span> | {a.status_name}</span>}
+                      {a.due_date && <span> | {a.due_date.slice(0, 10)}</span>}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => { setShowNewForm(true); setQuery(""); setResults([]); }}>
+            + Nowe dzialanie
+          </button>
         </div>
       )}
+
       {!riskId && (
         <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Zapisz ryzyko najpierw, aby moc wiazac dzialania</span>
+      )}
+
+      {/* Inline new action form */}
+      {showNewForm && riskId && (
+        <div style={{
+          background: "rgba(59,130,246,0.04)", border: "1px solid rgba(59,130,246,0.2)",
+          borderRadius: 8, padding: 14, marginTop: 8,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontWeight: 600, fontSize: 13, color: "var(--blue)" }}>Nowe dzialanie</span>
+            <button type="button" className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => setShowNewForm(false)}>Anuluj</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label>Tytul dzialania *</label>
+              <input className="form-control" value={newTitle} onChange={e => setNewTitle(e.target.value)}
+                placeholder="np. Wdrozenie MFA dla kont administracyjnych" />
+              {!newTitle && <div style={{ fontSize: 11, color: "var(--red)", marginTop: 4 }}>Pole wymagane</div>}
+            </div>
+            <div className="form-group">
+              <label>Wlasciciel</label>
+              <input className="form-control" value={newOwner} onChange={e => setNewOwner(e.target.value)} placeholder="np. Jan Kowalski" />
+            </div>
+            <div className="form-group">
+              <label>Odpowiedzialny</label>
+              <input className="form-control" value={newResponsible} onChange={e => setNewResponsible(e.target.value)} placeholder="np. Anna Nowak" />
+            </div>
+            <div className="form-group">
+              <label>Jednostka organizacyjna</label>
+              <select className="form-control" value={newOrgUnitId ?? ""} onChange={e => setNewOrgUnitId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">Wybierz...</option>
+                {flatUnits.map(u => <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Termin realizacji</label>
+              <input type="date" className="form-control" value={newDueDate} onChange={e => setNewDueDate(e.target.value)} />
+            </div>
+            <div className="form-group" style={{ gridColumn: "span 2" }}>
+              <label>Opis</label>
+              <textarea className="form-control" rows={2} value={newDescription} onChange={e => setNewDescription(e.target.value)}
+                placeholder="Opisz dzialanie, cele, kroki..." />
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={() => setShowNewForm(false)}>Anuluj</button>
+            <button type="button" className="btn btn-sm btn-primary" disabled={creating || !newTitle}
+              onClick={handleCreateAction}>
+              {creating ? "Tworzenie..." : "Utworz i powiaz dzialanie"}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
 }
+
 
 /* ═══════════════════════════════════════════════════════════════════
    TagMultiSelect — reusable multi-select with tags + inline add
@@ -1270,6 +1492,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
   // Sekcja 5: Postepowanie
   const [strategyId, setStrategyId] = useState<number | null>(editRisk?.strategy_id ?? null);
   const [treatmentPlan, setTreatmentPlan] = useState(editRisk?.treatment_plan ?? "");
+  const [plannedSafeguardId, setPlannedSafeguardId] = useState<number | null>(editRisk?.planned_safeguard_id ?? null);
   const [treatmentDeadline, setTreatmentDeadline] = useState(editRisk?.treatment_deadline?.slice(0, 10) ?? "");
   const [treatmentResources, setTreatmentResources] = useState(editRisk?.treatment_resources ?? "");
   const [safeguardIds, setSafeguardIds] = useState<number[]>(editRisk?.safeguards?.map(s => s.safeguard_id) ?? []);
@@ -1319,6 +1542,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
       safeguard_rating: Z,
       strategy_id: strategyId,
       treatment_plan: treatmentPlan || null,
+      planned_safeguard_id: plannedSafeguardId,
       treatment_deadline: treatmentDeadline || null,
       treatment_resources: treatmentResources || null,
       threat_ids: threatIds,
@@ -1562,22 +1786,52 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
             </div>
             <div className="form-group" style={{ gridColumn: "span 2" }}>
               <label>Plan postepowania z ryzykiem</label>
-              <textarea className="form-control" rows={3} value={treatmentPlan} onChange={e => setTreatmentPlan(e.target.value)} placeholder="Opisz plan postepowania z ryzykiem (redukcja, transfer, unikanie, akceptacja)..." />
+              <textarea className="form-control" rows={3} value={treatmentPlan} onChange={e => setTreatmentPlan(e.target.value)} placeholder="Opisz plan postepowania z ryzykiem..." />
             </div>
+
+            {/* Planowane zabezpieczenie - filtrowane po typie aktywa */}
+            <PlannedSafeguardPicker
+              lookups={lookups}
+              setLookups={setLookups}
+              assetId={assetId}
+              plannedSafeguardId={plannedSafeguardId}
+              setPlannedSafeguardId={setPlannedSafeguardId}
+            />
+
+            {/* Istniejace zabezpieczenia aktywa (readonly) */}
+            {safeguardIds.length > 0 && (
+              <div className="form-group" style={{ gridColumn: "span 2" }}>
+                <label style={{ color: "var(--text-muted)" }}>Zabezpieczenia przypisane do ryzyka (z sekcji Scenariusz)</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "8px 0" }}>
+                  {safeguardIds.map(sid => {
+                    const sg = lookups.safeguards.find(s => s.id === sid);
+                    return (
+                      <span key={sid} style={{
+                        background: "var(--green-dim)", color: "var(--green)",
+                        borderRadius: 14, padding: "3px 10px", fontSize: 12, fontWeight: 500,
+                        border: "1px solid rgba(34,197,94,0.3)",
+                      }}>
+                        {sg?.name ?? `#${sid}`}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="form-group" style={{ gridColumn: "span 2" }}>
               <label>Zasoby wymagane</label>
               <textarea className="form-control" rows={2} value={treatmentResources} onChange={e => setTreatmentResources(e.target.value)} placeholder="Opisz wymagane zasoby (budzet, ludzie, narzedzia)..." />
             </div>
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>Planowane dzialania</label>
-              <textarea className="form-control" rows={2} value={plannedActions} onChange={e => setPlannedActions(e.target.value)} placeholder="Opisz planowane kroki mitygacyjne i monitorujace..." />
-            </div>
           </div>
 
-          {/* Action Search (only when editing) */}
-          <ActionSearch
+          {/* Dzialania - szukaj lub tworzenie inline */}
+          <ActionSearchWithCreate
             riskId={editRisk?.id ?? null}
             existingLinks={(editRisk?.linked_actions ?? []).map(a => ({ action_id: a.action_id, title: a.title }))}
+            lookups={lookups}
+            flatUnits={flatUnits}
+            strategyId={strategyId}
           />
 
           {/* Residual Risk */}

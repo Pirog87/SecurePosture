@@ -223,6 +223,8 @@ export interface Risk {
   owner: string | null;
   planned_actions: string | null;
   treatment_plan: string | null;
+  planned_safeguard_id: number | null;
+  planned_safeguard_name: string | null;
   treatment_deadline: string | null;
   treatment_resources: string | null;
   residual_risk: number | null;

@@ -64,6 +64,7 @@ class Risk(Base):
     owner: Mapped[str | None] = mapped_column(String(200))
     planned_actions: Mapped[str | None] = mapped_column(Text)
     treatment_plan: Mapped[str | None] = mapped_column(Text)
+    planned_safeguard_id: Mapped[int | None] = mapped_column(ForeignKey("safeguards.id"))
     treatment_deadline: Mapped[datetime | None] = mapped_column(Date)
     treatment_resources: Mapped[str | None] = mapped_column(Text)
     residual_risk: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))

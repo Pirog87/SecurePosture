@@ -5,7 +5,8 @@ CRUD for dictionary types and their entries.
 Soft-delete only (archive via is_active=false).
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select, update
+from pydantic import BaseModel
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,6 +20,120 @@ from app.schemas.dictionary import (
     DictionaryTypeWithEntries,
     ReorderRequest,
 )
+
+# ── Pydantic models for usage / reassign endpoints ──
+
+
+class UsageDetail(BaseModel):
+    table: str
+    table_key: str
+    column: str
+    count: int
+
+
+class EntryUsageOut(BaseModel):
+    entry_id: int
+    entry_label: str
+    total_references: int
+    details: list[UsageDetail]
+
+
+class ReassignRequest(BaseModel):
+    target_id: int
+
+
+class ReassignResult(BaseModel):
+    reassigned_from: int
+    reassigned_to: int
+    total_updated: int
+    details: list[UsageDetail]
+
+
+# ── FK references from other tables to dictionary_entries.id ──
+
+_FK_REFERENCES: list[tuple[str, str]] = [
+    ("actions", "priority_id"),
+    ("actions", "status_id"),
+    ("actions", "source_id"),
+    ("org_context_issues", "category_id"),
+    ("org_context_obligations", "regulation_id"),
+    ("org_context_stakeholders", "category_id"),
+    ("org_context_scope", "management_system_id"),
+    ("assets", "asset_type_id"),
+    ("assets", "category_id"),
+    ("assets", "sensitivity_id"),
+    ("assets", "criticality_id"),
+    ("assets", "environment_id"),
+    ("assets", "status_id"),
+    ("risks", "risk_category_id"),
+    ("risks", "identification_source_id"),
+    ("risks", "asset_category_id"),
+    ("risks", "sensitivity_id"),
+    ("risks", "criticality_id"),
+    ("risks", "status_id"),
+    ("risks", "strategy_id"),
+    ("threats", "category_id"),
+    ("threats", "asset_type_id"),
+    ("vulnerabilities", "asset_type_id"),
+    ("safeguards", "type_id"),
+    ("safeguards", "asset_type_id"),
+    ("cis_assessments", "status_id"),
+    ("cis_assessment_answers", "policy_status_id"),
+    ("cis_assessment_answers", "impl_status_id"),
+    ("cis_assessment_answers", "auto_status_id"),
+    ("cis_assessment_answers", "report_status_id"),
+    ("audits", "audit_type_id"),
+    ("audits", "overall_rating_id"),
+    ("audit_findings", "finding_type_id"),
+    ("audit_findings", "severity_id"),
+    ("audit_findings", "status_id"),
+    ("policies", "category_id"),
+    ("policies", "status_id"),
+    ("incidents", "category_id"),
+    ("incidents", "severity_id"),
+    ("incidents", "status_id"),
+    ("incidents", "impact_id"),
+    ("vulnerabilities_registry", "source_id"),
+    ("vulnerabilities_registry", "category_id"),
+    ("vulnerabilities_registry", "severity_id"),
+    ("vulnerabilities_registry", "status_id"),
+    ("vulnerabilities_registry", "remediation_priority_id"),
+    ("policy_exceptions", "category_id"),
+    ("policy_exceptions", "risk_level_id"),
+    ("policy_exceptions", "status_id"),
+    ("awareness_campaigns", "campaign_type_id"),
+    ("awareness_campaigns", "status_id"),
+    ("vendors", "category_id"),
+    ("vendors", "criticality_id"),
+    ("vendors", "data_access_level_id"),
+    ("vendors", "status_id"),
+    ("vendors", "risk_rating_id"),
+    ("vendor_assessments", "risk_rating_id"),
+]
+
+_TABLE_LABELS: dict[str, str] = {
+    "actions": "Działania",
+    "org_context_issues": "Czynniki kontekstu",
+    "org_context_obligations": "Zobowiązania",
+    "org_context_stakeholders": "Interesariusze",
+    "org_context_scope": "Zakres SZ",
+    "assets": "Aktywa",
+    "risks": "Ryzyka",
+    "threats": "Zagrożenia",
+    "vulnerabilities": "Podatności (katalog)",
+    "safeguards": "Zabezpieczenia",
+    "cis_assessments": "Oceny CIS",
+    "cis_assessment_answers": "Odpowiedzi CIS",
+    "audits": "Audyty",
+    "audit_findings": "Ustalenia audytowe",
+    "policies": "Polityki",
+    "incidents": "Incydenty",
+    "vulnerabilities_registry": "Rejestr podatności",
+    "policy_exceptions": "Wyjątki od polityk",
+    "awareness_campaigns": "Kampanie świadomości",
+    "vendors": "Dostawcy",
+    "vendor_assessments": "Oceny dostawców",
+}
 
 router = APIRouter(prefix="/api/v1/dictionaries", tags=["Słowniki"])
 
@@ -217,3 +332,99 @@ async def archive_entry(
     await s.commit()
     await s.refresh(entry)
     return DictionaryEntryOut.model_validate(entry)
+
+
+# ── USAGE statistics ──
+
+@router.get(
+    "/entries/{entry_id}/usage",
+    response_model=EntryUsageOut,
+    summary="Statystyki użycia pozycji słownika",
+)
+async def entry_usage(
+    entry_id: int,
+    s: AsyncSession = Depends(get_session),
+):
+    entry = await _get_entry(s, entry_id)
+
+    details: list[UsageDetail] = []
+    total = 0
+
+    for table_name, column_name in _FK_REFERENCES:
+        result = await s.execute(
+            text(f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} = :entry_id"),
+            {"entry_id": entry_id},
+        )
+        count = result.scalar_one()
+        if count > 0:
+            details.append(
+                UsageDetail(
+                    table=_TABLE_LABELS.get(table_name, table_name),
+                    table_key=table_name,
+                    column=column_name,
+                    count=count,
+                )
+            )
+            total += count
+
+    return EntryUsageOut(
+        entry_id=entry.id,
+        entry_label=entry.label,
+        total_references=total,
+        details=details,
+    )
+
+
+# ── REASSIGN references and archive ──
+
+@router.post(
+    "/entries/{entry_id}/reassign",
+    response_model=ReassignResult,
+    summary="Przepnij referencje na inną pozycję i zarchiwizuj bieżącą",
+)
+async def reassign_entry(
+    entry_id: int,
+    body: ReassignRequest,
+    s: AsyncSession = Depends(get_session),
+):
+    source = await _get_entry(s, entry_id)
+    target = await _get_entry(s, body.target_id)
+
+    if source.dict_type_id != target.dict_type_id:
+        raise HTTPException(
+            400,
+            detail="Obie pozycje muszą należeć do tego samego typu słownika",
+        )
+
+    details: list[UsageDetail] = []
+    total_updated = 0
+
+    for table_name, column_name in _FK_REFERENCES:
+        result = await s.execute(
+            text(
+                f"UPDATE {table_name} SET {column_name} = :target_id "
+                f"WHERE {column_name} = :entry_id"
+            ),
+            {"target_id": body.target_id, "entry_id": entry_id},
+        )
+        count = result.rowcount
+        if count > 0:
+            details.append(
+                UsageDetail(
+                    table=_TABLE_LABELS.get(table_name, table_name),
+                    table_key=table_name,
+                    column=column_name,
+                    count=count,
+                )
+            )
+            total_updated += count
+
+    source.is_active = False
+    await s.commit()
+
+    return ReassignResult(
+        reassigned_from=entry_id,
+        reassigned_to=body.target_id,
+        total_updated=total_updated,
+        details=details,
+    )

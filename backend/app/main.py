@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 from app.database import check_db_connection
+from app.middleware.audit_auto import install_audit_listeners, set_audit_context
 from app.routers.action import router as action_router
 from app.routers.asset import router as asset_router
 from app.routers.audit import router as audit_router
@@ -33,6 +35,25 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# ── Install automatic audit logging ──
+install_audit_listeners()
+
+
+class AuditContextMiddleware(BaseHTTPMiddleware):
+    """Set per-request audit context (user, IP) for automatic audit logging."""
+
+    async def dispatch(self, request: Request, call_next):
+        user_id_header = request.headers.get("X-User-Id")
+        ip = request.client.host if request.client else None
+        set_audit_context(
+            user_id=int(user_id_header) if user_id_header else None,
+            ip_address=ip,
+        )
+        return await call_next(request)
+
+
+app.add_middleware(AuditContextMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

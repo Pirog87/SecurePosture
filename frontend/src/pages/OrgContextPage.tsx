@@ -1,7 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "../services/api";
 import type { OrgUnitTreeNode } from "../types";
-import { flattenTree } from "../utils/orgTree";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
@@ -24,6 +23,7 @@ interface ContextIssue {
   inherited: boolean;
   created_at: string;
   updated_at: string;
+  [key: string]: unknown;
 }
 
 interface ContextObligation {
@@ -45,6 +45,7 @@ interface ContextObligation {
   inherited: boolean;
   created_at: string;
   updated_at: string;
+  [key: string]: unknown;
 }
 
 interface ContextStakeholder {
@@ -66,6 +67,7 @@ interface ContextStakeholder {
   inherited: boolean;
   created_at: string;
   updated_at: string;
+  [key: string]: unknown;
 }
 
 interface ContextScope {
@@ -123,6 +125,7 @@ interface ContextReview {
   next_review_date: string | null;
   is_active: boolean;
   created_at: string;
+  [key: string]: unknown;
 }
 
 interface ContextGeneral {
@@ -255,6 +258,75 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
 const errorBorder = "1px solid var(--red)";
 const errorShadow = "0 0 0 3px var(--red-dim)";
 
+/* ─── Tree Node Component ─── */
+function ContextTreeNode({ node, depth, selectedId, onSelect, overviews }: {
+  node: OrgUnitTreeNode;
+  depth: number;
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  overviews: Map<number, ContextOverview>;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const hasChildren = node.children.length > 0;
+  const isSelected = selectedId === node.id;
+  const ov = overviews.get(node.id);
+
+  return (
+    <>
+      <div
+        onClick={() => onSelect(node.id)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 10px",
+          paddingLeft: depth * 20 + 10,
+          cursor: "pointer",
+          background: isSelected ? "var(--blue-dim)" : "transparent",
+          borderLeft: isSelected ? "3px solid var(--blue)" : "3px solid transparent",
+          fontSize: 13,
+          transition: "background 0.15s",
+        }}
+        onMouseEnter={e => { if (!isSelected) (e.currentTarget.style.background = "var(--bg-card-hover)"); }}
+        onMouseLeave={e => { if (!isSelected) (e.currentTarget.style.background = "transparent"); }}
+      >
+        {hasChildren && (
+          <span
+            onClick={e => { e.stopPropagation(); setCollapsed(!collapsed); }}
+            style={{ cursor: "pointer", fontSize: 10, width: 14, textAlign: "center", color: "var(--text-muted)", userSelect: "none" }}
+          >
+            {collapsed ? "▶" : "▼"}
+          </span>
+        )}
+        {!hasChildren && <span style={{ width: 14 }} />}
+        <span style={{ fontWeight: depth === 0 ? 600 : 400 }}>{node.name}</span>
+        <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 4 }}>{node.symbol}</span>
+        {ov && (
+          <span style={{ marginLeft: "auto", display: "flex", gap: 4, alignItems: "center", fontSize: 11 }}>
+            {ov.context_status && (
+              <span style={{
+                padding: "1px 6px",
+                borderRadius: 4,
+                fontSize: 10,
+                background: ov.context_status === "approved" ? "var(--green-dim)" : ov.context_status === "draft" ? "var(--orange-dim)" : "var(--blue-dim)",
+                color: statusColor(ov.context_status),
+              }}>
+                {statusLabel(ov.context_status)}
+              </span>
+            )}
+            <span style={{ color: "var(--text-muted)" }}>
+              {ov.issues_count}c {ov.obligations_count}z {ov.stakeholders_count}i
+            </span>
+          </span>
+        )}
+      </div>
+      {!collapsed && hasChildren && node.children.map(ch => (
+        <ContextTreeNode key={ch.id} node={ch} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} overviews={overviews} />
+      ))}
+    </>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    OrgContextPage — main component
    ═══════════════════════════════════════════════════════════════════ */
@@ -308,7 +380,11 @@ export default function OrgContextPage() {
   const [selectedUnitId, setSelectedUnitId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [loading, setLoading] = useState(true);
+  const [treeLoading, setTreeLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Overviews map for tree badges
+  const [overviews, setOverviews] = useState<Map<number, ContextOverview>>(new Map());
 
   // Data
   const [overview, setOverview] = useState<ContextOverview | null>(null);
@@ -348,15 +424,51 @@ export default function OrgContextPage() {
   const [showRAForm, setShowRAForm] = useState(false);
   const [raForm, setRAForm] = useState<Record<string, unknown>>({});
 
-  const flatUnits = useMemo(() => flattenTree(orgUnits), [orgUnits]);
+  // Selected unit info from tree
+  const selectedUnit = useMemo(() => {
+    function findNode(nodes: OrgUnitTreeNode[], id: number): OrgUnitTreeNode | null {
+      for (const n of nodes) {
+        if (n.id === id) return n;
+        const found = findNode(n.children, id);
+        if (found) return found;
+      }
+      return null;
+    }
+    return selectedUnitId ? findNode(orgUnits, selectedUnitId) : null;
+  }, [orgUnits, selectedUnitId]);
 
   /* ─── Load org units ─── */
   useEffect(() => {
+    setTreeLoading(true);
     api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(data => {
       setOrgUnits(data);
-      if (data.length > 0) setSelectedUnitId(data[0].id);
-    }).catch(() => {});
+      if (data.length > 0 && !selectedUnitId) setSelectedUnitId(data[0].id);
+      // Load overviews for all units
+      loadAllOverviews(data);
+    }).catch(() => {}).finally(() => setTreeLoading(false));
   }, []);
+
+  function flattenIds(nodes: OrgUnitTreeNode[]): number[] {
+    const ids: number[] = [];
+    for (const n of nodes) {
+      ids.push(n.id);
+      ids.push(...flattenIds(n.children));
+    }
+    return ids;
+  }
+
+  async function loadAllOverviews(tree: OrgUnitTreeNode[]) {
+    const ids = flattenIds(tree);
+    const map = new Map<number, ContextOverview>();
+    // Load overviews in parallel (batched)
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const ov = await api.get<ContextOverview>(`/api/v1/org-units/${id}/context`);
+        map.set(id, ov);
+      } catch { /* skip */ }
+    }));
+    setOverviews(map);
+  }
 
   /* ─── Load context data when unit changes ─── */
   useEffect(() => {
@@ -367,6 +479,9 @@ export default function OrgContextPage() {
   async function loadContextData(unitId: number) {
     setLoading(true);
     setError(null);
+    setSelectedIssue(null);
+    setSelectedObl(null);
+    setSelectedStk(null);
     try {
       const base = `/api/v1/org-units/${unitId}/context`;
       const [ov, gen, iss, obl, stk, scp, ra, rev] = await Promise.all([
@@ -387,6 +502,12 @@ export default function OrgContextPage() {
       setScope(scp);
       setRiskAppetite(ra);
       setReviews(rev);
+      // Update overview in tree map
+      setOverviews(prev => {
+        const next = new Map(prev);
+        next.set(unitId, ov);
+        return next;
+      });
     } catch (e: unknown) {
       setError(String(e));
     }
@@ -554,57 +675,107 @@ export default function OrgContextPage() {
 
   /* ═══════════════ RENDER ═══════════════ */
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <h2 style={{ margin: 0 }}>Kontekst Organizacyjny <span style={{ fontSize: 14, color: "var(--text-muted)" }}>ISO 27001 / 22301 klauzula 4</span></h2>
-
-      {/* Org unit selector */}
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <label style={{ color: "var(--text-muted)", fontSize: 13 }}>Jednostka organizacyjna:</label>
-        <select
-          className="form-control"
-          style={{ maxWidth: 400 }}
-          value={selectedUnitId ?? ""}
-          onChange={e => setSelectedUnitId(Number(e.target.value))}
-        >
-          {flatUnits.map(u => (
-            <option key={u.id} value={u.id}>{"  ".repeat(u.depth)}{u.name}</option>
-          ))}
-        </select>
+    <div style={{ display: "flex", flexDirection: "column", gap: 0, height: "calc(100vh - 60px)" }}>
+      <div style={{ padding: "12px 16px 8px", borderBottom: "1px solid var(--border)" }}>
+        <h2 style={{ margin: 0 }}>Kontekst Organizacyjny <span style={{ fontSize: 14, color: "var(--text-muted)" }}>ISO 27001 / 22301 klauzula 4</span></h2>
       </div>
 
-      {error && <div className="card" style={{ background: "var(--red-dim)", color: "var(--red)", padding: 12 }}>{error}</div>}
+      {error && <div className="card" style={{ background: "var(--red-dim)", color: "var(--red)", padding: 12, margin: "8px 16px 0" }}>{error}</div>}
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--border)", paddingBottom: 0 }}>
-        {TABS.map(t => (
-          <button
-            key={t.key}
-            onClick={() => { setActiveTab(t.key); setSearch(""); }}
-            style={{
-              padding: "8px 14px",
-              background: activeTab === t.key ? "var(--blue-dim)" : "transparent",
-              color: activeTab === t.key ? "var(--blue)" : "var(--text-muted)",
-              border: "none",
-              borderBottom: activeTab === t.key ? "2px solid var(--blue)" : "2px solid transparent",
-              cursor: "pointer",
-              fontWeight: activeTab === t.key ? 600 : 400,
-              fontSize: 13,
-            }}
-          >
-            {t.icon} {t.label}
-          </button>
-        ))}
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+        {/* ─── Left: Org Tree ─── */}
+        <div style={{
+          width: 320,
+          minWidth: 280,
+          maxWidth: 400,
+          borderRight: "1px solid var(--border)",
+          overflowY: "auto",
+          background: "var(--bg-card)",
+        }}>
+          <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Struktura organizacyjna
+          </div>
+          {treeLoading ? (
+            <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ładowanie...</div>
+          ) : orgUnits.length === 0 ? (
+            <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Brak jednostek</div>
+          ) : (
+            <div style={{ padding: "4px 0" }}>
+              {orgUnits.map(n => (
+                <ContextTreeNode
+                  key={n.id}
+                  node={n}
+                  depth={0}
+                  selectedId={selectedUnitId}
+                  onSelect={setSelectedUnitId}
+                  overviews={overviews}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ─── Right: Context Detail ─── */}
+        <div style={{ flex: 1, minWidth: 0, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+          {!selectedUnitId ? (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 14 }}>
+              Wybierz jednostkę z drzewa po lewej stronie
+            </div>
+          ) : (
+            <>
+              {/* Unit header */}
+              {selectedUnit && (
+                <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 15 }}>{selectedUnit.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{selectedUnit.level_name} · {selectedUnit.symbol} {selectedUnit.owner ? `· ${selectedUnit.owner}` : ""}</div>
+                  </div>
+                  {overview && (
+                    <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+                      <span style={{ fontSize: 12, color: statusColor(overview.context_status), fontWeight: 500 }}>{statusLabel(overview.context_status)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tabs */}
+              <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", padding: "0 16px", background: "var(--bg-card)" }}>
+                {TABS.map(t => (
+                  <button
+                    key={t.key}
+                    onClick={() => { setActiveTab(t.key); setSearch(""); }}
+                    style={{
+                      padding: "8px 14px",
+                      background: activeTab === t.key ? "var(--blue-dim)" : "transparent",
+                      color: activeTab === t.key ? "var(--blue)" : "var(--text-muted)",
+                      border: "none",
+                      borderBottom: activeTab === t.key ? "2px solid var(--blue)" : "2px solid transparent",
+                      cursor: "pointer",
+                      fontWeight: activeTab === t.key ? 600 : 400,
+                      fontSize: 13,
+                    }}
+                  >
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Content */}
+              <div style={{ flex: 1, padding: 16, overflowY: "auto" }}>
+                {loading && <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Ładowanie...</div>}
+
+                {!loading && activeTab === "overview" && overview && renderOverview()}
+                {!loading && activeTab === "issues" && renderIssues()}
+                {!loading && activeTab === "obligations" && renderObligations()}
+                {!loading && activeTab === "stakeholders" && renderStakeholders()}
+                {!loading && activeTab === "scope" && renderScope()}
+                {!loading && activeTab === "risk_appetite" && renderRiskAppetite()}
+                {!loading && activeTab === "reviews" && renderReviews()}
+              </div>
+            </>
+          )}
+        </div>
       </div>
-
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Ładowanie...</div>}
-
-      {!loading && activeTab === "overview" && overview && renderOverview()}
-      {!loading && activeTab === "issues" && renderIssues()}
-      {!loading && activeTab === "obligations" && renderObligations()}
-      {!loading && activeTab === "stakeholders" && renderStakeholders()}
-      {!loading && activeTab === "scope" && renderScope()}
-      {!loading && activeTab === "risk_appetite" && renderRiskAppetite()}
-      {!loading && activeTab === "reviews" && renderReviews()}
 
       {/* ─── Modals ─── */}
       {renderIssueModal()}
@@ -702,7 +873,7 @@ export default function OrgContextPage() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <div>
                 <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Zatrudnienie</label>
-                <input type="number" className="form-control" value={generalForm.headcount ?? ""} onChange={e => setGeneralForm({ ...generalForm, headcount: e.target.value ? Number(e.target.value) : null })} />
+                <input type="number" className="form-control" value={(generalForm.headcount as number | null) ?? ""} onChange={e => setGeneralForm({ ...generalForm, headcount: e.target.value ? Number(e.target.value) : null })} />
               </div>
               <div>
                 <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Status kontekstu</label>
@@ -778,9 +949,9 @@ export default function OrgContextPage() {
                 <tr key={i.id} onClick={() => setSelectedIssue(i)} style={{ cursor: "pointer", background: selectedIssue?.id === i.id ? "var(--bg-card-hover)" : undefined, opacity: i.inherited ? 0.75 : 1 }}>
                   {ISSUE_COLS.filter(c => issueVisCols.has(c.key)).map(c => (
                     <td key={c.key}>
-                      {c.key === "relevance" ? <span style={{ color: relevanceColor(i.relevance) }}>{c.format ? c.format(i) : (i as Record<string, unknown>)[c.key] as string}</span>
+                      {c.key === "relevance" ? <span style={{ color: relevanceColor(i.relevance) }}>{c.format ? c.format(i) : (i[c.key] as string)}</span>
                         : c.key === "inherited" ? <span className="score-badge" style={{ background: i.inherited ? "var(--blue-dim)" : "var(--green-dim)", color: i.inherited ? "var(--blue)" : "var(--green)", fontSize: 11 }}>{c.format!(i)}</span>
-                        : c.format ? c.format(i) : (i as Record<string, unknown>)[c.key] as string}
+                        : c.format ? c.format(i) : (i[c.key] as string)}
                     </td>
                   ))}
                 </tr>
@@ -847,7 +1018,7 @@ export default function OrgContextPage() {
                     <td key={c.key}>
                       {c.key === "compliance_status" ? <span style={{ color: complianceColor(o.compliance_status) }}>{c.format!(o)}</span>
                         : c.key === "inherited" ? <span className="score-badge" style={{ background: o.inherited ? "var(--blue-dim)" : "var(--green-dim)", color: o.inherited ? "var(--blue)" : "var(--green)", fontSize: 11 }}>{c.format!(o)}</span>
-                        : c.format ? c.format(o) : (o as Record<string, unknown>)[c.key] as string}
+                        : c.format ? c.format(o) : (o[c.key] as string)}
                     </td>
                   ))}
                 </tr>
@@ -912,7 +1083,7 @@ export default function OrgContextPage() {
                     <td key={c.key}>
                       {c.key === "relevance" || c.key === "influence_level" ? <span style={{ color: relevanceColor(c.key === "relevance" ? st.relevance : st.influence_level) }}>{c.format!(st)}</span>
                         : c.key === "inherited" ? <span className="score-badge" style={{ background: st.inherited ? "var(--blue-dim)" : "var(--green-dim)", color: st.inherited ? "var(--blue)" : "var(--green)", fontSize: 11 }}>{c.format!(st)}</span>
-                        : c.format ? c.format(st) : (st as Record<string, unknown>)[c.key] as string}
+                        : c.format ? c.format(st) : (st[c.key] as string)}
                     </td>
                   ))}
                 </tr>
@@ -1038,7 +1209,7 @@ export default function OrgContextPage() {
             {reviews.map(r => (
               <tr key={r.id}>
                 {REVIEW_COLS.filter(c => revVisCols.has(c.key)).map(c => (
-                  <td key={c.key}>{c.format ? c.format(r) : (r as Record<string, unknown>)[c.key] as string}</td>
+                  <td key={c.key}>{c.format ? c.format(r) : (r[c.key] as string)}</td>
                 ))}
               </tr>
             ))}
@@ -1326,7 +1497,7 @@ export default function OrgContextPage() {
           </div>
           <div>
             <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Maks. wynik ryzyka</label>
-            <input type="number" step="0.01" className="form-control" value={(raForm.max_acceptable_risk_score as number) ?? ""} onChange={e => setRAForm({ ...raForm, max_acceptable_risk_score: e.target.value ? Number(e.target.value) : null })} />
+            <input type="number" step="0.01" className="form-control" value={(raForm.max_acceptable_risk_score as number | null) ?? ""} onChange={e => setRAForm({ ...raForm, max_acceptable_risk_score: e.target.value ? Number(e.target.value) : null })} />
           </div>
           <div>
             <label style={{ fontSize: 12, color: "var(--text-muted)" }}>Zatwierdzanie wyjątków</label>

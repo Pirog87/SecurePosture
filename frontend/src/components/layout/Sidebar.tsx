@@ -17,6 +17,13 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Kontekst Organizacyjny",
+    items: [
+      { to: "/org-context", icon: "🏛️", label: "Kontekst Org." },
+      { to: "/org-structure", icon: "🏢", label: "Struktura Org." },
+    ],
+  },
+  {
     title: "Zarządzanie Ryzykiem",
     items: [
       { to: "/assets", icon: "🖥️", label: "Rejestr Aktywów" },
@@ -63,15 +70,8 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
-    title: "Kontekst Organizacyjny",
-    items: [
-      { to: "/org-context", icon: "🏛️", label: "Kontekst Org." },
-    ],
-  },
-  {
     title: "Konfiguracja",
     items: [
-      { to: "/org-structure", icon: "🏢", label: "Struktura Org." },
       { to: "/catalogs", icon: "📚", label: "Katalogi" },
       { to: "/dictionaries", icon: "📖", label: "Słowniki" },
       { to: "/audit", icon: "📝", label: "Audit Trail" },

@@ -86,6 +86,8 @@ export interface Threat {
   name: string;
   category_id: number | null;
   category_name: string | null;
+  asset_type_id: number | null;
+  asset_type_name: string | null;
   description: string | null;
   is_active: boolean;
 }
@@ -95,6 +97,8 @@ export interface Vulnerability {
   name: string;
   security_area_id: number | null;
   security_area_name: string | null;
+  asset_type_id: number | null;
+  asset_type_name: string | null;
   description: string | null;
   is_active: boolean;
 }
@@ -104,6 +108,8 @@ export interface Safeguard {
   name: string;
   type_id: number | null;
   type_name: string | null;
+  asset_type_id: number | null;
+  asset_type_name: string | null;
   description: string | null;
   is_active: boolean;
 }
@@ -201,13 +207,7 @@ export interface Risk {
   criticality_name: string | null;
   security_area_id: number;
   security_area_name: string;
-  threat_id: number | null;
-  threat_name: string | null;
-  vulnerability_id: number | null;
-  vulnerability_name: string | null;
   existing_controls: string | null;
-  control_effectiveness_id: number | null;
-  control_effectiveness_name: string | null;
   consequence_description: string | null;
   // Analiza ryzyka
   impact_level: number;
@@ -238,6 +238,10 @@ export interface Risk {
   identified_at: string | null;
   last_review_at: string | null;
   is_active: boolean;
+  threat_ids: number[];
+  threats: { threat_id: number; threat_name: string }[];
+  vulnerability_ids: number[];
+  vulnerabilities: { vulnerability_id: number; vulnerability_name: string }[];
   safeguard_ids: number[];
   safeguards: { safeguard_id: number; safeguard_name: string }[];
   linked_actions: LinkedActionRef[];

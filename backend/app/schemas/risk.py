@@ -3,6 +3,16 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 
+class RiskThreatRef(BaseModel):
+    threat_id: int
+    threat_name: str | None = None
+
+
+class RiskVulnerabilityRef(BaseModel):
+    vulnerability_id: int
+    vulnerability_name: str | None = None
+
+
 class RiskSafeguardRef(BaseModel):
     safeguard_id: int
     safeguard_name: str | None = None
@@ -42,13 +52,7 @@ class RiskOut(BaseModel):
     criticality_name: str | None = None
     security_area_id: int | None = None
     security_area_name: str | None = None
-    threat_id: int | None = None
-    threat_name: str | None = None
-    vulnerability_id: int | None = None
-    vulnerability_name: str | None = None
     existing_controls: str | None = None
-    control_effectiveness_id: int | None = None
-    control_effectiveness_name: str | None = None
     consequence_description: str | None = None
 
     # Analiza (ISO 27005 §8.3)
@@ -86,6 +90,8 @@ class RiskOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    threats: list[RiskThreatRef] = []
+    vulnerabilities: list[RiskVulnerabilityRef] = []
     safeguards: list[RiskSafeguardRef] = []
     linked_actions: list[LinkedActionRef] = []
 
@@ -106,10 +112,7 @@ class RiskCreate(BaseModel):
     sensitivity_id: int | None = None
     criticality_id: int | None = None
     security_area_id: int | None = None
-    threat_id: int | None = None
-    vulnerability_id: int | None = None
     existing_controls: str | None = None
-    control_effectiveness_id: int | None = None
     consequence_description: str | None = None
 
     # Analiza
@@ -137,6 +140,8 @@ class RiskCreate(BaseModel):
     # Monitorowanie
     next_review_date: date | None = None
 
+    threat_ids: list[int] = []
+    vulnerability_ids: list[int] = []
     safeguard_ids: list[int] = []
 
 
@@ -154,10 +159,7 @@ class RiskUpdate(BaseModel):
     sensitivity_id: int | None = None
     criticality_id: int | None = None
     security_area_id: int | None = None
-    threat_id: int | None = None
-    vulnerability_id: int | None = None
     existing_controls: str | None = None
-    control_effectiveness_id: int | None = None
     consequence_description: str | None = None
 
     # Analiza
@@ -186,6 +188,8 @@ class RiskUpdate(BaseModel):
     next_review_date: date | None = None
     is_active: bool | None = None
 
+    threat_ids: list[int] | None = None
+    vulnerability_ids: list[int] | None = None
     safeguard_ids: list[int] | None = None
 
 

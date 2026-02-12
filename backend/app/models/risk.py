@@ -40,10 +40,7 @@ class Risk(Base):
     sensitivity_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     criticality_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     security_area_id: Mapped[int | None] = mapped_column(ForeignKey("security_domains.id"))
-    threat_id: Mapped[int | None] = mapped_column(ForeignKey("threats.id"))
-    vulnerability_id: Mapped[int | None] = mapped_column(ForeignKey("vulnerabilities.id"))
     existing_controls: Mapped[str | None] = mapped_column(Text)
-    control_effectiveness_id: Mapped[int | None] = mapped_column(ForeignKey("dictionary_entries.id"))
     consequence_description: Mapped[str | None] = mapped_column(Text)
 
     # ── ISO 27005 §8.3 Analiza ryzyka ──
@@ -101,6 +98,22 @@ class Risk(Base):
     from .org_unit import OrgUnit
     from .security_area import SecurityArea
     from .dictionary import DictionaryEntry
+
+
+class RiskThreat(Base):
+    __tablename__ = "risk_threats"
+
+    risk_id: Mapped[int] = mapped_column(ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True)
+    threat_id: Mapped[int] = mapped_column(ForeignKey("threats.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class RiskVulnerability(Base):
+    __tablename__ = "risk_vulnerabilities"
+
+    risk_id: Mapped[int] = mapped_column(ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True)
+    vulnerability_id: Mapped[int] = mapped_column(ForeignKey("vulnerabilities.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class RiskSafeguard(Base):

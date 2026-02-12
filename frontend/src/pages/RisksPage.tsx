@@ -47,7 +47,6 @@ interface FormLookups {
   statuses: { id: number; label: string }[];
   strategies: { id: number; label: string }[];
   risk_categories: { id: number; label: string }[];
-  control_effectivenesses: { id: number; label: string }[];
   identification_sources: { id: number; label: string }[];
   asset_types: { id: number; label: string }[];
 }
@@ -116,21 +115,20 @@ export default function RisksPage() {
         return d.entries.filter(e => e.is_active).map(e => ({ id: e.id, label: e.label }));
       } catch { return []; }
     };
-    const [categories, sensitivities, criticalities, statuses, strategies, risk_categories, control_effectivenesses, identification_sources, asset_types] = await Promise.all([
+    const [categories, sensitivities, criticalities, statuses, strategies, risk_categories, identification_sources, asset_types] = await Promise.all([
       dictEntries("asset_category"),
       dictEntries("sensitivity"),
       dictEntries("criticality"),
       dictEntries("risk_status"),
       dictEntries("risk_strategy"),
       dictEntries("risk_category"),
-      dictEntries("control_effectiveness"),
       dictEntries("risk_identification_source"),
       dictEntries("asset_type"),
     ]);
     const result: FormLookups = {
       orgUnits, areas, threats, vulns, safeguards, assets,
       categories, sensitivities, criticalities, statuses, strategies,
-      risk_categories, control_effectivenesses, identification_sources, asset_types,
+      risk_categories, identification_sources, asset_types,
     };
     setLookups(result);
     return result;
@@ -412,17 +410,44 @@ export default function RisksPage() {
 
               <SectionHeader number="\u2462" label="Scenariusz ryzyka" />
               <DetailRow label="Domena" value={selected.security_area_name} />
-              <DetailRow label="Zagrozenie" value={selected.threat_name} />
-              <DetailRow label="Podatnosc" value={selected.vulnerability_name} />
+              {selected.threats && selected.threats.length > 0 && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Zagrozenia</div>
+                  <div className="tag-list">
+                    {selected.threats.map(t => (
+                      <span key={t.threat_id} className="tag" style={{ background: "var(--red-dim)", color: "var(--red)" }}>{t.threat_name}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selected.vulnerabilities && selected.vulnerabilities.length > 0 && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Podatnosci</div>
+                  <div className="tag-list">
+                    {selected.vulnerabilities.map(v => (
+                      <span key={v.vulnerability_id} className="tag" style={{ background: "var(--orange-dim)", color: "var(--orange)" }}>{v.vulnerability_name}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selected.safeguards && selected.safeguards.length > 0 && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Zabezpieczenia</div>
+                  <div className="tag-list">
+                    {selected.safeguards.map(s => (
+                      <span key={s.safeguard_id} className="tag" style={{ background: "var(--green-dim)", color: "var(--green)" }}>{s.safeguard_name}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {selected.existing_controls && (
                 <div style={{ marginTop: 4 }}>
-                  <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Istniejace zabezpieczenia</div>
+                  <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Istniejace kontrole</div>
                   <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
                     {selected.existing_controls}
                   </div>
                 </div>
               )}
-              <DetailRow label="Skutecznosc kontroli" value={selected.control_effectiveness_name} />
               {selected.consequence_description && (
                 <div style={{ marginTop: 4 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 2 }}>Opis konsekwencji</div>
@@ -468,17 +493,6 @@ export default function RisksPage() {
                   </div>
                 </div>
               )}
-              {selected.safeguards && selected.safeguards.length > 0 && (
-                <div style={{ marginTop: 4 }}>
-                  <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Zabezpieczenia</div>
-                  <div className="tag-list">
-                    {selected.safeguards.map(s => (
-                      <span key={s.safeguard_id} className="tag">{s.safeguard_name}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {/* Residual risk block */}
               {selected.residual_risk != null && (
                 <div style={{ marginTop: 8, padding: 8, background: riskBg(selected.residual_risk), borderRadius: 6 }}>
@@ -731,6 +745,223 @@ function ActionSearch({ riskId, existingLinks }: { riskId: number | null; existi
     </div>
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   TagMultiSelect — reusable multi-select with tags + inline add
+   ═══════════════════════════════════════════════════════════════════ */
+
+function TagMultiSelect<T extends { id: number; name: string }>({ label, items, selectedIds, onChange, onAdd, color }: {
+  label: string;
+  items: T[];
+  selectedIds: number[];
+  onChange: (ids: number[]) => void;
+  onAdd: (name: string) => Promise<T>;
+  color: string;
+}) {
+  const [search, setSearch] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const available = items.filter(i => !selectedIds.includes(i.id));
+  const filtered = search.length >= 1
+    ? available.filter(i => i.name.toLowerCase().includes(search.toLowerCase())).slice(0, 8)
+    : [];
+
+  const handleAdd = async () => {
+    if (!search.trim()) return;
+    setAdding(true);
+    try {
+      const created = await onAdd(search.trim());
+      onChange([...selectedIds, created.id]);
+      setSearch("");
+    } catch (err) {
+      alert("Blad: " + err);
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <div className="form-group" style={{ gridColumn: "span 2" }}>
+      <label>{label}</label>
+      {/* Selected tags */}
+      {selectedIds.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+          {selectedIds.map(id => {
+            const item = items.find(i => i.id === id);
+            return (
+              <span key={id} style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                background: color + "18", color, border: `1px solid ${color}40`,
+                borderRadius: 14, padding: "3px 10px 3px 10px", fontSize: 12, fontWeight: 500,
+              }}>
+                {item?.name ?? `#${id}`}
+                <span style={{ cursor: "pointer", marginLeft: 2, opacity: 0.7, fontWeight: 700, fontSize: 14 }}
+                  onClick={() => onChange(selectedIds.filter(sid => sid !== id))}>
+                  &times;
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {/* Search input */}
+      <div style={{ position: "relative" }}>
+        <input
+          className="form-control"
+          style={{ fontSize: 12 }}
+          placeholder={`Szukaj lub wpisz nowe...`}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        {/* Dropdown results */}
+        {search.length >= 1 && (
+          <div style={{
+            position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10,
+            background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6,
+            maxHeight: 200, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            marginTop: 2,
+          }}>
+            {filtered.map(item => (
+              <div key={item.id} style={{
+                padding: "7px 12px", cursor: "pointer", fontSize: 12,
+                borderBottom: "1px solid rgba(42,53,84,0.12)",
+              }}
+                onClick={() => { onChange([...selectedIds, item.id]); setSearch(""); }}
+                onMouseEnter={e => (e.currentTarget.style.background = color + "12")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              >
+                {item.name}
+              </div>
+            ))}
+            {/* "Add new" option */}
+            <div style={{
+              padding: "7px 12px", cursor: "pointer", fontSize: 12,
+              color, fontWeight: 500, borderTop: filtered.length > 0 ? `1px solid ${color}30` : "none",
+            }}
+              onClick={handleAdd}
+              onMouseEnter={e => (e.currentTarget.style.background = color + "12")}
+              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+            >
+              {adding ? "Dodawanie..." : `+ Dodaj "${search}" do slownika`}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   ScenarioTab — threats, vulnerabilities, safeguards with tag pickers
+   ═══════════════════════════════════════════════════════════════════ */
+
+function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurityAreaId,
+  threatIds, setThreatIds, vulnerabilityIds, setVulnerabilityIds,
+  safeguardIds, setSafeguardIds, existingControls, setExistingControls,
+  consequenceDescription, setConsequenceDescription }: {
+  lookups: FormLookups;
+  setLookups: React.Dispatch<React.SetStateAction<FormLookups | null>>;
+  assetId: number | null;
+  securityAreaId: number | null;
+  setSecurityAreaId: (id: number | null) => void;
+  threatIds: number[];
+  setThreatIds: (ids: number[]) => void;
+  vulnerabilityIds: number[];
+  setVulnerabilityIds: (ids: number[]) => void;
+  safeguardIds: number[];
+  setSafeguardIds: (ids: number[]) => void;
+  existingControls: string;
+  setExistingControls: (v: string) => void;
+  consequenceDescription: string;
+  setConsequenceDescription: (v: string) => void;
+}) {
+  // Determine asset_type_id from selected asset
+  const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
+  const assetTypeId = selectedAsset?.asset_type_id ?? null;
+  const assetTypeName = selectedAsset?.asset_type_name ?? null;
+
+  // Filter catalogs by asset type (show matching + untyped)
+  const filteredThreats = assetTypeId
+    ? lookups.threats.filter(t => t.asset_type_id === assetTypeId || t.asset_type_id === null)
+    : lookups.threats;
+  const filteredVulns = assetTypeId
+    ? lookups.vulns.filter(v => v.asset_type_id === assetTypeId || v.asset_type_id === null)
+    : lookups.vulns;
+  const filteredSafeguards = assetTypeId
+    ? lookups.safeguards.filter(s => s.asset_type_id === assetTypeId || s.asset_type_id === null)
+    : lookups.safeguards;
+
+  return (
+    <div>
+      <SectionHeader number="\u2462" label="Scenariusz ryzyka" />
+      {assetTypeName && (
+        <div style={{ fontSize: 11, color: "var(--blue)", marginBottom: 10, padding: "4px 8px", background: "rgba(59,130,246,0.06)", borderRadius: 6, display: "inline-block" }}>
+          Filtrowanie wg typu aktywa: <strong>{assetTypeName}</strong>
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        <div className="form-group">
+          <label>Domena bezpieczenstwa</label>
+          <select className="form-control" value={securityAreaId ?? ""} onChange={e => setSecurityAreaId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">Wybierz...</option>
+            {lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
+        <div />
+
+        <TagMultiSelect<Threat>
+          label="Zagrozenia"
+          items={filteredThreats}
+          selectedIds={threatIds}
+          onChange={setThreatIds}
+          color="var(--red)"
+          onAdd={async (name) => {
+            const created = await api.post<Threat>("/api/v1/threats", { name, asset_type_id: assetTypeId });
+            setLookups(prev => prev ? { ...prev, threats: [...prev.threats, created] } : prev);
+            return created;
+          }}
+        />
+
+        <TagMultiSelect<Vulnerability>
+          label="Podatnosci"
+          items={filteredVulns}
+          selectedIds={vulnerabilityIds}
+          onChange={setVulnerabilityIds}
+          color="var(--orange)"
+          onAdd={async (name) => {
+            const created = await api.post<Vulnerability>("/api/v1/vulnerabilities", { name, asset_type_id: assetTypeId });
+            setLookups(prev => prev ? { ...prev, vulns: [...prev.vulns, created] } : prev);
+            return created;
+          }}
+        />
+
+        <TagMultiSelect<Safeguard>
+          label="Zabezpieczenia"
+          items={filteredSafeguards}
+          selectedIds={safeguardIds}
+          onChange={setSafeguardIds}
+          color="var(--green)"
+          onAdd={async (name) => {
+            const created = await api.post<Safeguard>("/api/v1/safeguards", { name, asset_type_id: assetTypeId });
+            setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
+            return created;
+          }}
+        />
+
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Istniejace kontrole</label>
+          <textarea className="form-control" rows={2} value={existingControls} onChange={e => setExistingControls(e.target.value)} placeholder="Opisz istniejace kontrole i zabezpieczenia..." />
+        </div>
+        <div className="form-group" style={{ gridColumn: "span 2" }}>
+          <label>Opis konsekwencji</label>
+          <textarea className="form-control" rows={2} value={consequenceDescription} onChange={e => setConsequenceDescription(e.target.value)} placeholder="Opisz potencjalne konsekwencje materializacji ryzyka..." />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════
    AssetTab — searchable asset picker + inline asset creation
@@ -1026,10 +1257,9 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
 
   // Sekcja 3: Scenariusz
   const [securityAreaId, setSecurityAreaId] = useState<number | null>(editRisk?.security_area_id ?? null);
-  const [threatId, setThreatId] = useState<number | null>(editRisk?.threat_id ?? null);
-  const [vulnerabilityId, setVulnerabilityId] = useState<number | null>(editRisk?.vulnerability_id ?? null);
+  const [threatIds, setThreatIds] = useState<number[]>(editRisk?.threats?.map(t => t.threat_id) ?? []);
+  const [vulnerabilityIds, setVulnerabilityIds] = useState<number[]>(editRisk?.vulnerabilities?.map(v => v.vulnerability_id) ?? []);
   const [existingControls, setExistingControls] = useState(editRisk?.existing_controls ?? "");
-  const [controlEffectivenessId, setControlEffectivenessId] = useState<number | null>(editRisk?.control_effectiveness_id ?? null);
   const [consequenceDescription, setConsequenceDescription] = useState(editRisk?.consequence_description ?? "");
 
   // Sekcja 4: Analiza
@@ -1082,10 +1312,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
       sensitivity_id: sensitivityId,
       criticality_id: criticalityId,
       security_area_id: securityAreaId,
-      threat_id: threatId,
-      vulnerability_id: vulnerabilityId,
       existing_controls: existingControls || null,
-      control_effectiveness_id: controlEffectivenessId,
       consequence_description: consequenceDescription || null,
       impact_level: W,
       probability_level: P,
@@ -1094,6 +1321,8 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
       treatment_plan: treatmentPlan || null,
       treatment_deadline: treatmentDeadline || null,
       treatment_resources: treatmentResources || null,
+      threat_ids: threatIds,
+      vulnerability_ids: vulnerabilityIds,
       safeguard_ids: safeguardIds,
       planned_actions: plannedActions || null,
       target_impact: tW,
@@ -1296,47 +1525,23 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
 
       {/* ═══ Tab: Scenariusz ═══ */}
       {tab === "scenario" && (
-        <div>
-          <SectionHeader number="\u2462" label="Scenariusz ryzyka" />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <div className="form-group">
-              <label>Domena bezpieczenstwa</label>
-              <select className="form-control" value={securityAreaId ?? ""} onChange={e => setSecurityAreaId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Zagrozenie</label>
-              <select className="form-control" value={threatId ?? ""} onChange={e => setThreatId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {lookups.threats.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Podatnosc</label>
-              <select className="form-control" value={vulnerabilityId ?? ""} onChange={e => setVulnerabilityId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {lookups.vulns.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-              </select>
-            </div>
-            <div className="form-group">
-              <label>Skutecznosc istniejacych kontroli</label>
-              <select className="form-control" value={controlEffectivenessId ?? ""} onChange={e => setControlEffectivenessId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Wybierz...</option>
-                {lookups.control_effectivenesses.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select>
-            </div>
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>Istniejace zabezpieczenia / kontrole</label>
-              <textarea className="form-control" rows={2} value={existingControls} onChange={e => setExistingControls(e.target.value)} placeholder="Opisz istniejace kontrole i zabezpieczenia..." />
-            </div>
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>Opis konsekwencji</label>
-              <textarea className="form-control" rows={2} value={consequenceDescription} onChange={e => setConsequenceDescription(e.target.value)} placeholder="Opisz potencjalne konsekwencje materializacji ryzyka..." />
-            </div>
-          </div>
-        </div>
+        <ScenarioTab
+          lookups={lookups}
+          setLookups={setLookups}
+          assetId={assetId}
+          securityAreaId={securityAreaId}
+          setSecurityAreaId={setSecurityAreaId}
+          threatIds={threatIds}
+          setThreatIds={setThreatIds}
+          vulnerabilityIds={vulnerabilityIds}
+          setVulnerabilityIds={setVulnerabilityIds}
+          safeguardIds={safeguardIds}
+          setSafeguardIds={setSafeguardIds}
+          existingControls={existingControls}
+          setExistingControls={setExistingControls}
+          consequenceDescription={consequenceDescription}
+          setConsequenceDescription={setConsequenceDescription}
+        />
       )}
 
       {/* ═══ Tab: Postepowanie ═══ */}
@@ -1362,15 +1567,6 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
             <div className="form-group" style={{ gridColumn: "span 2" }}>
               <label>Zasoby wymagane</label>
               <textarea className="form-control" rows={2} value={treatmentResources} onChange={e => setTreatmentResources(e.target.value)} placeholder="Opisz wymagane zasoby (budzet, ludzie, narzedzia)..." />
-            </div>
-            <div className="form-group" style={{ gridColumn: "span 2" }}>
-              <label>Zabezpieczenia</label>
-              <select className="form-control" multiple style={{ height: 80 }}
-                value={safeguardIds.map(String)}
-                onChange={e => setSafeguardIds(Array.from(e.target.selectedOptions, o => Number(o.value)))}>
-                {lookups.safeguards.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-              <span style={{ fontSize: 10, color: "var(--text-muted)" }}>Ctrl+klik aby wybrac wiele</span>
             </div>
             <div className="form-group" style={{ gridColumn: "span 2" }}>
               <label>Planowane dzialania</label>

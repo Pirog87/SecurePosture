@@ -259,6 +259,7 @@ function BulkActionBar({ selectedIds, lookups, onBulkDone }: {
 export default function ActionsPage() {
   const [actions, setActions] = useState<Action[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editAction, setEditAction] = useState<Action | null>(null);
   const [saving, setSaving] = useState(false);
@@ -275,9 +276,10 @@ export default function ActionsPage() {
 
   const loadActions = useCallback(() => {
     setLoading(true);
+    setLoadError(null);
     api.get<Action[]>("/api/v1/actions")
-      .then(setActions)
-      .catch((err) => { console.error("Failed to load actions:", err); })
+      .then(data => { setActions(data); setLoadError(null); })
+      .catch((err) => { console.error("Failed to load actions:", err); setLoadError(String(err)); })
       .finally(() => setLoading(false));
   }, []);
 
@@ -364,6 +366,15 @@ export default function ActionsPage() {
 
   return (
     <div>
+      {loadError && (
+        <div className="card" style={{ marginBottom: 12, padding: 16, border: "1px solid var(--red)", background: "rgba(239,68,68,0.06)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ color: "var(--red)", fontSize: 13 }}>Blad ladowania dzialan: {loadError}</span>
+            <button className="btn btn-sm" onClick={loadActions}>Ponow</button>
+          </div>
+        </div>
+      )}
+
       <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
       {/* KPI toggle */}

@@ -218,18 +218,32 @@ async def action_stats(s: AsyncSession = Depends(get_session)):
 
     overdue_pct = (len(overdue) / len(open_actions) * 100) if open_actions else 0.0
 
+    # Batch-load all dictionary labels for status/priority
+    de_ids = set()
+    for a in actions:
+        if a.status_id is not None:
+            de_ids.add(a.status_id)
+        if a.priority_id is not None:
+            de_ids.add(a.priority_id)
+    de_map: dict[int, str] = {}
+    if de_ids:
+        rows = (await s.execute(
+            select(DictionaryEntry.id, DictionaryEntry.label).where(DictionaryEntry.id.in_(de_ids))
+        )).all()
+        de_map = {r[0]: r[1] for r in rows}
+
     # By status
     status_counts: dict[str, int] = defaultdict(int)
     for a in actions:
-        sn = await _de_label(s, a.status_id) or "Brak statusu"
-        status_counts[sn] += 1
+        sn = de_map.get(a.status_id) if a.status_id else None
+        status_counts[sn or "Brak statusu"] += 1
     by_status = [ActionStatusBreakdown(status_name=k, count=v) for k, v in status_counts.items()]
 
     # By priority
     priority_counts: dict[str, int] = defaultdict(int)
     for a in actions:
-        pn = await _de_label(s, a.priority_id) or "Brak priorytetu"
-        priority_counts[pn] += 1
+        pn = de_map.get(a.priority_id) if a.priority_id else None
+        priority_counts[pn or "Brak priorytetu"] += 1
     by_priority = [ActionPriorityBreakdown(priority_name=k, count=v) for k, v in priority_counts.items()]
 
     # Monthly trend (last 12 months)

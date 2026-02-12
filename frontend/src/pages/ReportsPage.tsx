@@ -121,7 +121,7 @@ function ReportCard({ report, generating, onGenerate }: {
               Parametry filtrowania...
             </button>
           ) : (
-            <div style={{ marginBottom: 10, padding: 10, background: "rgba(255,255,255,0.02)", borderRadius: 6, border: "1px solid var(--border)" }}>
+            <div style={{ marginBottom: 10, padding: 10, background: "var(--bg-inset)", borderRadius: 6, border: "1px solid var(--border)" }}>
               {report.params.map(p => (
                 <div className="form-group" key={p.key} style={{ marginBottom: 8 }}>
                   <label style={{ fontSize: 11, color: "var(--text-muted)" }}>{p.label}</label>

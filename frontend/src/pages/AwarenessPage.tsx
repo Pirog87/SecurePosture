@@ -511,7 +511,7 @@ export default function AwarenessPage() {
                 <>
                   <SectionHeader number={"\u2463"} label="Podsumowanie wynikow" />
                   {results[selected.id].map(r => (
-                    <div key={r.id} style={{ marginBottom: 8, padding: "6px 8px", borderRadius: 6, background: "rgba(255,255,255,0.02)" }}>
+                    <div key={r.id} style={{ marginBottom: 8, padding: "6px 8px", borderRadius: 6, background: "var(--bg-inset)" }}>
                       <div style={{ fontWeight: 500, marginBottom: 2 }}>{r.org_unit_name ?? "Cala org."}</div>
                       <DetailRow label="Ukonczenie" value={r.completion_rate != null ? `${r.completion_rate}%` : "\u2014"} color={r.completion_rate != null && r.completion_rate >= 80 ? "#16a34a" : r.completion_rate != null && r.completion_rate < 50 ? "var(--red)" : undefined} />
                       <DetailRow label="Click rate" value={r.click_rate != null ? `${r.click_rate}%` : "\u2014"} color={r.click_rate != null && r.click_rate > 20 ? "#dc2626" : undefined} />

@@ -440,7 +440,7 @@ function EntryForm({ entry, onSubmit, saving, onCancel }: {
   onCancel: () => void;
 }) {
   return (
-    <form onSubmit={onSubmit} style={{ background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: 16, marginBottom: 16, border: "1px solid rgba(42,53,84,0.3)" }}>
+    <form onSubmit={onSubmit} style={{ background: "var(--bg-inset)", borderRadius: 8, padding: 16, marginBottom: 16, border: "1px solid var(--border)" }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 10 }}>
         {entry ? `Edycja: ${entry.label}` : "Nowa pozycja"}
       </div>

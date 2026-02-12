@@ -60,6 +60,15 @@ function pluralPL(n: number, one: string, few: string, many: string): string {
   return many;
 }
 
+/* ──────────────── navigation helper ──────────────── */
+function buildLink(base: string, params: Record<string, string | number | null | undefined>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(params)) {
+    if (v != null && v !== "") parts.push(`${k}=${encodeURIComponent(v)}`);
+  }
+  return parts.length ? `${base}?${parts.join("&")}` : base;
+}
+
 /* ──────────────── component ──────────────── */
 
 export default function DashboardPage() {
@@ -153,7 +162,7 @@ export default function DashboardPage() {
 
   // Recommendations
   const recommendations: { text: string; link: string }[] = [];
-  if (rc.high > 0) recommendations.push({ text: "Przegląd ryzyk krytycznych", link: "/risks?level=high" });
+  if (rc.high > 0) recommendations.push({ text: "Przegląd ryzyk krytycznych", link: buildLink("/risks", { level: "high", org_unit_id: orgFilter || null }) });
   if ((exec?.overdue_reviews_count ?? 0) > 0) recommendations.push({ text: "Uzupełnienie zaległych przeglądów", link: "/reviews" });
   if (exec?.cis_maturity_rating != null && exec.cis_maturity_rating < 3) recommendations.push({ text: "Rozwój kontroli CIS", link: "/cis" });
   if (vulns > 3) recommendations.push({ text: "Plan remediacji podatności", link: "/vulnerabilities" });
@@ -205,7 +214,7 @@ export default function DashboardPage() {
         borderLeft: `4px solid ${severityColor}`,
         padding: "24px 28px",
         marginBottom: 16,
-        background: "linear-gradient(135deg, var(--bg-card) 0%, rgba(26,32,53,0.95) 100%)",
+        background: "linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%)",
       }}>
         <div style={{ display: "flex", gap: 28, alignItems: "flex-start", flexWrap: "wrap" }}>
 
@@ -275,7 +284,7 @@ export default function DashboardPage() {
                 </span>
                 {highTrend.totalDelta !== 0 && (
                   <span style={{
-                    padding: "3px 10px", borderRadius: 4, background: "rgba(255,255,255,0.04)",
+                    padding: "3px 10px", borderRadius: 4, background: "var(--bg-subtle)",
                     color: "var(--text-muted)", fontFamily: "'JetBrains Mono',monospace",
                   }}>
                     {highTrend.totalDelta > 0 ? "+" : ""}{highTrend.totalDelta} ogółem m/m
@@ -296,12 +305,12 @@ export default function DashboardPage() {
                   <div key={i}
                     style={{
                       display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderRadius: 6,
-                      background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)",
+                      background: "var(--bg-subtle)", border: "1px solid var(--border)",
                       cursor: "pointer", transition: "var(--transition)", fontSize: 12, color: "var(--text-secondary)",
                     }}
                     onClick={() => r.link !== "#" && navigate(r.link)}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-card-hover)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-light)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.03)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-subtle)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border)"; }}
                   >
                     <span style={{ color: "var(--blue)", fontSize: 11, flexShrink: 0 }}>►</span>
                     <span>{r.text}</span>
@@ -319,7 +328,7 @@ export default function DashboardPage() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14, marginBottom: 16 }}>
 
         {/* Risk Exposure */}
-        <div className="card clickable" onClick={() => navigate("/risks")} style={{ padding: "16px 18px" }}>
+        <div className="card clickable" onClick={() => navigate(buildLink("/risks", { org_unit_id: orgFilter || null }))} style={{ padding: "16px 18px" }}>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
             Ekspozycja na Ryzyko
           </div>
@@ -328,7 +337,7 @@ export default function DashboardPage() {
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>{pluralPL(rc.total, "ryzyko", "ryzyka", "ryzyk")} ogółem</div>
           {/* Segmented risk bar */}
-          <div style={{ display: "flex", height: 6, borderRadius: 3, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+          <div style={{ display: "flex", height: 6, borderRadius: 3, overflow: "hidden", background: "var(--bg-subtle)" }}>
             {rc.high > 0 && <div style={{ width: `${highPct}%`, background: "var(--red)" }} />}
             {rc.medium > 0 && <div style={{ width: `${medPct}%`, background: "var(--orange)" }} />}
             {rc.low > 0 && <div style={{ flex: 1, background: "var(--green)" }} />}
@@ -357,7 +366,7 @@ export default function DashboardPage() {
                   {Math.round(exec.cis_risk_addressed_pct)}%
                 </span>
               </div>
-              <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+              <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "var(--bg-subtle)" }}>
                 <div style={{ width: `${exec.cis_risk_addressed_pct}%`, height: "100%", borderRadius: 3, background: pctColor(exec.cis_risk_addressed_pct), transition: "width 1s ease" }} />
               </div>
             </>
@@ -379,7 +388,7 @@ export default function DashboardPage() {
               {cmdbCoverage}%
             </span>
           </div>
-          <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+          <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "var(--bg-subtle)" }}>
             <div style={{ width: `${cmdbCoverage}%`, height: "100%", borderRadius: 3, background: "var(--purple)", transition: "width 1s ease" }} />
           </div>
         </div>
@@ -429,7 +438,7 @@ export default function DashboardPage() {
                   <span>Terminowość</span>
                   <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(onTimePct) }}>{onTimePct}%</span>
                 </div>
-                <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+                <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "var(--bg-subtle)" }}>
                   <div style={{ width: `${onTimePct}%`, height: "100%", borderRadius: 3, background: pctColor(onTimePct), transition: "width 1s ease" }} />
                 </div>
               </>
@@ -459,13 +468,13 @@ export default function DashboardPage() {
                     return (
                       <div key={`${impact}-${prob}`} className="heatmap-cell"
                         style={{
-                          background: cnt > 0 ? matrixBg(impact, prob) : "rgba(255,255,255,0.03)",
+                          background: cnt > 0 ? matrixBg(impact, prob) : "var(--bg-subtle)",
                           color: cnt > 0 ? "#fff" : "var(--text-muted)",
                           height: 40,
                           opacity: cnt > 0 ? 1 : 0.5,
                           cursor: cnt > 0 ? "pointer" : "default",
                         }}
-                        onClick={() => cnt > 0 && navigate(`/risks?impact=${impact}&prob=${prob}`)}
+                        onClick={() => cnt > 0 && navigate(buildLink("/risks", { impact, prob, org_unit_id: orgFilter || null }))}
                       >
                         {cnt > 0 ? cnt : "—"}
                       </div>
@@ -534,7 +543,7 @@ export default function DashboardPage() {
             )}
             {/* Benchmark comparison */}
             {posture?.benchmark_avg != null && (
-              <div style={{ marginTop: 10, padding: "6px 12px", borderRadius: 6, background: "rgba(255,255,255,0.03)", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+              <div style={{ marginTop: 10, padding: "6px 12px", borderRadius: 6, background: "var(--bg-subtle)", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11 }}>
                 <span style={{ color: "var(--text-muted)" }}>vs. średnia org:</span>
                 <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: score >= posture.benchmark_avg ? "var(--green)" : "var(--orange)" }}>
                   {score >= posture.benchmark_avg ? "+" : ""}{(score - posture.benchmark_avg).toFixed(0)} pkt
@@ -616,7 +625,7 @@ export default function DashboardPage() {
               <thead><tr><th>Aktywo</th><th>Pion</th><th>Ocena</th><th>Status</th></tr></thead>
               <tbody>
                 {exec.top_risks.slice(0, 5).map(r => (
-                  <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => navigate(`/risks?highlight=${r.id}`)}>
+                  <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => navigate(buildLink("/risks", { highlight: r.id }))}>
                     <td style={{ fontWeight: 500 }}>{r.asset_name}</td>
                     <td style={{ fontSize: 12 }}>{r.org_unit}</td>
                     <td><span className="score-badge" style={{ background: riskBg(r.risk_level), color: riskColor(r.risk_level) }}>{Number(r.risk_score).toFixed(1)}</span></td>
@@ -639,7 +648,7 @@ export default function DashboardPage() {
               { label: "Niskie", count: rc.low, color: "var(--green)", bg: "var(--green-dim)", level: "low" },
             ].map(r => (
               <div key={r.label} style={{ flex: 1, textAlign: "center", background: r.bg, borderRadius: 8, padding: "12px 8px", cursor: "pointer" }}
-                onClick={() => navigate(`/risks?level=${r.level}`)}>
+                onClick={() => navigate(buildLink("/risks", { level: r.level, org_unit_id: orgFilter || null }))}>
                 <div style={{ fontSize: 24, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: r.color }}>{r.count}</div>
                 <div style={{ fontSize: 11, color: r.color }}>{r.label}</div>
               </div>
@@ -649,7 +658,7 @@ export default function DashboardPage() {
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>Ryzyka wg Pionów</div>
               {riskDash.by_org_unit.map(u => (
-                <div key={u.org_unit_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(42,53,84,0.25)", fontSize: 12 }}>
+                <div key={u.org_unit_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
                   <span style={{ color: "var(--text-secondary)" }}>{u.org_unit_name}</span>
                   <div style={{ display: "flex", gap: 6 }}>
                     {u.high > 0 && <span className="score-badge" style={{ background: "var(--red-dim)", color: "var(--red)" }}>{u.high}</span>}

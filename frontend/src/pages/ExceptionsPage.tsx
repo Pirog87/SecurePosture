@@ -354,14 +354,14 @@ export default function ExceptionsPage() {
 
               <SectionHeader number={"\u2461"} label="Uzasadnienie i kompensacja" />
               {selected.description && (
-                <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8, marginBottom: 8 }}>
                   {selected.description}
                 </div>
               )}
               {selected.compensating_controls && (
                 <div>
                   <div style={{ color: "var(--text-muted)", marginBottom: 2, fontSize: 11 }}>Srodki kompensacyjne</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                     {selected.compensating_controls}
                   </div>
                 </div>
@@ -389,7 +389,7 @@ export default function ExceptionsPage() {
             </div>
 
             {/* Actions */}
-            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
               <button
                 className="btn btn-sm"
                 style={{ flex: 1 }}
@@ -927,7 +927,7 @@ function ExceptionWizard({ lookups, flatUnits, orgTree, saving, editingException
                   {editRisk.consequence_description && (
                     <div style={{ marginTop: 4, marginBottom: 8 }}>
                       <span style={{ color: "var(--text-muted)" }}>Konsekwencje:</span>
-                      <div style={{ fontSize: 11, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8, marginTop: 2 }}>
                         {editRisk.consequence_description}
                       </div>
                     </div>
@@ -948,7 +948,7 @@ function ExceptionWizard({ lookups, flatUnits, orgTree, saving, editingException
                   {editRisk.treatment_plan && (
                     <div style={{ marginTop: 4, marginBottom: 8 }}>
                       <span style={{ color: "var(--text-muted)" }}>Plan postepowania:</span>
-                      <div style={{ fontSize: 11, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8, marginTop: 2 }}>
                         {editRisk.treatment_plan}
                       </div>
                     </div>

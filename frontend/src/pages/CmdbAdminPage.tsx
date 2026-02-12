@@ -526,7 +526,7 @@ export default function CmdbAdminPage() {
               [...fieldsByTab.entries()].map(([tabName, tabFields]) => (
                 <div key={tabName} className="card" style={{ marginBottom: 12 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "var(--text-primary)", display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 10, color: "var(--text-muted)", background: "rgba(255,255,255,0.05)", padding: "2px 8px", borderRadius: 8 }}>
+                    <span style={{ fontSize: 10, color: "var(--text-muted)", background: "var(--bg-subtle)", padding: "2px 8px", borderRadius: 8 }}>
                       Zakladka
                     </span>
                     {tabName}
@@ -551,7 +551,7 @@ export default function CmdbAdminPage() {
                           <td style={{ padding: "5px 8px", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>{field.field_key}</td>
                           <td style={{ padding: "5px 8px", fontWeight: 500 }}>{field.label}</td>
                           <td style={{ padding: "5px 8px", textAlign: "center" }}>
-                            <span className="score-badge" style={{ background: "rgba(255,255,255,0.05)", color: "var(--text-secondary)", fontSize: 10 }}>
+                            <span className="score-badge" style={{ background: "var(--bg-subtle)", color: "var(--text-secondary)", fontSize: 10 }}>
                               {FIELD_TYPES.find(t => t.value === field.field_type)?.label || field.field_type}
                             </span>
                           </td>

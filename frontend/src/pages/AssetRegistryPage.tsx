@@ -365,7 +365,7 @@ export default function AssetRegistryPage() {
                   {selected.description && (
                     <div style={{ marginTop: 8 }}>
                       <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Opis</div>
-                      <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8 }}>
                         {selected.description}
                       </div>
                     </div>
@@ -393,7 +393,7 @@ export default function AssetRegistryPage() {
                           key={ex.id}
                           style={{
                             padding: "10px 12px", borderRadius: 8,
-                            background: "rgba(255,255,255,0.02)",
+                            background: "var(--bg-inset)",
                             border: "1px solid var(--border)",
                             borderLeft: ex.risk_score != null ? `3px solid ${excRiskColor(rs)}` : "3px solid var(--border)",
                             cursor: "pointer",
@@ -432,7 +432,7 @@ export default function AssetRegistryPage() {
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
               <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => openEditForm(selected)}>Edytuj</button>
               <button className="btn btn-sm" style={{ flex: 1, color: "var(--red)" }} onClick={() => handleArchive(selected)}>Archiwizuj</button>
             </div>

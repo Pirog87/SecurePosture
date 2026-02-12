@@ -147,7 +147,7 @@ function KpiDashboard({ stats }: { stats: ActionStats | null }) {
             return (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 <span style={{ fontSize: 11, width: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.status_name}</span>
-                <div style={{ flex: 1, height: 6, borderRadius: 3, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--bg-subtle)", overflow: "hidden" }}>
                   <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: statusColor(s.status_name) }} />
                 </div>
                 <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono',monospace", width: 24, textAlign: "right" }}>{s.count}</span>
@@ -164,7 +164,7 @@ function KpiDashboard({ stats }: { stats: ActionStats | null }) {
             return (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 <span style={{ fontSize: 11, width: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.priority_name}</span>
-                <div style={{ flex: 1, height: 6, borderRadius: 3, background: "rgba(255,255,255,0.05)", overflow: "hidden" }}>
+                <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--bg-subtle)", overflow: "hidden" }}>
                   <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: priorityColor(p.priority_name) }} />
                 </div>
                 <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono',monospace", width: 24, textAlign: "right" }}>{p.count}</span>
@@ -485,7 +485,7 @@ export default function ActionsPage() {
               {selected.description && (
                 <div style={{ marginTop: 8 }}>
                   <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Opis</div>
-                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{selected.description}</div>
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8, whiteSpace: "pre-wrap" }}>{selected.description}</div>
                 </div>
               )}
 
@@ -517,7 +517,7 @@ export default function ActionsPage() {
                   <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>Ostatnie zmiany</div>
                   <div style={{ maxHeight: 160, overflowY: "auto" }}>
                     {(selected.history ?? []).slice(0, 5).map(h => (
-                      <div key={h.id} style={{ fontSize: 11, padding: "4px 0", borderBottom: "1px solid rgba(42,53,84,0.15)" }}>
+                      <div key={h.id} style={{ fontSize: 11, padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
                         <span style={{ color: "var(--text-muted)" }}>{h.created_at?.slice(0, 16).replace("T", " ")}</span>
                         {" "}<span style={{ color: "var(--blue)" }}>{FIELD_LABELS[h.field_name] ?? h.field_name}</span>
                         {h.old_value && <span style={{ color: "var(--red)", textDecoration: "line-through", marginLeft: 4, fontSize: 10 }}>{h.old_value.length > 40 ? h.old_value.slice(0, 40) + "..." : h.old_value}</span>}
@@ -532,7 +532,7 @@ export default function ActionsPage() {
             </div>
 
             {/* Action buttons */}
-            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid rgba(42,53,84,0.25)", paddingTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
               <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => openEditForm(selected)}>Edytuj</button>
               <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => handleArchive(selected)}>Archiwizuj</button>
             </div>
@@ -920,7 +920,7 @@ function RiskLinkerTab({ allRisks, linkedRiskIds, setLinkedRiskIds, otherLinks }
           Powiązane ryzyka ({linkedRisks.length})
         </div>
         {linkedRisks.length === 0 && (
-          <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "rgba(255,255,255,0.02)", borderRadius: 8, border: "1px dashed var(--border)" }}>
+          <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "var(--bg-inset)", borderRadius: 8, border: "1px dashed var(--border)" }}>
             Brak powiązanych ryzyk. Wyszukaj i dodaj ryzyko poniżej.
           </div>
         )}
@@ -979,7 +979,7 @@ function RiskLinkerTab({ allRisks, linkedRiskIds, setLinkedRiskIds, otherLinks }
             maxHeight: 300, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", marginTop: 2,
           }}>
             {filtered.map(risk => (
-              <div key={risk.id} style={{ padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid rgba(42,53,84,0.12)" }}
+              <div key={risk.id} style={{ padding: "8px 12px", cursor: "pointer", borderBottom: "1px solid var(--border)" }}
                 onClick={() => addRisk(risk.id)}
                 onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.06)")}
                 onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
@@ -1098,7 +1098,7 @@ function EffectivenessTab({ editAction, implementationNotes, setImplementationNo
         {effectivenessRating != null && (
           <div style={{ display: "flex", alignItems: "center" }}>
             <div style={{
-              width: "100%", height: 8, borderRadius: 4, background: "rgba(255,255,255,0.05)", overflow: "hidden",
+              width: "100%", height: 8, borderRadius: 4, background: "var(--bg-subtle)", overflow: "hidden",
             }}>
               <div style={{
                 width: `${effectivenessRating * 20}%`, height: "100%", borderRadius: 4,
@@ -1134,7 +1134,7 @@ function EffectivenessTab({ editAction, implementationNotes, setImplementationNo
         </div>
 
         {attachments.length === 0 && (
-          <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "rgba(255,255,255,0.02)", borderRadius: 8, border: "1px dashed var(--border)" }}>
+          <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "var(--bg-inset)", borderRadius: 8, border: "1px dashed var(--border)" }}>
             Brak załączników. Dodaj pliki jako dowody realizacji działania.
           </div>
         )}
@@ -1235,14 +1235,14 @@ function CommentsTab({ actionId }: { actionId: number }) {
       {/* Comment list */}
       <div style={{ maxHeight: 350, overflowY: "auto", marginBottom: 16 }}>
         {comments.length === 0 && (
-          <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "rgba(255,255,255,0.02)", borderRadius: 8, border: "1px dashed var(--border)" }}>
+          <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 12, background: "var(--bg-inset)", borderRadius: 8, border: "1px dashed var(--border)" }}>
             Brak komentarzy. Dodaj pierwszy komentarz poniżej.
           </div>
         )}
         {comments.map(c => (
           <div key={c.id} style={{
             padding: "10px 12px", borderRadius: 8, marginBottom: 6,
-            background: "rgba(255,255,255,0.02)", border: "1px solid rgba(42,53,84,0.15)",
+            background: "var(--bg-inset)", border: "1px solid var(--border)",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1325,7 +1325,7 @@ function HistoryTab({ history }: { history: Action["history"] }) {
   return (
     <div style={{ maxHeight: 450, overflowY: "auto" }}>
       {groups.map((group, gi) => (
-        <div key={gi} style={{ marginBottom: 12, padding: 10, borderRadius: 8, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(42,53,84,0.15)" }}>
+        <div key={gi} style={{ marginBottom: 12, padding: 10, borderRadius: 8, background: "var(--bg-inset)", border: "1px solid var(--border)" }}>
           {/* Timestamp header */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono',monospace", color: "var(--text-muted)" }}>

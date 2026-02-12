@@ -59,7 +59,7 @@ type SortDir = "asc" | "desc";
    RisksPage — main page component
    ═══════════════════════════════════════════════════════════════════ */
 export default function RisksPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [risks, setRisks] = useState<Risk[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -195,8 +195,6 @@ export default function RisksPage() {
       setAccepting(false);
     }
   };
-
-  const flatUnits = lookups ? flattenTree(lookups.orgUnits) : [];
 
   // Sort
   const handleSort = (field: SortField) => {
@@ -1496,7 +1494,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, flatUnits, saving, onSubm
   const [treatmentDeadline, setTreatmentDeadline] = useState(editRisk?.treatment_deadline?.slice(0, 10) ?? "");
   const [treatmentResources, setTreatmentResources] = useState(editRisk?.treatment_resources ?? "");
   const [safeguardIds, setSafeguardIds] = useState<number[]>(editRisk?.safeguards?.map(s => s.safeguard_id) ?? []);
-  const [plannedActions, setPlannedActions] = useState(editRisk?.planned_actions ?? "");
+  const [plannedActions] = useState(editRisk?.planned_actions ?? "");
   const [tW, setTW] = useState(editRisk?.target_impact ?? editRisk?.impact_level ?? 1);
   const [tP, setTP] = useState(editRisk?.target_probability ?? editRisk?.probability_level ?? 1);
   const [tZ, setTZ] = useState(editRisk?.target_safeguard ?? 0.95);

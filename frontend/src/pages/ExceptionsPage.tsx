@@ -100,7 +100,7 @@ export default function ExceptionsPage() {
     { key: "title", header: "Tytuł" },
     { key: "policy_title", header: "Polityka", format: r => r.policy_title ?? "" },
     { key: "org_unit_name", header: "Pion", format: r => r.org_unit_name ?? "" },
-    { key: "risk_score", header: "Ryzyko odst.", format: r => r.risk_score != null ? r.risk_score.toFixed(1) : "" },
+    { key: "risk_score", header: "Ryzyko odst.", format: r => r.risk_score != null ? Number(r.risk_score).toFixed(1) : "" },
     { key: "status_name", header: "Status", format: r => r.status_name ?? "" },
     { key: "expiry_date", header: "Wygasa" },
     { key: "category_name", header: "Kategoria", format: r => r.category_name ?? "", defaultVisible: false },
@@ -275,8 +275,8 @@ export default function ExceptionsPage() {
             if (key === "policy_title") return <span style={{ fontSize: 11 }}>{ex.policy_title ?? "\u2014"}</span>;
             if (key === "org_unit_name") return <span style={{ fontSize: 11 }}>{orgPathMap.get(ex.org_unit_id) ?? ex.org_unit_name}</span>;
             if (key === "risk_score") return ex.risk_score != null ? (
-              <span className="score-badge" style={{ background: riskBg(ex.risk_score), color: riskColor(ex.risk_score) }}>
-                {ex.risk_score.toFixed(1)} {riskLabel(ex.risk_score)}
+              <span className="score-badge" style={{ background: riskBg(Number(ex.risk_score)), color: riskColor(Number(ex.risk_score)) }}>
+                {Number(ex.risk_score).toFixed(1)} {riskLabel(Number(ex.risk_score))}
               </span>
             ) : (
               <span style={{ color: "var(--text-muted)" }}>{ex.risk_level_name ?? "\u2014"}</span>
@@ -318,11 +318,11 @@ export default function ExceptionsPage() {
                 <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
                   Ryzyko odstepstwa
                 </div>
-                <div style={{ fontSize: 36, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: riskColor(selected.risk_score) }}>
-                  {selected.risk_score.toFixed(1)}
+                <div style={{ fontSize: 36, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: riskColor(Number(selected.risk_score)) }}>
+                  {Number(selected.risk_score).toFixed(1)}
                 </div>
-                <span className="score-badge" style={{ background: riskBg(selected.risk_score), color: riskColor(selected.risk_score), fontSize: 13, padding: "4px 12px" }}>
-                  {riskLabel(selected.risk_score)}
+                <span className="score-badge" style={{ background: riskBg(Number(selected.risk_score)), color: riskColor(Number(selected.risk_score)), fontSize: 13, padding: "4px 12px" }}>
+                  {riskLabel(Number(selected.risk_score))}
                 </span>
                 {selected.risk_id && (
                   <div style={{ marginTop: 6 }}>

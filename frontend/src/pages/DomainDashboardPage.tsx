@@ -199,7 +199,7 @@ function DomainCard({ domain: d, navigate }: { domain: DomainScoreCard; navigate
               >
                 <span style={{ color: "var(--text-secondary)" }}>{r.asset_name}</span>
                 <span className="score-badge" style={{ background: riskBg(r.risk_level), color: riskColor(r.risk_level), fontSize: 10 }}>
-                  {r.risk_score.toFixed(0)}
+                  {Number(r.risk_score).toFixed(0)}
                 </span>
               </div>
             ))}

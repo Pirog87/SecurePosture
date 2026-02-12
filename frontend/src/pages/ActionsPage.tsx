@@ -502,8 +502,8 @@ export default function ActionsPage() {
                         <span style={{ fontSize: 12, fontWeight: 500 }}>{l.entity_name ?? `#${l.entity_id}`}</span>
                       </div>
                       {l.entity_extra?.risk_score != null && (
-                        <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 600, color: riskScoreColor(l.entity_extra.risk_score) }}>
-                          {l.entity_extra.risk_score.toFixed(1)}
+                        <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 600, color: riskScoreColor(Number(l.entity_extra.risk_score)) }}>
+                          {Number(l.entity_extra.risk_score).toFixed(1)}
                         </span>
                       )}
                     </div>
@@ -938,11 +938,11 @@ function RiskLinkerTab({ allRisks, linkedRiskIds, setLinkedRiskIds, otherLinks }
                 <span style={{ fontWeight: 600, fontSize: 13 }}>{risk.asset_name}</span>
                 {risk.risk_score != null && (
                   <span className="score-badge" style={{
-                    background: `${riskScoreColor(risk.risk_score)}20`,
-                    color: riskScoreColor(risk.risk_score),
+                    background: `${riskScoreColor(Number(risk.risk_score))}20`,
+                    color: riskScoreColor(Number(risk.risk_score)),
                     fontSize: 10, padding: "1px 6px",
                   }}>
-                    {risk.risk_score.toFixed(1)}
+                    {Number(risk.risk_score).toFixed(1)}
                   </span>
                 )}
               </div>
@@ -990,8 +990,8 @@ function RiskLinkerTab({ allRisks, linkedRiskIds, setLinkedRiskIds, otherLinks }
                   </span>
                   <span style={{ fontWeight: 500, fontSize: 12 }}>{risk.asset_name}</span>
                   {risk.risk_score != null && (
-                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 600, color: riskScoreColor(risk.risk_score) }}>
-                      {risk.risk_score.toFixed(1)}
+                    <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 600, color: riskScoreColor(Number(risk.risk_score)) }}>
+                      {Number(risk.risk_score).toFixed(1)}
                     </span>
                   )}
                 </div>

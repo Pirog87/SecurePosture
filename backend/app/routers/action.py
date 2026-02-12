@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -333,7 +333,9 @@ async def export_actions_xlsx(s: AsyncSession = Depends(get_session)):
     from openpyxl.styles import Alignment, Font, PatternFill
 
     actions = (await s.execute(
-        select(Action).where(Action.is_active.is_(True)).order_by(Action.due_date.asc().nullslast())
+        select(Action).where(Action.is_active.is_(True)).order_by(
+            case((Action.due_date.is_(None), 1), else_=0), Action.due_date.asc()
+        )
     )).scalars().all()
 
     wb = openpyxl.Workbook()
@@ -471,7 +473,11 @@ async def list_actions(
             ActionLink.entity_id == entity_id,
         )
         q = q.where(Action.id.in_(link_sub))
-    q = q.order_by(Action.due_date.asc().nullslast(), Action.created_at.desc())
+    q = q.order_by(
+        case((Action.due_date.is_(None), 1), else_=0),
+        Action.due_date.asc(),
+        Action.created_at.desc(),
+    )
     actions = (await s.execute(q)).scalars().all()
     return [await _action_out(s, a) for a in actions]
 

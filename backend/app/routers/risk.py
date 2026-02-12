@@ -10,7 +10,7 @@ import math
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete, select
+from sqlalchemy import case, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -147,7 +147,7 @@ async def _get_linked_actions(s: AsyncSession, risk_id: int) -> list[LinkedActio
         .where(ActionLink.entity_type == "risk")
         .where(ActionLink.entity_id == risk_id)
         .where(Action.is_active.is_(True))
-        .order_by(Action.due_date.asc().nulls_last())
+        .order_by(case((Action.due_date.is_(None), 1), else_=0), Action.due_date.asc())
     )
     rows = (await s.execute(q)).all()
     today = date.today()

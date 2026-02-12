@@ -70,6 +70,7 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "Konfiguracja",
     items: [
+      { to: "/assets/admin", icon: "⚙️", label: "CMDB Admin" },
       { to: "/catalogs", icon: "📚", label: "Katalogi" },
       { to: "/dictionaries", icon: "📖", label: "Słowniki" },
       { to: "/audit", icon: "📝", label: "Audit Trail" },

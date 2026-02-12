@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import type {
   Asset, AssetCategoryTreeNode, CategoryFieldDefinition,
-  AssetRelationship, OrgUnitTreeNode, DictionaryTypeWithEntries,
+  AssetRelationship, RelationshipType, OrgUnitTreeNode, DictionaryTypeWithEntries,
   AuditLogEntry, AuditLogPage,
 } from "../types";
 import { buildPathMap } from "../utils/orgTree";
@@ -68,6 +68,11 @@ export default function AssetsPage() {
   // ── History for detail ──
   const [assetHistory, setAssetHistory] = useState<AuditLogEntry[]>([]);
 
+  // ── Relationship types + add relation form ──
+  const [relTypes, setRelTypes] = useState<RelationshipType[]>([]);
+  const [showAddRel, setShowAddRel] = useState(false);
+  const [relSaving, setRelSaving] = useState(false);
+
   // ── Form modal ──
   const [showForm, setShowForm] = useState(false);
   const [editAsset, setEditAsset] = useState<Asset | null>(null);
@@ -80,6 +85,14 @@ export default function AssetsPage() {
   // ── Graph modal ──
   const [showGraph, setShowGraph] = useState(false);
   const [graphAsset, setGraphAsset] = useState<Asset | null>(null);
+
+  // ── CSV import ──
+  const [showImport, setShowImport] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ created: number; errors: string[]; total_errors: number } | null>(null);
+
+  // ── Bulk selection ──
+  const [bulkIds, setBulkIds] = useState<Set<number>>(new Set());
 
   // ── Filters ──
   const [showFilters, setShowFilters] = useState(false);
@@ -131,6 +144,7 @@ export default function AssetsPage() {
       .catch(() => {})
       .finally(() => setCategoryLoading(false));
     api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(setOrgTree).catch(() => {});
+    api.get<RelationshipType[]>("/api/v1/asset-categories/relationship-types/all").then(setRelTypes).catch(() => {});
   }, []);
 
   // Load assets when category changes
@@ -300,6 +314,113 @@ export default function AssetsPage() {
     setShowGraph(true);
   };
 
+  // ═══════════════════ RELATIONSHIP CRUD ═══════════════════
+
+  const handleAddRelation = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selected) return;
+    setRelSaving(true);
+    const fd = new FormData(e.currentTarget);
+    const body = {
+      source_asset_id: selected.id,
+      target_asset_id: Number(fd.get("target_asset_id")),
+      relationship_type: fd.get("relationship_type") as string,
+      description: (fd.get("rel_description") as string) || null,
+    };
+    try {
+      await api.post("/api/v1/assets/relationships", body);
+      setShowAddRel(false);
+      // Refresh relations
+      const rels = await api.get<AssetRelationship[]>(`/api/v1/assets/${selected.id}/relationships`);
+      setAssetRelations(rels);
+    } catch (err) {
+      alert("Blad dodawania relacji: " + err);
+    } finally {
+      setRelSaving(false);
+    }
+  };
+
+  const handleDeleteRelation = async (relId: number) => {
+    if (!selected || !confirm("Usunac te relacje?")) return;
+    try {
+      await api.delete(`/api/v1/assets/relationships/${relId}`);
+      setAssetRelations(prev => prev.filter(r => r.id !== relId));
+    } catch (err) {
+      alert("Blad usuwania relacji: " + err);
+    }
+  };
+
+  // ═══════════════════ CSV IMPORT ═══════════════════
+
+  const handleCsvImport = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const fd = new FormData(e.currentTarget);
+    const file = fd.get("csv_file") as File;
+    if (!file || file.size === 0) return;
+
+    setImporting(true);
+    setImportResult(null);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const catId = selectedCategory && !selectedCategory.is_abstract ? selectedCategory.id : null;
+    const url = `/api/v1/assets/import/csv${catId ? `?asset_category_id=${catId}` : ""}`;
+
+    try {
+      const res = await api.postFormData<{ created: number; errors: string[]; total_errors: number }>(url, formData);
+      setImportResult(res);
+      loadAssets();
+      api.get<AssetCategoryTreeNode[]>("/api/v1/asset-categories/tree").then(setCategoryTree).catch(() => {});
+    } catch (err) {
+      alert("Blad importu: " + err);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // ═══════════════════ BULK OPERATIONS ═══════════════════
+
+  const toggleBulk = (id: number) => {
+    setBulkIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleBulkAll = () => {
+    if (bulkIds.size === table.filtered.length) {
+      setBulkIds(new Set());
+    } else {
+      setBulkIds(new Set(table.filtered.map(a => a.id)));
+    }
+  };
+
+  const handleBulkArchive = async () => {
+    if (bulkIds.size === 0 || !confirm(`Archiwizowac ${bulkIds.size} aktywow?`)) return;
+    try {
+      await api.post("/api/v1/assets/bulk/archive", { asset_ids: [...bulkIds] });
+      setBulkIds(new Set());
+      setSelected(null);
+      loadAssets();
+      api.get<AssetCategoryTreeNode[]>("/api/v1/asset-categories/tree").then(setCategoryTree).catch(() => {});
+    } catch (err) {
+      alert("Blad: " + err);
+    }
+  };
+
+  const handleBulkAssignCategory = async (catId: number | null) => {
+    if (bulkIds.size === 0) return;
+    try {
+      await api.post("/api/v1/assets/bulk/assign-category", { asset_ids: [...bulkIds], asset_category_id: catId });
+      setBulkIds(new Set());
+      loadAssets();
+      api.get<AssetCategoryTreeNode[]>("/api/v1/asset-categories/tree").then(setCategoryTree).catch(() => {});
+    } catch (err) {
+      alert("Blad: " + err);
+    }
+  };
+
   // ═══════════════════ FLAT CATEGORY LIST ═══════════════════
   const flatCategories = useMemo(() => {
     const flat: AssetCategoryTreeNode[] = [];
@@ -370,7 +491,36 @@ export default function AssetsPage() {
           exportFilename="aktywa-cmdb"
           primaryLabel="Dodaj aktyw"
           onPrimaryAction={openAddForm}
+          secondaryActions={[
+            { label: "Import CSV", onClick: () => { setShowImport(true); setImportResult(null); } },
+          ]}
         />
+
+        {/* Bulk action bar */}
+        {bulkIds.size > 0 && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 8,
+            background: "var(--blue-dim)", borderRadius: 8, fontSize: 12,
+          }}>
+            <span style={{ fontWeight: 600, color: "var(--blue)" }}>Zaznaczono: {bulkIds.size}</span>
+            <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => setBulkIds(new Set())}>Odznacz</button>
+            <div style={{ flex: 1 }} />
+            <select
+              className="form-control"
+              style={{ width: "auto", fontSize: 11, padding: "3px 8px" }}
+              value=""
+              onChange={e => { if (e.target.value) handleBulkAssignCategory(Number(e.target.value)); }}
+            >
+              <option value="">Przypisz kategorie...</option>
+              {flatCategories.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <button className="btn btn-sm" style={{ fontSize: 11, color: "var(--red)" }} onClick={handleBulkArchive}>
+              Archiwizuj ({bulkIds.size})
+            </button>
+          </div>
+        )}
 
         {/* Table + Detail panel */}
         <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 14 }}>
@@ -398,7 +548,18 @@ export default function AssetsPage() {
             emptyMessage="Brak aktywow w tej kategorii."
             emptyFilteredMessage="Brak aktywow pasujacych do filtrow."
             renderCell={(a, key) => {
-              if (key === "id") return <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{a.ref_id || a.id}</span>;
+              if (key === "id") return (
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={bulkIds.has(a.id)}
+                    onChange={(e) => { e.stopPropagation(); toggleBulk(a.id); }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ width: 14, height: 14, cursor: "pointer" }}
+                  />
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{a.ref_id || a.id}</span>
+                </span>
+              );
               if (key === "name") return <span style={{ fontWeight: 500 }}>{a.name}</span>;
               if (key === "asset_category_name") {
                 const catName = a.asset_category_name || a.asset_type_name;
@@ -523,7 +684,7 @@ export default function AssetsPage() {
               {/* Tab: Relations */}
               {detailTab === "relations" && (
                 <div>
-                  {assetRelations.length === 0 ? (
+                  {assetRelations.length === 0 && !showAddRel ? (
                     <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
                       Brak zdefiniowanych relacji.
                     </div>
@@ -531,15 +692,28 @@ export default function AssetsPage() {
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {assetRelations.map(rel => {
                         const isSource = rel.source_asset_id === selected.id;
+                        const relType = relTypes.find(t => t.code === rel.relationship_type);
+                        const relColor = relType?.color || "var(--text-muted)";
                         return (
                           <div key={rel.id} style={{
                             padding: "8px 10px", borderRadius: 6,
                             background: "rgba(255,255,255,0.02)",
                             border: "1px solid var(--border)", fontSize: 12,
                           }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                              <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{rel.relationship_type}</span>
-                              <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{isSource ? "→" : "←"}</span>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+                              <span className="score-badge" style={{ background: relColor + "20", color: relColor, fontSize: 10 }}>
+                                {isSource ? (relType?.name || rel.relationship_type) : (relType?.name_reverse || rel.relationship_type)}
+                              </span>
+                              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{isSource ? "→" : "←"}</span>
+                                <button
+                                  onClick={() => handleDeleteRelation(rel.id)}
+                                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", fontSize: 12, padding: "0 2px", opacity: 0.5 }}
+                                  title="Usun relacje"
+                                >
+                                  ×
+                                </button>
+                              </div>
                             </div>
                             <div style={{ fontWeight: 500 }}>
                               {isSource ? rel.target_asset_name : rel.source_asset_name}
@@ -552,7 +726,40 @@ export default function AssetsPage() {
                       })}
                     </div>
                   )}
-                  <button className="btn btn-sm" style={{ marginTop: 10, width: "100%" }} onClick={() => openGraph(selected)}>
+
+                  {/* Add relation inline form */}
+                  {showAddRel ? (
+                    <form onSubmit={handleAddRelation} style={{ marginTop: 10, padding: 10, borderRadius: 6, border: "1px solid var(--border)", background: "rgba(255,255,255,0.02)" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>Nowa relacja</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <select name="relationship_type" className="form-control" required style={{ fontSize: 12 }}>
+                          <option value="">Typ relacji...</option>
+                          {relTypes.map(t => (
+                            <option key={t.code} value={t.code}>{t.name}</option>
+                          ))}
+                        </select>
+                        <select name="target_asset_id" className="form-control" required style={{ fontSize: 12 }}>
+                          <option value="">Docelowy aktyw...</option>
+                          {assets.filter(a => a.id !== selected.id).map(a => (
+                            <option key={a.id} value={a.id}>{a.name}{a.asset_category_name ? ` (${a.asset_category_name})` : ""}</option>
+                          ))}
+                        </select>
+                        <input name="rel_description" className="form-control" placeholder="Opis (opcjonalnie)" style={{ fontSize: 12 }} />
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button type="submit" className="btn btn-sm btn-primary" disabled={relSaving} style={{ flex: 1 }}>
+                            {relSaving ? "Dodawanie..." : "Dodaj"}
+                          </button>
+                          <button type="button" className="btn btn-sm" onClick={() => setShowAddRel(false)}>Anuluj</button>
+                        </div>
+                      </div>
+                    </form>
+                  ) : (
+                    <button className="btn btn-sm btn-primary" style={{ marginTop: 10, width: "100%" }} onClick={() => setShowAddRel(true)}>
+                      + Dodaj relacje
+                    </button>
+                  )}
+
+                  <button className="btn btn-sm" style={{ marginTop: 6, width: "100%" }} onClick={() => openGraph(selected)}>
                     Pokaz graf relacji
                   </button>
                 </div>
@@ -726,6 +933,57 @@ export default function AssetsPage() {
       {/* ═══ GRAPH MODAL ═══ */}
       <Modal open={showGraph} onClose={() => { setShowGraph(false); setGraphAsset(null); }} title={graphAsset ? `Graf relacji: ${graphAsset.name}` : "Graf relacji"} wide>
         {graphAsset && <EgoGraph assetId={graphAsset.id} assetName={graphAsset.name} />}
+      </Modal>
+
+      {/* ═══ CSV IMPORT MODAL ═══ */}
+      <Modal open={showImport} onClose={() => { setShowImport(false); setImportResult(null); }} title="Import aktywow z CSV">
+        {importResult ? (
+          <div>
+            <div style={{ textAlign: "center", padding: 16 }}>
+              <div style={{ fontSize: 36, fontWeight: 700, color: "var(--green)", marginBottom: 8 }}>{importResult.created}</div>
+              <div style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 12 }}>aktywow zaimportowano pomyslnie</div>
+            </div>
+            {importResult.total_errors > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--red)", marginBottom: 6 }}>
+                  Bledy ({importResult.total_errors}):
+                </div>
+                <div style={{ maxHeight: 150, overflowY: "auto", fontSize: 11, color: "var(--text-muted)", background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 8 }}>
+                  {importResult.errors.map((e, i) => <div key={i}>{e}</div>)}
+                  {importResult.total_errors > importResult.errors.length && (
+                    <div style={{ fontStyle: "italic" }}>...i {importResult.total_errors - importResult.errors.length} wiecej</div>
+                  )}
+                </div>
+              </div>
+            )}
+            <button className="btn btn-primary" style={{ width: "100%" }} onClick={() => { setShowImport(false); setImportResult(null); }}>Zamknij</button>
+          </div>
+        ) : (
+          <form onSubmit={handleCsvImport}>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 16 }}>
+              Zaladuj plik CSV z aktywami. Wymagana kolumna: <code>name</code>.
+              Opcjonalne: <code>owner</code>, <code>description</code>, <code>location</code>.
+              Pozostale kolumny beda zapisane jako atrybuty niestandardowe.
+              <br /><br />
+              Separator: <code>;</code> (srednik) lub <code>,</code> (przecinek).
+              {selectedCategory && !selectedCategory.is_abstract && (
+                <div style={{ marginTop: 8, padding: "6px 10px", background: "var(--blue-dim)", borderRadius: 6, color: "var(--blue)", fontSize: 12 }}>
+                  Importowane aktywa zostana przypisane do kategorii: <strong>{selectedCategory.name}</strong>
+                </div>
+              )}
+            </div>
+            <div className="form-group">
+              <label>Plik CSV</label>
+              <input name="csv_file" type="file" accept=".csv" required className="form-control" style={{ padding: 8 }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button type="button" className="btn" onClick={() => setShowImport(false)}>Anuluj</button>
+              <button type="submit" className="btn btn-primary" disabled={importing}>
+                {importing ? "Importowanie..." : "Importuj"}
+              </button>
+            </div>
+          </form>
+        )}
       </Modal>
     </div>
   );

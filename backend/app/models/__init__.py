@@ -17,6 +17,15 @@ from .awareness import AwarenessCampaign, AwarenessResult, AwarenessEmployeeRepo
 from .security_score import SecurityScoreConfig, SecurityScoreSnapshot
 from .action import Action, ActionLink, ActionHistory
 from .audit import AuditLog
+from .org_context import (
+    OrgContextIssue,
+    OrgContextObligation,
+    OrgContextStakeholder,
+    OrgContextScope,
+    OrgContextRiskAppetite,
+    OrgContextReview,
+    OrgContextSnapshot,
+)
 from .framework import (
     Framework,
     FrameworkNode,
@@ -47,6 +56,8 @@ __all__ = [
     "AwarenessCampaign", "AwarenessResult", "AwarenessEmployeeReport",
     "SecurityScoreConfig", "SecurityScoreSnapshot",
     "AuditLog",
+    "OrgContextIssue", "OrgContextObligation", "OrgContextStakeholder",
+    "OrgContextScope", "OrgContextRiskAppetite", "OrgContextReview", "OrgContextSnapshot",
     "Framework", "FrameworkNode", "FrameworkNodeSecurityArea",
     "AssessmentDimension", "DimensionLevel",
     "Assessment", "AssessmentAnswer",

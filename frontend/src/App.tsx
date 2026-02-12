@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Layout from "./components/layout/Layout";
+import ErrorBoundary from "./components/ErrorBoundary";
 import DashboardPage from "./pages/DashboardPage";
 import RisksPage from "./pages/RisksPage";
 import ReviewsPage from "./pages/ReviewsPage";
@@ -32,6 +33,7 @@ import ReportsPage from "./pages/ReportsPage";
 export default function App() {
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<DashboardPage />} />
@@ -66,6 +68,7 @@ export default function App() {
           <Route path="audit" element={<AuditPage />} />
         </Route>
       </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

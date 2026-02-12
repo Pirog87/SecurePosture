@@ -4,6 +4,9 @@ import Modal from "../components/Modal";
 import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
+import { useTableFeatures } from "../hooks/useTableFeatures";
+import DataTable from "../components/DataTable";
+import StatsCards, { type StatCard } from "../components/StatsCards";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -27,6 +30,12 @@ function severityBg(name: string | null): string {
   return "transparent";
 }
 
+function isCriticalOrHigh(name: string | null): boolean {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return n.includes("krytyczny") || n.includes("critical") || n.includes("wysoki") || n.includes("high");
+}
+
 function DetailRow({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
@@ -47,20 +56,25 @@ function SectionHeader({ number, label }: { number: string; label: string }) {
 const errorBorder = "1px solid var(--red)";
 const errorShadow = "0 0 0 3px var(--red-dim)";
 
-type SortField = "ref_id" | "title" | "severity_name" | "cvss_score" | "status_name" | "org_unit_name" | "owner" | "detected_at" | "sla_deadline";
-type SortDir = "asc" | "desc";
-
 const COLUMNS: ColumnDef<VulnerabilityRecord>[] = [
   { key: "ref_id", header: "Ref", format: (r) => r.ref_id ?? "" },
-  { key: "title", header: "Tytul", format: (r) => r.title },
-  { key: "severity_name", header: "Waznosc", format: (r) => r.severity_name ?? "" },
+  { key: "title", header: "Tytuł", format: (r) => r.title },
+  { key: "severity_name", header: "Ważność", format: (r) => r.severity_name ?? "" },
   { key: "cvss_score", header: "CVSS", format: (r) => r.cvss_score ?? "" },
   { key: "status_name", header: "Status", format: (r) => r.status_name ?? "" },
   { key: "cve_id", header: "CVE", format: (r) => r.cve_id ?? "" },
   { key: "org_unit_name", header: "Jednostka", format: (r) => r.org_unit_name ?? "" },
-  { key: "owner", header: "Wlasciciel", format: (r) => r.owner ?? "" },
-  { key: "detected_at", header: "Wykryto", format: (r) => r.detected_at ?? "" },
-  { key: "sla_deadline", header: "SLA", format: (r) => r.sla_deadline ?? "" },
+  { key: "owner", header: "Właściciel", format: (r) => r.owner ?? "" },
+  { key: "detected_at", header: "Wykryto", format: (r) => r.detected_at?.slice(0, 10) ?? "" },
+  { key: "sla_deadline", header: "SLA", format: (r) => r.sla_deadline?.slice(0, 10) ?? "" },
+  { key: "source_name", header: "Źródło", format: (r) => r.source_name ?? "", defaultVisible: false },
+  { key: "asset_name", header: "Aktywo", format: (r) => r.asset_name ?? "", defaultVisible: false },
+  { key: "category_name", header: "Kategoria", format: (r) => r.category_name ?? "", defaultVisible: false },
+  { key: "remediation_priority_name", header: "Priorytet naprawy", format: (r) => r.remediation_priority_name ?? "", defaultVisible: false },
+  { key: "cvss_vector", header: "Wektor CVSS", format: (r) => r.cvss_vector ?? "", defaultVisible: false },
+  { key: "closed_at", header: "Zamknięto", format: (r) => r.closed_at?.slice(0, 10) ?? "", defaultVisible: false },
+  { key: "created_by", header: "Utworzył", format: (r) => r.created_by ?? "", defaultVisible: false },
+  { key: "created_at", header: "Utworzono", format: (r) => r.created_at?.slice(0, 10) ?? "", defaultVisible: false },
 ];
 
 export default function VulnerabilitiesPage() {
@@ -79,16 +93,16 @@ export default function VulnerabilitiesPage() {
   const [categories, setCategories] = useState<DictionaryEntry[]>([]);
   const [priorities, setPriorities] = useState<DictionaryEntry[]>([]);
 
-  // Search, sort, filter
-  const [search, setSearch] = useState("");
-  const [sortField, setSortField] = useState<SortField>("detected_at");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterSeverity, setFilterSeverity] = useState("");
-  const [filterOrg, setFilterOrg] = useState("");
-
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "vulns");
+
+  const [showFilters, setShowFilters] = useState(false);
+
+  const table = useTableFeatures<VulnerabilityRecord>({
+    data: vulns,
+    storageKey: "vulns",
+    defaultSort: "detected_at",
+    defaultSortDir: "desc",
+  });
 
   // Form
   const [form, setForm] = useState({
@@ -145,88 +159,54 @@ export default function VulnerabilitiesPage() {
     loadAll();
   }
 
-  // Sort helper
-  const handleSort = (field: SortField) => {
-    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortField(field); setSortDir("asc"); }
-  };
+  // Stats — computed from both filtered and total data
+  const statsCards = useMemo((): StatCard[] => {
+    const countCritHigh = (list: VulnerabilityRecord[]) =>
+      list.filter(v => isCriticalOrHigh(v.severity_name)).length;
+    const countOpen = (list: VulnerabilityRecord[]) =>
+      list.filter(v => !v.closed_at).length;
+    const avgCvss = (list: VulnerabilityRecord[]) => {
+      const withScore = list.filter(v => v.cvss_score != null);
+      if (withScore.length === 0) return "\u2014";
+      return (withScore.reduce((s, v) => s + (v.cvss_score ?? 0), 0) / withScore.length).toFixed(1);
+    };
 
-  const hasFilters = !!filterStatus || !!filterSeverity || !!filterOrg;
-  const clearFilters = () => { setFilterStatus(""); setFilterSeverity(""); setFilterOrg(""); };
-
-  const filtered = useMemo(() => {
-    let result = [...vulns];
-    if (search) {
-      const s = search.toLowerCase();
-      result = result.filter(v =>
-        (v.title ?? "").toLowerCase().includes(s) ||
-        (v.ref_id ?? "").toLowerCase().includes(s) ||
-        (v.cve_id ?? "").toLowerCase().includes(s) ||
-        (v.owner ?? "").toLowerCase().includes(s)
-      );
-    }
-    if (filterStatus) result = result.filter(v => v.status_id === Number(filterStatus));
-    if (filterSeverity) result = result.filter(v => v.severity_id === Number(filterSeverity));
-    if (filterOrg) result = result.filter(v => (v.org_unit_name ?? "").toLowerCase().includes(filterOrg.toLowerCase()));
-
-    result.sort((a, b) => {
-      const av = (a as any)[sortField];
-      const bv = (b as any)[sortField];
-      let cmp = 0;
-      if (av == null && bv == null) cmp = 0;
-      else if (av == null) cmp = 1;
-      else if (bv == null) cmp = -1;
-      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
-      else cmp = String(av).localeCompare(String(bv), "pl");
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return result;
-  }, [vulns, search, filterStatus, filterSeverity, filterOrg, sortField, sortDir]);
-
-  // Stats
-  const stats = useMemo(() => {
-    const total = vulns.length;
-    const critical = vulns.filter(v => {
-      const n = (v.severity_name ?? "").toLowerCase();
-      return n.includes("krytyczny") || n.includes("critical");
-    }).length;
-    const overdueSla = vulns.filter(v => v.sla_deadline && new Date(v.sla_deadline) < new Date()).length;
-    const avgCvss = vulns.filter(v => v.cvss_score != null).length > 0
-      ? (vulns.reduce((s, v) => s + (v.cvss_score ?? 0), 0) / vulns.filter(v => v.cvss_score != null).length).toFixed(1)
-      : "\u2014";
-    return { total, critical, overdueSla, avgCvss };
-  }, [vulns]);
-
-  const SortTh = ({ field, label }: { field: SortField; label: string }) => (
-    <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }} onClick={() => handleSort(field)}>
-      {label}
-      {sortField === field && <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>}
-    </th>
-  );
+    return [
+      {
+        label: "Podatności",
+        value: table.filteredCount,
+        total: table.totalCount,
+        color: "var(--blue)",
+      },
+      {
+        label: "Krytycznych / Wysokich",
+        value: countCritHigh(table.filtered),
+        total: countCritHigh(vulns),
+        color: countCritHigh(table.filtered) > 0 ? "var(--red)" : "var(--green)",
+      },
+      {
+        label: "Otwartych",
+        value: countOpen(table.filtered),
+        total: countOpen(vulns),
+        color: countOpen(table.filtered) > 0 ? "var(--orange)" : "var(--green)",
+      },
+      {
+        label: "Średni CVSS",
+        value: avgCvss(table.filtered),
+        total: avgCvss(vulns),
+        color: "var(--purple)",
+      },
+    ];
+  }, [vulns, table.filtered, table.filteredCount, table.totalCount]);
 
   const fieldErr = (ok: boolean) => tried && !ok ? { border: errorBorder, boxShadow: errorShadow } : {};
+
+  const isFiltered = table.filteredCount !== table.totalCount;
 
   return (
     <div>
       {/* Stats */}
-      <div className="grid-4">
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>{stats.total}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Aktywnych podatnosci</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: stats.critical > 0 ? "var(--red)" : "var(--green)" }}>{stats.critical}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Krytycznych</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: stats.overdueSla > 0 ? "var(--red)" : "var(--green)" }}>{stats.overdueSla}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Przeterminowanych SLA</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>{stats.avgCvss}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Sredni CVSS</div>
-        </div>
-      </div>
+      <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
       {error && (
         <div className="card" style={{ background: "#3a1a1a", borderColor: "#e74c3c", marginBottom: 16, padding: 16 }}>
@@ -236,83 +216,73 @@ export default function VulnerabilitiesPage() {
       )}
 
       <TableToolbar
-        filteredCount={filtered.length} totalCount={vulns.length} unitLabel="podatnosci"
-        search={search} onSearchChange={setSearch} searchPlaceholder="Szukaj (tytul, CVE, ref)..."
+        filteredCount={table.filteredCount} totalCount={table.totalCount} unitLabel="podatnosci"
+        search={table.search} onSearchChange={table.setSearch} searchPlaceholder="Szukaj (tytul, CVE, ref)..."
         showFilters={showFilters} onToggleFilters={() => setShowFilters(f => !f)}
-        hasActiveFilters={hasFilters} onClearFilters={clearFilters}
+        hasActiveFilters={table.hasActiveFilters} onClearFilters={table.clearAllFilters}
         columns={COLUMNS} visibleColumns={visibleCols} onToggleColumn={toggleCol}
-        data={filtered} exportFilename="podatnosci"
+        data={table.filtered} exportFilename="podatnosci"
         primaryLabel="Nowa podatnosc" onPrimaryAction={() => { resetForm(); setShowForm(true); }}
       />
 
-      {showFilters && (
-        <div className="card" style={{ padding: 12, marginBottom: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <select className="form-control" style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">Wszystkie statusy</option>
-            {statuses.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
-          </select>
-          <select className="form-control" style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)}>
-            <option value="">Wszystkie waznosci</option>
-            {severities.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
-          </select>
-          <input className="form-control" style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            placeholder="Jednostka org." value={filterOrg} onChange={e => setFilterOrg(e.target.value)} />
-        </div>
-      )}
-
       {/* Main grid */}
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 14 }}>
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie...</div>
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              {vulns.length === 0 ? "Brak podatnosci w systemie." : "Brak podatnosci pasujacych do filtrow."}
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {visibleCols.has("ref_id") && <SortTh field="ref_id" label="Ref" />}
-                  {visibleCols.has("title") && <SortTh field="title" label="Tytul" />}
-                  {visibleCols.has("severity_name") && <SortTh field="severity_name" label="Waznosc" />}
-                  {visibleCols.has("cvss_score") && <SortTh field="cvss_score" label="CVSS" />}
-                  {visibleCols.has("status_name") && <SortTh field="status_name" label="Status" />}
-                  {visibleCols.has("cve_id") && <th>CVE</th>}
-                  {visibleCols.has("org_unit_name") && <SortTh field="org_unit_name" label="Jednostka" />}
-                  {visibleCols.has("owner") && <SortTh field="owner" label="Wlasciciel" />}
-                  {visibleCols.has("detected_at") && <SortTh field="detected_at" label="Wykryto" />}
-                  {visibleCols.has("sla_deadline") && <SortTh field="sla_deadline" label="SLA" />}
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(v => (
-                  <tr key={v.id}
-                    style={{ cursor: "pointer", borderLeft: `3px solid ${severityColor(v.severity_name)}`, background: selected?.id === v.id ? "var(--bg-card-hover)" : undefined }}
-                    onClick={() => setSelected(selected?.id === v.id ? null : v)}
-                  >
-                    {visibleCols.has("ref_id") && <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{v.ref_id}</td>}
-                    {visibleCols.has("title") && <td style={{ fontWeight: 500 }}>{v.title}</td>}
-                    {visibleCols.has("severity_name") && <td>{v.severity_name ? <span className="score-badge" style={{ background: severityBg(v.severity_name), color: severityColor(v.severity_name) }}>{v.severity_name}</span> : "\u2014"}</td>}
-                    {visibleCols.has("cvss_score") && <td style={{ fontFamily: "'JetBrains Mono',monospace" }}>{v.cvss_score != null ? v.cvss_score.toFixed(1) : "\u2014"}</td>}
-                    {visibleCols.has("status_name") && <td><span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{v.status_name ?? "\u2014"}</span></td>}
-                    {visibleCols.has("cve_id") && <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>{v.cve_id ?? "\u2014"}</td>}
-                    {visibleCols.has("org_unit_name") && <td style={{ fontSize: 12 }}>{v.org_unit_name}</td>}
-                    {visibleCols.has("owner") && <td style={{ fontSize: 12 }}>{v.owner}</td>}
-                    {visibleCols.has("detected_at") && <td style={{ fontSize: 12 }}>{v.detected_at}</td>}
-                    {visibleCols.has("sla_deadline") && <td style={{ fontSize: 12, color: v.sla_deadline && new Date(v.sla_deadline) < new Date() ? "var(--red)" : undefined, fontWeight: v.sla_deadline && new Date(v.sla_deadline) < new Date() ? 600 : undefined }}>{v.sla_deadline ?? "\u2014"}{v.sla_deadline && new Date(v.sla_deadline) < new Date() ? " !" : ""}</td>}
-                    <td onClick={e => e.stopPropagation()}>
-                      <button className="btn btn-sm btn-danger" onClick={() => handleArchive(v.id)} style={{ fontSize: 11 }}>Archiwizuj</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <DataTable<VulnerabilityRecord>
+          columns={COLUMNS}
+          visibleColumns={visibleCols}
+          data={table.pageData}
+          rowKey={(r) => r.id}
+          selectedKey={selected?.id ?? null}
+          onRowClick={(r) => setSelected(selected?.id === r.id ? null : r)}
+          rowBorderColor={(r) => severityColor(r.severity_name)}
+          sortField={table.sortField}
+          sortDir={table.sortDir}
+          onSort={table.toggleSort}
+          columnFilters={table.columnFilters}
+          onColumnFilter={table.setColumnFilter}
+          showFilters={showFilters}
+          page={table.page}
+          totalPages={table.totalPages}
+          pageSize={table.pageSize}
+          totalItems={table.totalCount}
+          filteredItems={table.filteredCount}
+          onPageChange={table.setPage}
+          onPageSizeChange={table.setPageSize}
+          loading={loading}
+          emptyMessage="Brak podatnosci w systemie."
+          emptyFilteredMessage="Brak podatnosci pasujacych do filtrow."
+          renderCell={(row, colKey) => {
+            if (colKey === "ref_id") {
+              return <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{row.ref_id}</span>;
+            }
+            if (colKey === "title") {
+              return <span style={{ fontWeight: 500 }}>{row.title}</span>;
+            }
+            if (colKey === "severity_name") {
+              return row.severity_name
+                ? <span className="score-badge" style={{ background: severityBg(row.severity_name), color: severityColor(row.severity_name) }}>{row.severity_name}</span>
+                : "\u2014";
+            }
+            if (colKey === "cvss_score") {
+              return <span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{row.cvss_score != null ? row.cvss_score.toFixed(1) : "\u2014"}</span>;
+            }
+            if (colKey === "status_name") {
+              return <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>{row.status_name ?? "\u2014"}</span>;
+            }
+            if (colKey === "cve_id") {
+              return <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>{row.cve_id ?? "\u2014"}</span>;
+            }
+            if (colKey === "sla_deadline") {
+              const overdue = row.sla_deadline && new Date(row.sla_deadline) < new Date();
+              return (
+                <span style={{ fontSize: 12, color: overdue ? "var(--red)" : undefined, fontWeight: overdue ? 600 : undefined }}>
+                  {row.sla_deadline?.slice(0, 10) ?? "\u2014"}{overdue ? " !" : ""}
+                </span>
+              );
+            }
+            return undefined;
+          }}
+        />
 
         {/* Detail Panel */}
         {selected && (

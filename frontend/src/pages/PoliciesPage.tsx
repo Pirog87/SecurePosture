@@ -3,6 +3,9 @@ import type { DictionaryEntry } from "../types";
 import Modal from "../components/Modal";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
+import { useTableFeatures } from "../hooks/useTableFeatures";
+import DataTable from "../components/DataTable";
+import StatsCards, { type StatCard } from "../components/StatsCards";
 
 interface PolicyRecord {
   id: number;
@@ -51,23 +54,22 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
   );
 }
 
-/* ── sort types ── */
-
-type SortField = "ref_id" | "title" | "category_name" | "owner" | "status_name" | "current_version" | "effective_date" | "review_date" | "acknowledgment_rate";
-type SortDir = "asc" | "desc";
-
 /* ── column definitions ── */
 
 const COLUMNS: ColumnDef<PolicyRecord>[] = [
-  { key: "ref_id", header: "Ref", format: (r) => r.ref_id ?? "" },
-  { key: "title", header: "Tytul", format: (r) => r.title },
-  { key: "category_name", header: "Kategoria", format: (r) => r.category_name ?? "" },
-  { key: "owner", header: "Wlasciciel", format: (r) => r.owner },
-  { key: "status_name", header: "Status", format: (r) => r.status_name ?? "" },
-  { key: "current_version", header: "Wersja", format: (r) => r.current_version ?? "" },
-  { key: "effective_date", header: "Obowiazuje od", format: (r) => r.effective_date ?? "" },
-  { key: "review_date", header: "Przeglad", format: (r) => r.review_date ?? "" },
-  { key: "acknowledgment_rate", header: "Potwierdz.", format: (r) => r.acknowledgment_rate != null ? `${r.acknowledgment_rate}%` : "" },
+  { key: "ref_id", header: "Ref", defaultVisible: true, format: (r) => r.ref_id ?? "" },
+  { key: "title", header: "Tytul", defaultVisible: true, format: (r) => r.title },
+  { key: "category_name", header: "Kategoria", defaultVisible: true, format: (r) => r.category_name ?? "" },
+  { key: "owner", header: "Wlasciciel", defaultVisible: true, format: (r) => r.owner },
+  { key: "status_name", header: "Status", defaultVisible: true, format: (r) => r.status_name ?? "" },
+  { key: "current_version", header: "Wersja", defaultVisible: true, format: (r) => r.current_version ?? "" },
+  { key: "effective_date", header: "Obowiazuje od", defaultVisible: true, format: (r) => r.effective_date ?? "" },
+  { key: "review_date", header: "Przeglad", defaultVisible: true, format: (r) => r.review_date ?? "" },
+  { key: "acknowledgment_rate", header: "Potwierdz.", defaultVisible: true, format: (r) => r.acknowledgment_rate != null ? `${r.acknowledgment_rate}%` : "" },
+  { key: "approver", header: "Zatwierdzaj\u0105cy", defaultVisible: false, format: (r) => r.approver ?? "" },
+  { key: "target_audience_count", header: "Grupa docelowa", defaultVisible: false, format: (r) => String(r.target_audience_count) },
+  { key: "acknowledgment_count", header: "Potwierdzenia", defaultVisible: false, format: (r) => String(r.acknowledgment_count) },
+  { key: "is_active", header: "Aktywna", defaultVisible: false, format: (r) => r.is_active ? "TAK" : "NIE" },
 ];
 
 /* ── main component ── */
@@ -82,15 +84,16 @@ export default function PoliciesPage() {
   const [saving, setSaving] = useState(false);
   const [tried, setTried] = useState(false);
 
-  // Search, sort, filters
-  const [search, setSearch] = useState("");
-  const [sortField, setSortField] = useState<SortField>("title");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterCategory, setFilterCategory] = useState("");
-
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "policies");
+
+  const [showFilters, setShowFilters] = useState(false);
+
+  const table = useTableFeatures<PolicyRecord>({
+    data: policies,
+    storageKey: "policies",
+    defaultSort: "title",
+    defaultSortDir: "asc",
+  });
 
   // Form state
   const [form, setForm] = useState({
@@ -153,207 +156,166 @@ export default function PoliciesPage() {
     setSaving(false);
   }
 
-  // Sort helper
-  const handleSort = (field: SortField) => {
-    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortField(field); setSortDir("asc"); }
-  };
-
-  const hasFilters = !!filterStatus || !!filterCategory;
-  const clearFilters = () => { setFilterStatus(""); setFilterCategory(""); };
-
   const today = new Date();
+  const thirtyDaysFromNow = new Date();
+  thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
 
-  // Filtered & sorted data
-  const filtered = useMemo(() => {
-    let result = [...policies];
+  // Dynamic StatsCards
+  const statsCards = useMemo((): StatCard[] => {
+    const filteredData = table.filtered;
+    const allData = policies;
 
-    if (search) {
-      const s = search.toLowerCase();
-      result = result.filter(p =>
-        (p.title ?? "").toLowerCase().includes(s) ||
-        (p.owner ?? "").toLowerCase().includes(s) ||
-        (p.ref_id ?? "").toLowerCase().includes(s)
-      );
-    }
-    if (filterStatus) result = result.filter(p => p.status_id === Number(filterStatus));
-    if (filterCategory) result = result.filter(p => p.category_id === Number(filterCategory));
+    const filteredActive = filteredData.filter(p => p.is_active).length;
+    const totalActive = allData.filter(p => p.is_active).length;
 
-    result.sort((a, b) => {
-      const av = (a as any)[sortField];
-      const bv = (b as any)[sortField];
-      let cmp = 0;
-      if (av == null && bv == null) cmp = 0;
-      else if (av == null) cmp = 1;
-      else if (bv == null) cmp = -1;
-      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
-      else cmp = String(av).localeCompare(String(bv), "pl");
-      return sortDir === "asc" ? cmp : -cmp;
-    });
+    const filteredReviewRequired = filteredData.filter(p => {
+      if (!p.review_date) return false;
+      const rd = new Date(p.review_date);
+      return rd < today || rd <= thirtyDaysFromNow;
+    }).length;
+    const totalReviewRequired = allData.filter(p => {
+      if (!p.review_date) return false;
+      const rd = new Date(p.review_date);
+      return rd < today || rd <= thirtyDaysFromNow;
+    }).length;
 
-    return result;
-  }, [policies, search, filterStatus, filterCategory, sortField, sortDir]);
+    const filteredWithRate = filteredData.filter(p => p.acknowledgment_rate != null);
+    const filteredAvgAck = filteredWithRate.length > 0
+      ? Math.round(filteredWithRate.reduce((s, p) => s + (p.acknowledgment_rate ?? 0), 0) / filteredWithRate.length)
+      : 0;
+    const totalWithRate = allData.filter(p => p.acknowledgment_rate != null);
+    const totalAvgAck = totalWithRate.length > 0
+      ? Math.round(totalWithRate.reduce((s, p) => s + (p.acknowledgment_rate ?? 0), 0) / totalWithRate.length)
+      : 0;
 
-  // Statistics
-  const stats = useMemo(() => {
-    const total = policies.length;
-    const active = policies.filter(p => p.is_active).length;
-    const overdueReview = policies.filter(p => p.review_date && new Date(p.review_date) < today).length;
-    const withRate = policies.filter(p => p.acknowledgment_rate != null);
-    const avgAck = withRate.length > 0
-      ? (withRate.reduce((s, p) => s + (p.acknowledgment_rate ?? 0), 0) / withRate.length).toFixed(0)
-      : "\u2014";
-    return { total, active, overdueReview, avgAck };
-  }, [policies]);
+    return [
+      {
+        label: "Wszystkich polityk",
+        value: table.filteredCount,
+        total: table.totalCount,
+        color: "var(--blue)",
+      },
+      {
+        label: "Aktywnych",
+        value: filteredActive,
+        total: totalActive,
+        color: "var(--green)",
+      },
+      {
+        label: "Przegl\u0105d wymagany",
+        value: filteredReviewRequired,
+        total: totalReviewRequired,
+        color: "var(--orange)",
+      },
+      {
+        label: "\u015ar. potwierdzenie",
+        value: filteredAvgAck,
+        total: totalAvgAck,
+        color: "var(--purple)",
+        formatValue: (v) => v + "%",
+      },
+    ];
+  }, [policies, table.filtered, table.filteredCount, table.totalCount]);
 
-  const SortTh = ({ field, label }: { field: SortField; label: string }) => (
-    <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }} onClick={() => handleSort(field)}>
-      {label}
-      {sortField === field && <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>}
-    </th>
-  );
+  const isFiltered = table.filteredCount !== table.totalCount;
 
   const fieldErr = (ok: boolean) => tried && !ok ? { border: errorBorder, boxShadow: errorShadow } : {};
+
+  const renderCell = (row: PolicyRecord, colKey: string) => {
+    if (colKey === "ref_id") {
+      return (
+        <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>
+          {row.ref_id ?? "\u2014"}
+        </span>
+      );
+    }
+    if (colKey === "title") {
+      return <span style={{ fontWeight: 500 }}>{row.title}</span>;
+    }
+    if (colKey === "status_name") {
+      return (
+        <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>
+          {row.status_name ?? "\u2014"}
+        </span>
+      );
+    }
+    if (colKey === "acknowledgment_rate") {
+      if (row.acknowledgment_rate != null) {
+        const color = row.acknowledgment_rate > 80
+          ? "var(--green)"
+          : row.acknowledgment_rate > 50
+            ? "var(--orange)"
+            : "var(--red)";
+        return (
+          <>
+            <span style={{ color }}>{row.acknowledgment_rate}%</span>
+            {" "}
+            <span style={{ color: "var(--text-muted)", fontSize: 11 }}>({row.acknowledgment_count}/{row.target_audience_count})</span>
+          </>
+        );
+      }
+      return "\u2014";
+    }
+    if (colKey === "review_date") {
+      const reviewOverdue = row.review_date && new Date(row.review_date) < today;
+      return (
+        <span style={{
+          fontSize: 12,
+          color: reviewOverdue ? "var(--red)" : undefined,
+          fontWeight: reviewOverdue ? 600 : undefined,
+        }}>
+          {row.review_date ?? "\u2014"}
+          {reviewOverdue && " (zalegly!)"}
+        </span>
+      );
+    }
+    return undefined;
+  };
 
   return (
     <div>
       {/* Statistics cards */}
-      <div className="grid-4">
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>{stats.total}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Wszystkich polityk</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--green)" }}>{stats.active}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Aktywnych <span style={{ color: "var(--text-muted)", fontSize: 10 }}>({stats.total > 0 ? Math.round((stats.active / stats.total) * 100) : 0}%)</span></div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: stats.overdueReview > 0 ? "var(--red)" : "var(--green)" }}>{stats.overdueReview}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Zalegly przeglad</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>{stats.avgAck}{stats.avgAck !== "\u2014" ? "%" : ""}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Sredni wsk. potwierdzen</div>
-        </div>
-      </div>
+      <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
       {/* Toolbar */}
       <TableToolbar
-        filteredCount={filtered.length} totalCount={policies.length} unitLabel="polityk"
-        search={search} onSearchChange={setSearch} searchPlaceholder="Szukaj (tytul, wlasciciel, ref)..."
+        filteredCount={table.filteredCount} totalCount={table.totalCount} unitLabel="polityk"
+        search={table.search} onSearchChange={table.setSearch} searchPlaceholder="Szukaj (tytul, wlasciciel, ref)..."
         showFilters={showFilters} onToggleFilters={() => setShowFilters(f => !f)}
-        hasActiveFilters={hasFilters} onClearFilters={clearFilters}
+        hasActiveFilters={table.hasActiveFilters} onClearFilters={table.clearAllFilters}
         columns={COLUMNS} visibleColumns={visibleCols} onToggleColumn={toggleCol}
-        data={filtered} exportFilename="polityki"
+        data={table.filtered} exportFilename="polityki"
         primaryLabel="Nowa polityka" onPrimaryAction={() => { resetForm(); setShowForm(true); }}
       />
-
-      {/* Collapsible filters */}
-      {showFilters && (
-        <div className="card" style={{ padding: 12, marginBottom: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <select className="form-control" style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">Wszystkie statusy</option>
-            {statuses.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
-          </select>
-          <select className="form-control" style={{ width: 180, padding: "5px 10px", fontSize: 12 }}
-            value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
-            <option value="">Wszystkie kategorie</option>
-            {categories.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
-          </select>
-        </div>
-      )}
 
       {/* Main grid */}
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 420px" : "1fr", gap: 14 }}>
         {/* Table */}
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie...</div>
-          ) : filtered.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              {policies.length === 0 ? "Brak polityk w systemie." : "Brak polityk pasujacych do filtrow."}
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {visibleCols.has("ref_id") && <SortTh field="ref_id" label="Ref" />}
-                  {visibleCols.has("title") && <SortTh field="title" label="Tytul" />}
-                  {visibleCols.has("category_name") && <SortTh field="category_name" label="Kategoria" />}
-                  {visibleCols.has("owner") && <SortTh field="owner" label="Wlasciciel" />}
-                  {visibleCols.has("status_name") && <SortTh field="status_name" label="Status" />}
-                  {visibleCols.has("current_version") && <SortTh field="current_version" label="Wersja" />}
-                  {visibleCols.has("effective_date") && <SortTh field="effective_date" label="Obowiazuje od" />}
-                  {visibleCols.has("review_date") && <SortTh field="review_date" label="Przeglad" />}
-                  {visibleCols.has("acknowledgment_rate") && <SortTh field="acknowledgment_rate" label="Potwierdz." />}
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(p => {
-                  const reviewOverdue = p.review_date && new Date(p.review_date) < today;
-                  return (
-                    <tr
-                      key={p.id}
-                      style={{
-                        cursor: "pointer",
-                        background: selected?.id === p.id ? "var(--bg-card-hover)" : undefined,
-                      }}
-                      onClick={() => setSelected(selected?.id === p.id ? null : p)}
-                    >
-                      {visibleCols.has("ref_id") && (
-                        <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>{p.ref_id}</td>
-                      )}
-                      {visibleCols.has("title") && (
-                        <td style={{ fontWeight: 500 }}>{p.title}</td>
-                      )}
-                      {visibleCols.has("category_name") && (
-                        <td style={{ fontSize: 12 }}>{p.category_name ?? "\u2014"}</td>
-                      )}
-                      {visibleCols.has("owner") && (
-                        <td style={{ fontSize: 12 }}>{p.owner}</td>
-                      )}
-                      {visibleCols.has("status_name") && (
-                        <td>
-                          <span className="score-badge" style={{ background: "var(--blue-dim)", color: "var(--blue)" }}>
-                            {p.status_name ?? "\u2014"}
-                          </span>
-                        </td>
-                      )}
-                      {visibleCols.has("current_version") && (
-                        <td style={{ fontSize: 12 }}>{p.current_version ?? "\u2014"}</td>
-                      )}
-                      {visibleCols.has("effective_date") && (
-                        <td style={{ fontSize: 12 }}>{p.effective_date ?? "\u2014"}</td>
-                      )}
-                      {visibleCols.has("review_date") && (
-                        <td style={{
-                          fontSize: 12,
-                          color: reviewOverdue ? "var(--red)" : undefined,
-                          fontWeight: reviewOverdue ? 600 : undefined,
-                        }}>
-                          {p.review_date ?? "\u2014"}
-                          {reviewOverdue && " (zalegly!)"}
-                        </td>
-                      )}
-                      {visibleCols.has("acknowledgment_rate") && (
-                        <td style={{ fontSize: 12 }}>
-                          {p.acknowledgment_rate != null ? (
-                            <span style={{ color: p.acknowledgment_rate >= 80 ? "var(--green)" : p.acknowledgment_rate >= 50 ? "var(--orange)" : "var(--red)" }}>
-                              {p.acknowledgment_rate}%
-                            </span>
-                          ) : "\u2014"}
-                          {" "}
-                          <span style={{ color: "var(--text-muted)", fontSize: 11 }}>({p.acknowledgment_count}/{p.target_audience_count})</span>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <DataTable<PolicyRecord>
+          columns={COLUMNS}
+          visibleColumns={visibleCols}
+          data={table.pageData}
+          renderCell={renderCell}
+          onRowClick={(row) => setSelected(selected?.id === row.id ? null : row)}
+          rowKey={(row) => row.id}
+          selectedKey={selected?.id ?? null}
+          sortField={table.sortField}
+          sortDir={table.sortDir}
+          onSort={table.toggleSort}
+          columnFilters={table.columnFilters}
+          onColumnFilter={table.setColumnFilter}
+          showFilters={showFilters}
+          page={table.page}
+          totalPages={table.totalPages}
+          pageSize={table.pageSize}
+          totalItems={table.totalCount}
+          filteredItems={table.filteredCount}
+          onPageChange={table.setPage}
+          onPageSizeChange={table.setPageSize}
+          loading={loading}
+          emptyMessage="Brak polityk w systemie."
+          emptyFilteredMessage="Brak polityk pasujacych do filtrow."
+        />
 
         {/* Detail Panel */}
         {selected && (

@@ -91,10 +91,20 @@ export default function TableToolbar<T>(props: Props<T>) {
         {onToggleFilters && (
           <button
             className="btn btn-sm"
-            style={{ fontSize: 11, color: showFilters ? "var(--blue)" : undefined }}
+            style={{
+              fontSize: 11,
+              color: showFilters || hasActiveFilters ? "var(--blue)" : undefined,
+              fontWeight: hasActiveFilters ? 600 : undefined,
+            }}
             onClick={onToggleFilters}
           >
-            Filtry {showFilters ? "\u25B2" : "\u25BC"}
+            Filtry kolumn {showFilters ? "\u25B2" : "\u25BC"}
+            {hasActiveFilters && (
+              <span style={{
+                display: "inline-block", width: 6, height: 6, borderRadius: "50%",
+                background: "var(--blue)", marginLeft: 4, verticalAlign: "middle",
+              }} />
+            )}
           </button>
         )}
 
@@ -115,7 +125,7 @@ export default function TableToolbar<T>(props: Props<T>) {
             <div style={{
               position: "absolute", right: 0, top: "100%", marginTop: 4, zIndex: 100,
               background: "var(--bg-secondary)", border: "1px solid var(--border)",
-              borderRadius: "var(--radius-sm)", padding: 8, minWidth: 200, maxHeight: 300, overflowY: "auto",
+              borderRadius: "var(--radius-sm)", padding: 8, minWidth: 220, maxHeight: 400, overflowY: "auto",
               boxShadow: "var(--shadow)",
             }}>
               {columns.map((c) => (

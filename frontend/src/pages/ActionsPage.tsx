@@ -6,6 +6,9 @@ import Modal from "../components/Modal";
 import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
 import { useColumnVisibility } from "../hooks/useColumnVisibility";
+import { useTableFeatures } from "../hooks/useTableFeatures";
+import DataTable from "../components/DataTable";
+import StatsCards, { type StatCard } from "../components/StatsCards";
 
 function priorityColor(name: string | null): string {
   if (!name) return "var(--text-muted)";
@@ -41,9 +44,6 @@ interface FormLookups {
   assets: { id: number; label: string }[];
 }
 
-type SortField = "id" | "title" | "org_unit_name" | "priority_name" | "status_name" | "due_date" | "responsible";
-type SortDir = "asc" | "desc";
-
 const COLUMNS: ColumnDef<Action>[] = [
   { key: "id", header: "ID", format: r => `D-${r.id}` },
   { key: "title", header: "Tytuł" },
@@ -53,6 +53,14 @@ const COLUMNS: ColumnDef<Action>[] = [
   { key: "due_date", header: "Termin", format: r => r.due_date?.slice(0, 10) ?? "" },
   { key: "responsible", header: "Odpowiedzialny", format: r => r.responsible ?? r.owner ?? "" },
   { key: "links", header: "Powiązania", format: r => String(r.links.length), defaultVisible: true },
+  { key: "description", header: "Opis", format: r => r.description ?? "", defaultVisible: false },
+  { key: "owner", header: "Właściciel", format: r => r.owner ?? "", defaultVisible: false },
+  { key: "source_name", header: "Źródło", format: r => r.source_name ?? "", defaultVisible: false },
+  { key: "completed_at", header: "Ukończono", format: r => r.completed_at?.slice(0, 10) ?? "", defaultVisible: false },
+  { key: "effectiveness_rating", header: "Ocena skuteczności", format: r => r.effectiveness_rating != null ? String(r.effectiveness_rating) : "", defaultVisible: false },
+  { key: "is_overdue", header: "Przeterminowane", format: r => r.is_overdue ? "TAK" : "NIE", defaultVisible: false },
+  { key: "created_at", header: "Utworzono", format: r => r.created_at?.slice(0, 10) ?? "", defaultVisible: false },
+  { key: "updated_at", header: "Aktualizacja", format: r => r.updated_at?.slice(0, 10) ?? "", defaultVisible: false },
 ];
 
 export default function ActionsPage() {
@@ -66,29 +74,18 @@ export default function ActionsPage() {
   const [showClose, setShowClose] = useState(false);
   const [closingAction, setClosingAction] = useState<Action | null>(null);
 
-  const [filterOrg, setFilterOrg] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterSearch, setFilterSearch] = useState("");
-  const [filterOverdue, setFilterOverdue] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-
-  const [sortField, setSortField] = useState<SortField>("due_date");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
-  const handleSort = (field: SortField) => {
-    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortField(field); setSortDir("asc"); }
-  };
 
   const { visible: visibleCols, toggle: toggleCol } = useColumnVisibility(COLUMNS, "actions");
 
-  const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
+  const table = useTableFeatures<Action>({
+    data: actions,
+    storageKey: "actions",
+    defaultSort: "due_date",
+    defaultSortDir: "asc",
+  });
 
-  const SortTh = ({ field, label }: { field: SortField; label: string }) => (
-    <th style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }} onClick={() => handleSort(field)}>
-      {label}
-      {sortField === field && <span style={{ marginLeft: 4, fontSize: 9, opacity: 0.7 }}>{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>}
-    </th>
-  );
+  const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
 
   const loadActions = () => {
     api.get<Action[]>("/api/v1/actions").then(data => {
@@ -219,185 +216,136 @@ export default function ActionsPage() {
     }
   };
 
-  // Hierarchical org filtering
-  const filterOrgIds = useMemo(() => {
-    if (!filterOrg) return null;
-    return new Set(collectDescendantIds(orgTree, Number(filterOrg)));
-  }, [filterOrg, orgTree]);
+  // Stats cards
+  const filteredOverdue = table.filtered.filter(a => a.is_overdue).length;
+  const totalOverdue = actions.filter(a => a.is_overdue).length;
+  const filteredInProgress = table.filtered.filter(a => {
+    const l = (a.status_name ?? "").toLowerCase();
+    return l.includes("trakcie") || l.includes("progress");
+  }).length;
+  const totalInProgress = actions.filter(a => {
+    const l = (a.status_name ?? "").toLowerCase();
+    return l.includes("trakcie") || l.includes("progress");
+  }).length;
+  const filteredCompleted = table.filtered.filter(a => {
+    const l = (a.status_name ?? "").toLowerCase();
+    return l.includes("zamkn") || l.includes("complet") || l.includes("wykonan");
+  }).length;
+  const totalCompleted = actions.filter(a => {
+    const l = (a.status_name ?? "").toLowerCase();
+    return l.includes("zamkn") || l.includes("complet") || l.includes("wykonan");
+  }).length;
 
-  const filteredAndSorted = useMemo(() => {
-    let result = actions.filter(a => {
-      if (filterOrgIds && a.org_unit_id && !filterOrgIds.has(a.org_unit_id)) return false;
-      if (filterStatus && a.status_name !== filterStatus) return false;
-      if (filterOverdue && !a.is_overdue) return false;
-      if (filterSearch && !a.title.toLowerCase().includes(filterSearch.toLowerCase())) return false;
-      return true;
-    });
-    result.sort((a, b) => {
-      let cmp = 0;
-      const av = (a as any)[sortField];
-      const bv = (b as any)[sortField];
-      if (av == null && bv == null) cmp = 0;
-      else if (av == null) cmp = 1;
-      else if (bv == null) cmp = -1;
-      else if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
-      else cmp = String(av).localeCompare(String(bv));
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-    return result;
-  }, [actions, filterOrgIds, filterStatus, filterOverdue, filterSearch, sortField, sortDir]);
+  const statsCards: StatCard[] = [
+    { label: "Wszystkich działań", value: table.filteredCount, total: table.totalCount, color: "var(--blue)" },
+    { label: "Przeterminowanych", value: filteredOverdue, total: totalOverdue, color: "var(--red)" },
+    { label: "W trakcie", value: filteredInProgress, total: totalInProgress, color: "var(--orange)" },
+    { label: "Ukończonych", value: filteredCompleted, total: totalCompleted, color: "var(--green)" },
+  ];
 
-  const uniqueStatuses = [...new Set(actions.map(a => a.status_name).filter(Boolean))] as string[];
-  // KPIs
-  const totalActive = actions.filter(a => a.is_active).length;
-  const overdueCount = actions.filter(a => a.is_overdue).length;
-  const completedCount = actions.filter(a => a.completed_at).length;
-  const avgEffectiveness = (() => {
-    const rated = actions.filter(a => a.effectiveness_rating != null);
-    if (rated.length === 0) return null;
-    return rated.reduce((s, a) => s + a.effectiveness_rating!, 0) / rated.length;
-  })();
+  const isFiltered = table.hasActiveFilters || !!table.search;
 
   return (
     <div>
       {/* KPI Summary */}
-      <div className="grid-4" style={{ marginBottom: 16 }}>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>{totalActive}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Aktywnych dzialan</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: overdueCount > 0 ? "var(--red)" : "var(--green)" }}>{overdueCount}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Przeterminowanych</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--green)" }}>{completedCount}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Zamknietych</div>
-        </div>
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>{avgEffectiveness != null ? avgEffectiveness.toFixed(1) : "—"}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Srednia skutecznosc</div>
-        </div>
-      </div>
+      <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
       <TableToolbar
-        filteredCount={filteredAndSorted.length}
-        totalCount={actions.length}
+        filteredCount={table.filteredCount}
+        totalCount={table.totalCount}
         unitLabel="działań"
-        search={filterSearch}
-        onSearchChange={setFilterSearch}
+        search={table.search}
+        onSearchChange={table.setSearch}
         searchPlaceholder="Szukaj działań..."
         showFilters={showFilters}
         onToggleFilters={() => setShowFilters(f => !f)}
-        hasActiveFilters={!!filterOrg || !!filterStatus || filterOverdue}
-        onClearFilters={() => { setFilterOrg(""); setFilterStatus(""); setFilterOverdue(false); }}
+        hasActiveFilters={table.hasActiveFilters}
+        onClearFilters={table.clearAllFilters}
         columns={COLUMNS}
         visibleColumns={visibleCols}
         onToggleColumn={toggleCol}
-        data={filteredAndSorted}
+        data={table.filtered}
         exportFilename="dzialania"
         primaryLabel="Dodaj działanie"
         onPrimaryAction={openAddForm}
       />
 
-      {showFilters && (
-        <div className="toolbar" style={{ paddingTop: 0, marginTop: -4, gap: 8, flexWrap: "wrap" }}>
-          <div className="toolbar-left" style={{ alignItems: "center" }}>
-            <OrgUnitTreeSelect
-              tree={orgTree}
-              value={filterOrg ? Number(filterOrg) : null}
-              onChange={id => setFilterOrg(id ? String(id) : "")}
-              placeholder="Wszystkie piony"
-              allowClear
-              style={{ width: 280 }}
-            />
-            <select className="form-control" style={{ width: 160 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-              <option value="">Wszystkie statusy</option>
-              {uniqueStatuses.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <label style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-              <input type="checkbox" checked={filterOverdue} onChange={e => setFilterOverdue(e.target.checked)} />
-              Tylko przeterminowane
-            </label>
-          </div>
-        </div>
-      )}
-
       <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 400px" : "1fr", gap: 14 }}>
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          {loading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>Ladowanie dzialan...</div>
-          ) : filteredAndSorted.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              {actions.length === 0 ? "Brak dzialan w systemie. Kliknij '+ Dodaj dzialanie' aby rozpoczac." : "Brak dzialan pasujacych do filtrow."}
-            </div>
-          ) : (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  {visibleCols.has("id") && <SortTh field="id" label="ID" />}
-                  {visibleCols.has("title") && <SortTh field="title" label="Tytuł" />}
-                  {visibleCols.has("org_unit_name") && <SortTh field="org_unit_name" label="Pion" />}
-                  {visibleCols.has("priority_name") && <SortTh field="priority_name" label="Priorytet" />}
-                  {visibleCols.has("status_name") && <SortTh field="status_name" label="Status" />}
-                  {visibleCols.has("due_date") && <SortTh field="due_date" label="Termin" />}
-                  {visibleCols.has("responsible") && <SortTh field="responsible" label="Odpowiedzialny" />}
-                  {visibleCols.has("links") && <th>Powiązania</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredAndSorted.map(a => {
-                  const days = daysUntil(a.due_date);
-                  const overdue = a.is_overdue;
-                  return (
-                    <tr
-                      key={a.id}
-                      style={{
-                        cursor: "pointer",
-                        background: selected?.id === a.id ? "var(--bg-card-hover)" : undefined,
-                        borderLeft: overdue ? "3px solid var(--red)" : a.completed_at ? "3px solid var(--green)" : "3px solid transparent",
-                      }}
-                      onClick={() => setSelected(selected?.id === a.id ? null : a)}
-                    >
-                      {visibleCols.has("id") && <td style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>D-{a.id}</td>}
-                      {visibleCols.has("title") && <td style={{ fontWeight: 500, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.title}</td>}
-                      {visibleCols.has("org_unit_name") && <td style={{ fontSize: 11 }}>{(a.org_unit_id ? orgPathMap.get(a.org_unit_id) : null) ?? a.org_unit_name ?? "—"}</td>}
-                      {visibleCols.has("priority_name") && <td>
-                        {a.priority_name ? (
-                          <span style={{ fontSize: 12, fontWeight: 500, color: priorityColor(a.priority_name) }}>{a.priority_name}</span>
-                        ) : "—"}
-                      </td>}
-                      {visibleCols.has("status_name") && <td>
-                        {a.status_name ? (
-                          <span className="score-badge" style={{ background: `${statusColor(a.status_name)}20`, color: statusColor(a.status_name) }}>{a.status_name}</span>
-                        ) : "—"}
-                      </td>}
-                      {visibleCols.has("due_date") && <td>
-                        {a.due_date ? (
-                          <span style={{
-                            fontSize: 11, fontFamily: "'JetBrains Mono',monospace",
-                            color: overdue ? "var(--red)" : days != null && days <= 7 ? "var(--orange)" : "var(--text-secondary)"
-                          }}>
-                            {a.due_date.slice(0, 10)}
-                            {overdue && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--red)" }}>!</span>}
-                          </span>
-                        ) : "—"}
-                      </td>}
-                      {visibleCols.has("responsible") && <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>{a.responsible ?? a.owner ?? "—"}</td>}
-                      {visibleCols.has("links") && <td>
-                        {a.links.length > 0 ? (
-                          <span className="score-badge" style={{ background: "var(--cyan-dim)", color: "var(--cyan)" }}>{a.links.length}</span>
-                        ) : (
-                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>0</span>
-                        )}
-                      </td>}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <DataTable<Action>
+          columns={COLUMNS}
+          visibleColumns={visibleCols}
+          data={table.pageData}
+          rowKey={a => a.id}
+          selectedKey={selected?.id ?? null}
+          onRowClick={a => setSelected(selected?.id === a.id ? null : a)}
+          rowBorderColor={a =>
+            a.is_overdue ? "var(--red)" : a.completed_at ? "var(--green)" : undefined
+          }
+          sortField={table.sortField}
+          sortDir={table.sortDir}
+          onSort={table.toggleSort}
+          columnFilters={table.columnFilters}
+          onColumnFilter={table.setColumnFilter}
+          showFilters={showFilters}
+          page={table.page}
+          totalPages={table.totalPages}
+          pageSize={table.pageSize}
+          totalItems={table.totalCount}
+          filteredItems={table.filteredCount}
+          onPageChange={table.setPage}
+          onPageSizeChange={table.setPageSize}
+          loading={loading}
+          emptyMessage="Brak dzialan w systemie. Kliknij '+ Dodaj dzialanie' aby rozpoczac."
+          emptyFilteredMessage="Brak dzialan pasujacych do filtrow."
+          renderCell={(row, colKey) => {
+            if (colKey === "id") {
+              return (
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--text-muted)" }}>
+                  D-{row.id}
+                </span>
+              );
+            }
+            if (colKey === "title") {
+              return (
+                <span style={{ fontWeight: 500, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>
+                  {row.title}
+                </span>
+              );
+            }
+            if (colKey === "priority_name") {
+              return row.priority_name ? (
+                <span style={{ fontSize: 12, fontWeight: 500, color: priorityColor(row.priority_name) }}>{row.priority_name}</span>
+              ) : <span>{"\u2014"}</span>;
+            }
+            if (colKey === "status_name") {
+              return row.status_name ? (
+                <span className="score-badge" style={{ background: `${statusColor(row.status_name)}20`, color: statusColor(row.status_name) }}>{row.status_name}</span>
+              ) : <span>{"\u2014"}</span>;
+            }
+            if (colKey === "due_date") {
+              if (!row.due_date) return <span>{"\u2014"}</span>;
+              const days = daysUntil(row.due_date);
+              const overdue = row.is_overdue;
+              return (
+                <span style={{
+                  fontSize: 11, fontFamily: "'JetBrains Mono',monospace",
+                  color: overdue ? "var(--red)" : days != null && days <= 7 ? "var(--orange)" : "var(--text-secondary)",
+                }}>
+                  {row.due_date.slice(0, 10)}
+                  {overdue && <span style={{ marginLeft: 4, fontSize: 10, color: "var(--red)" }}>!</span>}
+                </span>
+              );
+            }
+            if (colKey === "links") {
+              return row.links.length > 0 ? (
+                <span className="score-badge" style={{ background: "var(--cyan-dim)", color: "var(--cyan)" }}>{row.links.length}</span>
+              ) : (
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>0</span>
+              );
+            }
+            return undefined;
+          }}
+        />
 
         {/* Detail Panel */}
         {selected && (

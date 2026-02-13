@@ -23,6 +23,12 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
+    title: "Smart Catalog",
+    items: [
+      { to: "/smart-catalog", icon: "🧠", label: "Smart Catalog" },
+    ],
+  },
+  {
     title: "Zarządzanie Ryzykiem",
     items: [
       { to: "/assets", icon: "🖥️", label: "Aktywa (CMDB)" },

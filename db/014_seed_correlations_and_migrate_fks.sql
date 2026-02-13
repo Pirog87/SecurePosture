@@ -12,162 +12,249 @@ DELETE FROM weakness_control_link WHERE is_system = 1;
 -- 1. THREAT ↔ WEAKNESS (95 korelacji)
 -- ═══════════════════════════════════════════════════════════════════
 
-INSERT INTO threat_weakness_link (threat_id, weakness_id, relevance, is_system)
-SELECT t.id, w.id, v.relevance, 1
-FROM (VALUES
-  ROW('T-001','W-043','HIGH'), ROW('T-001','W-060','HIGH'), ROW('T-001','W-050','MEDIUM'),
-  ROW('T-002','W-044','HIGH'), ROW('T-002','W-060','HIGH'),
-  ROW('T-003','W-001','HIGH'), ROW('T-003','W-003','MEDIUM'), ROW('T-003','W-060','MEDIUM'),
-  ROW('T-005','W-001','HIGH'),
-  ROW('T-006','W-044','HIGH'),
-  ROW('T-010','W-022','HIGH'), ROW('T-010','W-050','HIGH'), ROW('T-010','W-030','HIGH'),
-  ROW('T-010','W-010','MEDIUM'), ROW('T-010','W-029','MEDIUM'),
-  ROW('T-011','W-030','HIGH'), ROW('T-011','W-029','HIGH'), ROW('T-011','W-020','MEDIUM'),
-  ROW('T-012','W-030','HIGH'), ROW('T-012','W-029','HIGH'),
-  ROW('T-013','W-030','HIGH'), ROW('T-013','W-031','MEDIUM'),
-  ROW('T-014','W-022','HIGH'), ROW('T-014','W-030','MEDIUM'), ROW('T-014','W-010','MEDIUM'),
-  ROW('T-015','W-020','HIGH'), ROW('T-015','W-021','HIGH'), ROW('T-015','W-029','HIGH'),
-  ROW('T-015','W-034','MEDIUM'),
-  ROW('T-016','W-024','HIGH'), ROW('T-016','W-023','MEDIUM'), ROW('T-016','W-027','MEDIUM'),
-  ROW('T-017','W-024','HIGH'), ROW('T-017','W-026','MEDIUM'),
-  ROW('T-018','W-013','HIGH'), ROW('T-018','W-015','HIGH'), ROW('T-018','W-014','MEDIUM'),
-  ROW('T-019','W-022','HIGH'), ROW('T-019','W-012','HIGH'), ROW('T-019','W-027','HIGH'),
-  ROW('T-019','W-010','MEDIUM'),
-  ROW('T-020','W-004','HIGH'), ROW('T-020','W-041','HIGH'), ROW('T-020','W-042','MEDIUM'),
-  ROW('T-021','W-041','HIGH'), ROW('T-021','W-042','HIGH'), ROW('T-021','W-043','MEDIUM'),
-  ROW('T-022','W-028','HIGH'), ROW('T-022','W-027','HIGH'), ROW('T-022','W-053','MEDIUM'),
-  ROW('T-022','W-063','MEDIUM'),
-  ROW('T-030','W-023','HIGH'), ROW('T-030','W-052','HIGH'), ROW('T-030','W-027','MEDIUM'),
-  ROW('T-031','W-050','HIGH'), ROW('T-031','W-051','HIGH'), ROW('T-031','W-028','MEDIUM'),
-  ROW('T-032','W-052','HIGH'),
-  ROW('T-033','W-030','HIGH'), ROW('T-033','W-062','HIGH'), ROW('T-033','W-061','MEDIUM'),
-  ROW('T-040','W-028','HIGH'), ROW('T-040','W-062','HIGH'), ROW('T-040','W-027','HIGH'),
-  ROW('T-040','W-032','MEDIUM'),
-  ROW('T-041','W-062','HIGH'), ROW('T-041','W-065','HIGH'),
-  ROW('T-042','W-040','HIGH'), ROW('T-042','W-041','HIGH'),
-  ROW('T-050','W-060','HIGH'), ROW('T-050','W-033','MEDIUM'),
-  ROW('T-051','W-030','HIGH'),
-  ROW('T-060','W-010','HIGH'), ROW('T-060','W-003','HIGH'),
-  ROW('T-061','W-003','HIGH'), ROW('T-061','W-001','HIGH'),
-  ROW('T-062','W-050','HIGH'), ROW('T-062','W-051','HIGH'),
-  ROW('T-063','W-003','HIGH'), ROW('T-063','W-010','MEDIUM'),
-  ROW('T-064','W-052','HIGH'), ROW('T-064','W-022','MEDIUM'),
-  ROW('T-065','W-052','MEDIUM'),
-  ROW('T-070','W-062','HIGH'), ROW('T-070','W-061','HIGH'), ROW('T-070','W-025','MEDIUM'),
-  ROW('T-071','W-065','HIGH'),
-  ROW('T-072','W-065','HIGH'), ROW('T-072','W-022','MEDIUM'),
-  ROW('T-080','W-014','HIGH'),
-  ROW('T-081','W-028','HIGH'), ROW('T-081','W-023','HIGH'),
-  ROW('T-082','W-022','HIGH'), ROW('T-082','W-012','HIGH')
-) AS v(t_ref, w_ref, relevance)
-JOIN threat_catalog t ON t.ref_id = v.t_ref
-JOIN weakness_catalog w ON w.ref_id = v.w_ref;
+INSERT IGNORE INTO threat_weakness_link (threat_id, weakness_id, relevance, is_system)
+SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-001' AND w.ref_id='W-043'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-001' AND w.ref_id='W-060'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-001' AND w.ref_id='W-050'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-002' AND w.ref_id='W-044'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-002' AND w.ref_id='W-060'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-003' AND w.ref_id='W-001'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-003' AND w.ref_id='W-003'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-003' AND w.ref_id='W-060'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-005' AND w.ref_id='W-001'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-006' AND w.ref_id='W-044'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-010' AND w.ref_id='W-022'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-010' AND w.ref_id='W-050'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-010' AND w.ref_id='W-030'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-010' AND w.ref_id='W-010'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-010' AND w.ref_id='W-029'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-011' AND w.ref_id='W-030'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-011' AND w.ref_id='W-029'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-011' AND w.ref_id='W-020'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-012' AND w.ref_id='W-030'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-012' AND w.ref_id='W-029'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-013' AND w.ref_id='W-030'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-013' AND w.ref_id='W-031'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-014' AND w.ref_id='W-022'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-014' AND w.ref_id='W-030'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-014' AND w.ref_id='W-010'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-015' AND w.ref_id='W-020'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-015' AND w.ref_id='W-021'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-015' AND w.ref_id='W-029'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-015' AND w.ref_id='W-034'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-016' AND w.ref_id='W-024'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-016' AND w.ref_id='W-023'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-016' AND w.ref_id='W-027'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-017' AND w.ref_id='W-024'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-017' AND w.ref_id='W-026'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-018' AND w.ref_id='W-013'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-018' AND w.ref_id='W-015'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-018' AND w.ref_id='W-014'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-019' AND w.ref_id='W-022'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-019' AND w.ref_id='W-012'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-019' AND w.ref_id='W-027'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-019' AND w.ref_id='W-010'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-020' AND w.ref_id='W-004'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-020' AND w.ref_id='W-041'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-020' AND w.ref_id='W-042'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-021' AND w.ref_id='W-041'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-021' AND w.ref_id='W-042'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-021' AND w.ref_id='W-043'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-022' AND w.ref_id='W-028'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-022' AND w.ref_id='W-027'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-022' AND w.ref_id='W-053'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-022' AND w.ref_id='W-063'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-030' AND w.ref_id='W-023'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-030' AND w.ref_id='W-052'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-030' AND w.ref_id='W-027'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-031' AND w.ref_id='W-050'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-031' AND w.ref_id='W-051'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-031' AND w.ref_id='W-028'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-032' AND w.ref_id='W-052'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-033' AND w.ref_id='W-030'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-033' AND w.ref_id='W-062'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-033' AND w.ref_id='W-061'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-040' AND w.ref_id='W-028'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-040' AND w.ref_id='W-062'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-040' AND w.ref_id='W-027'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-040' AND w.ref_id='W-032'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-041' AND w.ref_id='W-062'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-041' AND w.ref_id='W-065'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-042' AND w.ref_id='W-040'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-042' AND w.ref_id='W-041'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-050' AND w.ref_id='W-060'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-050' AND w.ref_id='W-033'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-051' AND w.ref_id='W-030'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-060' AND w.ref_id='W-010'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-060' AND w.ref_id='W-003'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-061' AND w.ref_id='W-003'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-061' AND w.ref_id='W-001'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-062' AND w.ref_id='W-050'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-062' AND w.ref_id='W-051'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-063' AND w.ref_id='W-003'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-063' AND w.ref_id='W-010'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-064' AND w.ref_id='W-052'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-064' AND w.ref_id='W-022'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-065' AND w.ref_id='W-052'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-070' AND w.ref_id='W-062'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-070' AND w.ref_id='W-061'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-070' AND w.ref_id='W-025'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-071' AND w.ref_id='W-065'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-072' AND w.ref_id='W-065'
+UNION ALL SELECT t.id, w.id, 'MEDIUM', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-072' AND w.ref_id='W-022'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-080' AND w.ref_id='W-014'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-081' AND w.ref_id='W-028'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-081' AND w.ref_id='W-023'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-082' AND w.ref_id='W-022'
+UNION ALL SELECT t.id, w.id, 'HIGH', 1 FROM threat_catalog t, weakness_catalog w WHERE t.ref_id='T-082' AND w.ref_id='W-012';
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- 2. THREAT ↔ CONTROL (65 korelacji)
 -- ═══════════════════════════════════════════════════════════════════
 
-INSERT INTO threat_control_link (threat_id, control_id, effectiveness, is_system)
-SELECT t.id, c.id, v.effectiveness, 1
-FROM (VALUES
-  ROW('T-001','C-043','HIGH'), ROW('T-001','C-060','HIGH'), ROW('T-001','C-050','MEDIUM'),
-  ROW('T-002','C-044','HIGH'), ROW('T-002','C-060','HIGH'),
-  ROW('T-003','C-001','HIGH'), ROW('T-003','C-002','MEDIUM'), ROW('T-003','C-060','MEDIUM'),
-  ROW('T-005','C-001','HIGH'),
-  ROW('T-006','C-044','HIGH'),
-  ROW('T-010','C-050','HIGH'), ROW('T-010','C-075','HIGH'), ROW('T-010','C-073','HIGH'),
-  ROW('T-010','C-010','MEDIUM'), ROW('T-010','C-030','MEDIUM'),
-  ROW('T-011','C-030','HIGH'), ROW('T-011','C-031','HIGH'), ROW('T-011','C-020','HIGH'),
-  ROW('T-011','C-075','MEDIUM'),
-  ROW('T-012','C-030','HIGH'), ROW('T-012','C-020','HIGH'),
-  ROW('T-013','C-030','HIGH'), ROW('T-013','C-032','MEDIUM'),
-  ROW('T-014','C-075','HIGH'), ROW('T-014','C-073','HIGH'), ROW('T-014','C-010','MEDIUM'),
-  ROW('T-015','C-020','HIGH'), ROW('T-015','C-022','HIGH'), ROW('T-015','C-021','MEDIUM'),
-  ROW('T-015','C-070','MEDIUM'),
-  ROW('T-016','C-074','HIGH'), ROW('T-016','C-072','MEDIUM'),
-  ROW('T-017','C-074','HIGH'),
-  ROW('T-018','C-012','HIGH'), ROW('T-018','C-013','HIGH'),
-  ROW('T-019','C-070','HIGH'), ROW('T-019','C-011','HIGH'), ROW('T-019','C-073','HIGH'),
-  ROW('T-019','C-010','MEDIUM'),
-  ROW('T-020','C-003','HIGH'), ROW('T-020','C-041','HIGH'), ROW('T-020','C-042','MEDIUM'),
-  ROW('T-021','C-041','HIGH'), ROW('T-021','C-042','HIGH'),
-  ROW('T-022','C-024','HIGH'), ROW('T-022','C-070','HIGH'), ROW('T-022','C-025','MEDIUM'),
-  ROW('T-030','C-052','HIGH'), ROW('T-030','C-070','MEDIUM'),
-  ROW('T-031','C-050','HIGH'), ROW('T-031','C-051','HIGH'), ROW('T-031','C-024','MEDIUM'),
-  ROW('T-032','C-052','HIGH'),
-  ROW('T-033','C-062','HIGH'), ROW('T-033','C-071','HIGH'), ROW('T-033','C-030','MEDIUM'),
-  ROW('T-040','C-071','HIGH'), ROW('T-040','C-024','HIGH'), ROW('T-040','C-070','HIGH'),
-  ROW('T-040','C-025','MEDIUM'),
-  ROW('T-041','C-062','HIGH'), ROW('T-041','C-071','HIGH'),
-  ROW('T-042','C-040','HIGH'), ROW('T-042','C-041','HIGH'),
-  ROW('T-050','C-060','HIGH'),
-  ROW('T-051','C-030','HIGH'),
-  ROW('T-060','C-010','HIGH'), ROW('T-060','C-002','HIGH'),
-  ROW('T-061','C-002','HIGH'), ROW('T-061','C-001','HIGH'),
-  ROW('T-062','C-050','HIGH'), ROW('T-062','C-051','HIGH'),
-  ROW('T-063','C-002','HIGH'), ROW('T-063','C-010','MEDIUM'),
-  ROW('T-064','C-052','HIGH'), ROW('T-064','C-073','MEDIUM'),
-  ROW('T-065','C-076','HIGH'),
-  ROW('T-070','C-062','HIGH'), ROW('T-070','C-061','HIGH'),
-  ROW('T-072','C-072','HIGH'), ROW('T-072','C-073','HIGH'),
-  ROW('T-080','C-014','HIGH'),
-  ROW('T-081','C-024','HIGH'), ROW('T-081','C-023','HIGH'),
-  ROW('T-082','C-072','HIGH'), ROW('T-082','C-011','HIGH')
-) AS v(t_ref, c_ref, effectiveness)
-JOIN threat_catalog t ON t.ref_id = v.t_ref
-JOIN control_catalog c ON c.ref_id = v.c_ref;
+INSERT IGNORE INTO threat_control_link (threat_id, control_id, effectiveness, is_system)
+SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-001' AND c.ref_id='C-043'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-001' AND c.ref_id='C-060'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-001' AND c.ref_id='C-050'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-002' AND c.ref_id='C-044'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-002' AND c.ref_id='C-060'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-003' AND c.ref_id='C-001'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-003' AND c.ref_id='C-002'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-003' AND c.ref_id='C-060'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-005' AND c.ref_id='C-001'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-006' AND c.ref_id='C-044'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-010' AND c.ref_id='C-050'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-010' AND c.ref_id='C-075'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-010' AND c.ref_id='C-073'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-010' AND c.ref_id='C-010'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-010' AND c.ref_id='C-030'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-011' AND c.ref_id='C-030'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-011' AND c.ref_id='C-031'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-011' AND c.ref_id='C-020'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-011' AND c.ref_id='C-075'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-012' AND c.ref_id='C-030'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-012' AND c.ref_id='C-020'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-013' AND c.ref_id='C-030'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-013' AND c.ref_id='C-032'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-014' AND c.ref_id='C-075'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-014' AND c.ref_id='C-073'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-014' AND c.ref_id='C-010'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-015' AND c.ref_id='C-020'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-015' AND c.ref_id='C-022'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-015' AND c.ref_id='C-021'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-015' AND c.ref_id='C-070'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-016' AND c.ref_id='C-074'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-016' AND c.ref_id='C-072'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-017' AND c.ref_id='C-074'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-018' AND c.ref_id='C-012'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-018' AND c.ref_id='C-013'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-019' AND c.ref_id='C-070'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-019' AND c.ref_id='C-011'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-019' AND c.ref_id='C-073'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-019' AND c.ref_id='C-010'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-020' AND c.ref_id='C-003'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-020' AND c.ref_id='C-041'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-020' AND c.ref_id='C-042'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-021' AND c.ref_id='C-041'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-021' AND c.ref_id='C-042'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-022' AND c.ref_id='C-024'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-022' AND c.ref_id='C-070'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-022' AND c.ref_id='C-025'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-030' AND c.ref_id='C-052'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-030' AND c.ref_id='C-070'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-031' AND c.ref_id='C-050'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-031' AND c.ref_id='C-051'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-031' AND c.ref_id='C-024'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-032' AND c.ref_id='C-052'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-033' AND c.ref_id='C-062'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-033' AND c.ref_id='C-071'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-033' AND c.ref_id='C-030'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-040' AND c.ref_id='C-071'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-040' AND c.ref_id='C-024'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-040' AND c.ref_id='C-070'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-040' AND c.ref_id='C-025'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-041' AND c.ref_id='C-062'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-041' AND c.ref_id='C-071'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-042' AND c.ref_id='C-040'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-042' AND c.ref_id='C-041'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-050' AND c.ref_id='C-060'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-051' AND c.ref_id='C-030'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-060' AND c.ref_id='C-010'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-060' AND c.ref_id='C-002'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-061' AND c.ref_id='C-002'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-061' AND c.ref_id='C-001'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-062' AND c.ref_id='C-050'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-062' AND c.ref_id='C-051'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-063' AND c.ref_id='C-002'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-063' AND c.ref_id='C-010'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-064' AND c.ref_id='C-052'
+UNION ALL SELECT t.id, c.id, 'MEDIUM', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-064' AND c.ref_id='C-073'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-065' AND c.ref_id='C-076'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-070' AND c.ref_id='C-062'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-070' AND c.ref_id='C-061'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-072' AND c.ref_id='C-072'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-072' AND c.ref_id='C-073'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-080' AND c.ref_id='C-014'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-081' AND c.ref_id='C-024'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-081' AND c.ref_id='C-023'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-082' AND c.ref_id='C-072'
+UNION ALL SELECT t.id, c.id, 'HIGH', 1 FROM threat_catalog t, control_catalog c WHERE t.ref_id='T-082' AND c.ref_id='C-011';
 
 
 -- ═══════════════════════════════════════════════════════════════════
 -- 3. WEAKNESS ↔ CONTROL (48 korelacji)
 -- ═══════════════════════════════════════════════════════════════════
 
-INSERT INTO weakness_control_link (weakness_id, control_id, effectiveness, is_system)
-SELECT w.id, c.id, v.effectiveness, 1
-FROM (VALUES
-  ROW('W-001','C-001','HIGH'),
-  ROW('W-002','C-073','HIGH'),
-  ROW('W-003','C-002','HIGH'),
-  ROW('W-004','C-003','HIGH'),
-  ROW('W-010','C-010','HIGH'),
-  ROW('W-011','C-072','HIGH'), ROW('W-011','C-010','MEDIUM'),
-  ROW('W-012','C-011','HIGH'),
-  ROW('W-013','C-012','HIGH'),
-  ROW('W-014','C-014','HIGH'),
-  ROW('W-015','C-013','HIGH'),
-  ROW('W-020','C-021','HIGH'), ROW('W-020','C-020','HIGH'),
-  ROW('W-021','C-022','HIGH'),
-  ROW('W-022','C-073','HIGH'), ROW('W-022','C-072','MEDIUM'),
-  ROW('W-023','C-052','HIGH'), ROW('W-023','C-072','MEDIUM'),
-  ROW('W-024','C-074','HIGH'),
-  ROW('W-025','C-003','HIGH'), ROW('W-025','C-012','MEDIUM'),
-  ROW('W-026','C-020','HIGH'),
-  ROW('W-027','C-070','HIGH'),
-  ROW('W-028','C-024','HIGH'), ROW('W-028','C-025','HIGH'), ROW('W-028','C-023','MEDIUM'),
-  ROW('W-029','C-020','HIGH'),
-  ROW('W-030','C-030','HIGH'), ROW('W-030','C-031','MEDIUM'),
-  ROW('W-031','C-032','MEDIUM'),
-  ROW('W-032','C-032','HIGH'),
-  ROW('W-033','C-023','HIGH'), ROW('W-033','C-024','MEDIUM'),
-  ROW('W-034','C-070','HIGH'),
-  ROW('W-040','C-040','HIGH'),
-  ROW('W-041','C-041','HIGH'),
-  ROW('W-042','C-042','HIGH'),
-  ROW('W-043','C-043','HIGH'),
-  ROW('W-044','C-044','HIGH'),
-  ROW('W-050','C-050','HIGH'),
-  ROW('W-051','C-051','HIGH'),
-  ROW('W-052','C-052','HIGH'),
-  ROW('W-053','C-053','HIGH'),
-  ROW('W-060','C-060','HIGH'),
-  ROW('W-061','C-061','HIGH'),
-  ROW('W-062','C-062','HIGH'),
-  ROW('W-063','C-025','HIGH'),
-  ROW('W-065','C-061','MEDIUM')
-) AS v(w_ref, c_ref, effectiveness)
-JOIN weakness_catalog w ON w.ref_id = v.w_ref
-JOIN control_catalog c ON c.ref_id = v.c_ref;
+INSERT IGNORE INTO weakness_control_link (weakness_id, control_id, effectiveness, is_system)
+SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-001' AND c.ref_id='C-001'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-002' AND c.ref_id='C-073'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-003' AND c.ref_id='C-002'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-004' AND c.ref_id='C-003'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-010' AND c.ref_id='C-010'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-011' AND c.ref_id='C-072'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-011' AND c.ref_id='C-010'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-012' AND c.ref_id='C-011'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-013' AND c.ref_id='C-012'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-014' AND c.ref_id='C-014'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-015' AND c.ref_id='C-013'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-020' AND c.ref_id='C-021'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-020' AND c.ref_id='C-020'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-021' AND c.ref_id='C-022'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-022' AND c.ref_id='C-073'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-022' AND c.ref_id='C-072'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-023' AND c.ref_id='C-052'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-023' AND c.ref_id='C-072'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-024' AND c.ref_id='C-074'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-025' AND c.ref_id='C-003'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-025' AND c.ref_id='C-012'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-026' AND c.ref_id='C-020'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-027' AND c.ref_id='C-070'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-028' AND c.ref_id='C-024'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-028' AND c.ref_id='C-025'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-028' AND c.ref_id='C-023'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-029' AND c.ref_id='C-020'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-030' AND c.ref_id='C-030'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-030' AND c.ref_id='C-031'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-031' AND c.ref_id='C-032'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-032' AND c.ref_id='C-032'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-033' AND c.ref_id='C-023'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-033' AND c.ref_id='C-024'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-034' AND c.ref_id='C-070'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-040' AND c.ref_id='C-040'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-041' AND c.ref_id='C-041'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-042' AND c.ref_id='C-042'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-043' AND c.ref_id='C-043'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-044' AND c.ref_id='C-044'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-050' AND c.ref_id='C-050'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-051' AND c.ref_id='C-051'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-052' AND c.ref_id='C-052'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-053' AND c.ref_id='C-053'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-060' AND c.ref_id='C-060'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-061' AND c.ref_id='C-061'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-062' AND c.ref_id='C-062'
+UNION ALL SELECT w.id, c.id, 'HIGH', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-063' AND c.ref_id='C-025'
+UNION ALL SELECT w.id, c.id, 'MEDIUM', 1 FROM weakness_catalog w, control_catalog c WHERE w.ref_id='W-065' AND c.ref_id='C-061';
 
 
 -- ═══════════════════════════════════════════════════════════════════

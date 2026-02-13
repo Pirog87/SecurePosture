@@ -217,14 +217,17 @@ export default function AIConfigPage() {
     {
       label: "Provider",
       value: PROVIDER_OPTIONS.find((p) => p.value === config.provider_type)?.label ?? config.provider_type,
+      color: "var(--blue)",
     },
     {
       label: "Zapytan (30d)",
       value: usage?.requests_count ?? 0,
+      color: "var(--purple, #8b5cf6)",
     },
     {
       label: "Koszt (30d)",
       value: `$${(usage?.cost_usd ?? 0).toFixed(4)}`,
+      color: "var(--orange, #f59e0b)",
     },
   ];
 

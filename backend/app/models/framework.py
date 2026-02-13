@@ -1,8 +1,8 @@
 """
 Framework Engine models — universal multi-framework assessment system.
 
-Tables: frameworks, framework_nodes, assessment_dimensions, dimension_levels,
-        framework_node_security_areas, assessments, assessment_answers
+Tables: frameworks, framework_nodes, framework_versions, assessment_dimensions,
+        dimension_levels, framework_node_security_areas, assessments, assessment_answers
 """
 from datetime import date, datetime
 from decimal import Decimal
@@ -24,6 +24,9 @@ from sqlalchemy import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+
+# Lifecycle statuses for framework documents
+LIFECYCLE_STATUSES = ("draft", "review", "published", "deprecated", "archived")
 
 
 class Framework(Base):
@@ -54,6 +57,13 @@ class Framework(Base):
     imported_at: Mapped[datetime | None] = mapped_column(DateTime)
     imported_by: Mapped[str | None] = mapped_column(String(200))
 
+    # Lifecycle & versioning
+    lifecycle_status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False)
+    edit_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    published_version: Mapped[str | None] = mapped_column(String(100))
+    last_edited_by: Mapped[str | None] = mapped_column(String(200))
+    last_edited_at: Mapped[datetime | None] = mapped_column(DateTime)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -68,6 +78,30 @@ class Framework(Base):
         back_populates="framework", cascade="all, delete-orphan",
     )
     assessments: Mapped[list["Assessment"]] = relationship(back_populates="framework")
+    versions: Mapped[list["FrameworkVersionHistory"]] = relationship(
+        back_populates="framework", cascade="all, delete-orphan",
+        order_by="FrameworkVersionHistory.edit_version.desc()",
+    )
+
+
+class FrameworkVersionHistory(Base):
+    """Tracks each edit version of a framework for audit trail."""
+    __tablename__ = "framework_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[int] = mapped_column(
+        ForeignKey("frameworks.id", ondelete="CASCADE"), nullable=False,
+    )
+    edit_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    lifecycle_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    change_summary: Mapped[str | None] = mapped_column(Text)
+    changed_by: Mapped[str | None] = mapped_column(String(200))
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    snapshot_nodes_count: Mapped[int | None] = mapped_column(Integer)
+    snapshot_assessable_count: Mapped[int | None] = mapped_column(Integer)
+
+    # relationships
+    framework: Mapped["Framework"] = relationship(back_populates="versions")
 
 
 class FrameworkNode(Base):

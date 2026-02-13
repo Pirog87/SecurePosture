@@ -80,6 +80,44 @@ class FrameworkNodeBrief(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class FrameworkNodeCreate(BaseModel):
+    """Create a new node in a framework."""
+    parent_id: int | None = None
+    ref_id: str | None = None
+    name: str = Field(..., min_length=1, max_length=500)
+    name_pl: str | None = None
+    description: str | None = None
+    description_pl: str | None = None
+    assessable: bool = False
+    implementation_groups: str | None = None
+    weight: int = 1
+    importance: str | None = None
+    annotation: str | None = None
+    typical_evidence: str | None = None
+
+
+class FrameworkNodeUpdate(BaseModel):
+    """Update an existing node."""
+    ref_id: str | None = None
+    name: str | None = Field(None, min_length=1, max_length=500)
+    name_pl: str | None = None
+    description: str | None = None
+    description_pl: str | None = None
+    assessable: bool | None = None
+    implementation_groups: str | None = None
+    weight: int | None = None
+    importance: str | None = None
+    annotation: str | None = None
+    typical_evidence: str | None = None
+    parent_id: int | None = Field(None, description="Move node to new parent (null = root)")
+
+
+class FrameworkNodeMoveRequest(BaseModel):
+    """Reorder or move a node."""
+    parent_id: int | None = None
+    after_node_id: int | None = Field(None, description="Place after this sibling node")
+
+
 # ─────────────────────────────────────────────
 # Frameworks
 # ─────────────────────────────────────────────
@@ -100,6 +138,11 @@ class FrameworkOut(BaseModel):
     total_assessable: int = 0
     imported_at: datetime | None = None
     imported_by: str | None = None
+    lifecycle_status: str = "draft"
+    edit_version: int = 1
+    published_version: str | None = None
+    last_edited_by: str | None = None
+    last_edited_at: datetime | None = None
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
@@ -116,8 +159,40 @@ class FrameworkBrief(BaseModel):
     provider: str | None = None
     total_nodes: int = 0
     total_assessable: int = 0
+    lifecycle_status: str = "draft"
+    edit_version: int = 1
+    published_version: str | None = None
     is_active: bool = True
+    source_format: str | None = None
     model_config = {"from_attributes": True}
+
+
+class FrameworkCreate(BaseModel):
+    """Create a new framework manually from scratch."""
+    name: str = Field(..., min_length=1, max_length=500)
+    ref_id: str | None = Field(None, max_length=100)
+    description: str | None = None
+    version: str | None = Field(None, max_length=50)
+    provider: str | None = Field(None, max_length=200)
+    locale: str = "pl"
+
+
+class FrameworkUpdate(BaseModel):
+    """Update framework metadata."""
+    name: str | None = Field(None, min_length=1, max_length=500)
+    ref_id: str | None = Field(None, max_length=100)
+    description: str | None = None
+    version: str | None = Field(None, max_length=50)
+    provider: str | None = Field(None, max_length=200)
+    locale: str | None = None
+    published_version: str | None = Field(None, max_length=100)
+    change_summary: str | None = Field(None, description="Opis zmian do historii wersji")
+
+
+class LifecycleChangeRequest(BaseModel):
+    """Change framework lifecycle status."""
+    status: str = Field(..., description="Nowy status: draft, review, published, deprecated, archived")
+    change_summary: str | None = None
 
 
 class FrameworkImportResult(BaseModel):
@@ -127,6 +202,23 @@ class FrameworkImportResult(BaseModel):
     total_nodes: int
     total_assessable: int
     dimensions_created: int
+
+
+# ─────────────────────────────────────────────
+# Version history
+# ─────────────────────────────────────────────
+
+class FrameworkVersionOut(BaseModel):
+    id: int
+    framework_id: int
+    edit_version: int
+    lifecycle_status: str
+    change_summary: str | None = None
+    changed_by: str | None = None
+    changed_at: datetime
+    snapshot_nodes_count: int | None = None
+    snapshot_assessable_count: int | None = None
+    model_config = {"from_attributes": True}
 
 
 # ─────────────────────────────────────────────

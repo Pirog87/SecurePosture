@@ -7,7 +7,6 @@ import ReviewsPage from "./pages/ReviewsPage";
 import CisListPage from "./pages/CisListPage";
 import CisAssessPage from "./pages/CisAssessPage";
 
-import CatalogsPage from "./pages/CatalogsPage";
 import DictionariesPage from "./pages/DictionariesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
 import AssetsPage from "./pages/AssetsPage";
@@ -65,7 +64,7 @@ export default function App() {
           <Route path="org-structure" element={<Navigate to="/org-context" replace />} />
           <Route path="smart-catalog" element={<SmartCatalogPage />} />
           <Route path="ai-config" element={<AIConfigPage />} />
-          <Route path="catalogs" element={<CatalogsPage />} />
+          <Route path="catalogs" element={<Navigate to="/smart-catalog" replace />} />
           <Route path="dictionaries" element={<DictionariesPage />} />
           <Route path="actions" element={<ActionsPage />} />
           <Route path="reports" element={<ReportsPage />} />

@@ -1297,15 +1297,15 @@ function AssetRisksTab({ asset, orgTree, onRiskCountChange }: {
         setSecurityAreas(areas);
       } catch { /* ignore */ }
     }
-    // Load catalogs in parallel
+    // Load catalogs in parallel (Smart Catalog)
     if (catalogThreats.length === 0) {
-      api.get<Threat[]>("/api/v1/threats").then(setCatalogThreats).catch(() => {});
+      api.get<Threat[]>("/api/v1/threat-catalog").then(setCatalogThreats).catch(() => {});
     }
     if (catalogVulns.length === 0) {
-      api.get<Vulnerability[]>("/api/v1/vulnerabilities").then(setCatalogVulns).catch(() => {});
+      api.get<Vulnerability[]>("/api/v1/weakness-catalog").then(setCatalogVulns).catch(() => {});
     }
     if (catalogSafeguards.length === 0) {
-      api.get<Safeguard[]>("/api/v1/safeguards").then(setCatalogSafeguards).catch(() => {});
+      api.get<Safeguard[]>("/api/v1/control-catalog").then(setCatalogSafeguards).catch(() => {});
     }
   };
 

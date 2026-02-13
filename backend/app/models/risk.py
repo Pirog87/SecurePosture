@@ -64,7 +64,7 @@ class Risk(Base):
     owner: Mapped[str | None] = mapped_column(String(200))
     planned_actions: Mapped[str | None] = mapped_column(Text)
     treatment_plan: Mapped[str | None] = mapped_column(Text)
-    planned_safeguard_id: Mapped[int | None] = mapped_column(ForeignKey("safeguards.id"))
+    planned_safeguard_id: Mapped[int | None] = mapped_column(ForeignKey("control_catalog.id"))
     treatment_deadline: Mapped[datetime | None] = mapped_column(Date)
     treatment_resources: Mapped[str | None] = mapped_column(Text)
     residual_risk: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
@@ -105,7 +105,7 @@ class RiskThreat(Base):
     __tablename__ = "risk_threats"
 
     risk_id: Mapped[int] = mapped_column(ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True)
-    threat_id: Mapped[int] = mapped_column(ForeignKey("threats.id", ondelete="CASCADE"), primary_key=True)
+    threat_id: Mapped[int] = mapped_column(ForeignKey("threat_catalog.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -113,7 +113,7 @@ class RiskVulnerability(Base):
     __tablename__ = "risk_vulnerabilities"
 
     risk_id: Mapped[int] = mapped_column(ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True)
-    vulnerability_id: Mapped[int] = mapped_column(ForeignKey("vulnerabilities.id", ondelete="CASCADE"), primary_key=True)
+    vulnerability_id: Mapped[int] = mapped_column(ForeignKey("weakness_catalog.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -121,7 +121,7 @@ class RiskSafeguard(Base):
     __tablename__ = "risk_safeguards"
 
     risk_id: Mapped[int] = mapped_column(ForeignKey("risks.id", ondelete="CASCADE"), primary_key=True)
-    safeguard_id: Mapped[int] = mapped_column(ForeignKey("safeguards.id", ondelete="CASCADE"), primary_key=True)
+    safeguard_id: Mapped[int] = mapped_column(ForeignKey("control_catalog.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 

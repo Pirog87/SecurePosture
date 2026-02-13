@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -96,6 +96,13 @@ async def _sync_asset_categories(session: AsyncSession, m2m_class, fk_name: str,
         session.add(obj)
 
 
+async def _auto_ref_id(session: AsyncSession, model_class, prefix: str) -> str:
+    """Auto-generate a ref_id like T-001, W-001, C-001 when not provided."""
+    q = select(func.count()).select_from(model_class)
+    count = (await session.execute(q)).scalar() or 0
+    return f"{prefix}-{count + 1:03d}"
+
+
 # ═══════════════════════════════════════════════════════════════════
 # THREAT CATALOG CRUD
 # ═══════════════════════════════════════════════════════════════════
@@ -160,8 +167,9 @@ async def get_threat_catalog(item_id: int, s: AsyncSession = Depends(get_session
 
 @router.post("/api/v1/threat-catalog", response_model=ThreatCatalogOut, status_code=201)
 async def create_threat_catalog(body: ThreatCatalogCreate, s: AsyncSession = Depends(get_session)):
+    ref_id = body.ref_id or await _auto_ref_id(s, ThreatCatalog, "T")
     t = ThreatCatalog(
-        ref_id=body.ref_id, name=body.name, description=body.description,
+        ref_id=ref_id, name=body.name, description=body.description,
         category=body.category, source=body.source, cia_impact=body.cia_impact,
         org_unit_id=body.org_unit_id,
     )
@@ -276,8 +284,9 @@ async def get_weakness_catalog(item_id: int, s: AsyncSession = Depends(get_sessi
 
 @router.post("/api/v1/weakness-catalog", response_model=WeaknessCatalogOut, status_code=201)
 async def create_weakness_catalog(body: WeaknessCatalogCreate, s: AsyncSession = Depends(get_session)):
+    ref_id = body.ref_id or await _auto_ref_id(s, WeaknessCatalog, "W")
     w = WeaknessCatalog(
-        ref_id=body.ref_id, name=body.name, description=body.description,
+        ref_id=ref_id, name=body.name, description=body.description,
         category=body.category, org_unit_id=body.org_unit_id,
     )
     s.add(w)
@@ -394,8 +403,9 @@ async def get_control_catalog(item_id: int, s: AsyncSession = Depends(get_sessio
 
 @router.post("/api/v1/control-catalog", response_model=ControlCatalogOut, status_code=201)
 async def create_control_catalog(body: ControlCatalogCreate, s: AsyncSession = Depends(get_session)):
+    ref_id = body.ref_id or await _auto_ref_id(s, ControlCatalog, "C")
     c = ControlCatalog(
-        ref_id=body.ref_id, name=body.name, description=body.description,
+        ref_id=ref_id, name=body.name, description=body.description,
         category=body.category, implementation_type=body.implementation_type,
         org_unit_id=body.org_unit_id,
     )

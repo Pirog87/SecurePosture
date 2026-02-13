@@ -374,8 +374,7 @@ export default function ComplianceAssessmentsPage() {
       </div>
 
       {/* ── Create modal ── */}
-      {showModal && (
-        <Modal title="Nowa ocena zgodności" onClose={() => setShowModal(false)}>
+      <Modal open={showModal} title="Nowa ocena zgodności" onClose={() => setShowModal(false)}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label>
               Framework *
@@ -417,7 +416,6 @@ export default function ComplianceAssessmentsPage() {
             </div>
           </div>
         </Modal>
-      )}
     </div>
   );
 }

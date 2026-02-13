@@ -129,8 +129,10 @@ export default function ComplianceAssessmentFormPage() {
   ];
 
   // Build hierarchical view: sections (non-assessable) contain assessable items
-  const sections = requirements.filter((r) => r.node_assessable === false || r.node_depth === 1);
-  const assessableItems = requirements.filter((r) => r.node_assessable === true);
+  const _sections = requirements.filter((r) => r.node_assessable === false || r.node_depth === 1);
+  void _sections;
+  const _assessableItems = requirements.filter((r) => r.node_assessable === true);
+  void _assessableItems;
 
   // Group assessable items by their parent section (approximate by depth)
   const getParentSectionId = (item: RequirementAssessment): number | null => {

@@ -312,8 +312,7 @@ export default function FrameworkMappingsPage() {
       </div>
 
       {/* ── Create modal ── */}
-      {showModal && (
-        <Modal title="Nowe mapowanie frameworków" onClose={() => setShowModal(false)}>
+      <Modal open={showModal} title="Nowe mapowanie frameworków" onClose={() => setShowModal(false)}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label>Source Framework *
               <select className="form-control" value={form.source_framework_id} onChange={e => {
@@ -364,7 +363,6 @@ export default function FrameworkMappingsPage() {
             </div>
           </div>
         </Modal>
-      )}
     </div>
   );
 }

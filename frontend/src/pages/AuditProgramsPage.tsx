@@ -277,20 +277,18 @@ export default function AuditProgramsPage() {
       </div>
 
       {/* ── Create modal ── */}
-      {showModal && (
-        <Modal title="Nowy program audytów" onClose={() => setShowModal(false)}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <label>Nazwa * <input className="form-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="np. Program Audytów IT 2026" /></label>
-            <label>Rok <input className="form-control" type="number" value={form.year} onChange={e => setForm({ ...form, year: Number(e.target.value) })} /></label>
-            <label>Opis <textarea className="form-control" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={3} /></label>
-            <label>Przygotował <input className="form-control" value={form.prepared_by} onChange={e => setForm({ ...form, prepared_by: e.target.value })} /></label>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-              <button className="btn" onClick={() => setShowModal(false)}>Anuluj</button>
-              <button className="btn btn-primary" onClick={handleCreate} disabled={!form.name.trim()}>Utwórz</button>
-            </div>
+      <Modal open={showModal} title="Nowy program audytów" onClose={() => setShowModal(false)}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label>Nazwa * <input className="form-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="np. Program Audytów IT 2026" /></label>
+          <label>Rok <input className="form-control" type="number" value={form.year} onChange={e => setForm({ ...form, year: Number(e.target.value) })} /></label>
+          <label>Opis <textarea className="form-control" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={3} /></label>
+          <label>Przygotował <input className="form-control" value={form.prepared_by} onChange={e => setForm({ ...form, prepared_by: e.target.value })} /></label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <button className="btn" onClick={() => setShowModal(false)}>Anuluj</button>
+            <button className="btn btn-primary" onClick={handleCreate} disabled={!form.name.trim()}>Utwórz</button>
           </div>
-        </Modal>
-      )}
+        </div>
+      </Modal>
     </div>
   );
 }

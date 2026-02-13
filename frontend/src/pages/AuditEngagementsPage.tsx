@@ -387,46 +387,44 @@ export default function AuditEngagementsPage() {
       </div>
 
       {/* ── Create modal ── */}
-      {showModal && (
-        <Modal title="Nowe zadanie audytowe" onClose={() => setShowModal(false)}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <label>Nazwa * <input className="form-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="np. Audyt ISO 27001 — Dział IT" /></label>
-            <label>Framework *
-              <select className="form-control" value={form.framework_id} onChange={e => setForm({ ...form, framework_id: Number(e.target.value) })}>
-                <option value={0}>— wybierz —</option>
-                {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+      <Modal open={showModal} title="Nowe zadanie audytowe" onClose={() => setShowModal(false)}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label>Nazwa * <input className="form-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="np. Audyt ISO 27001 — Dział IT" /></label>
+          <label>Framework *
+            <select className="form-control" value={form.framework_id} onChange={e => setForm({ ...form, framework_id: Number(e.target.value) })}>
+              <option value={0}>— wybierz —</option>
+              {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+            </select>
+          </label>
+          <label>Cel audytu * <textarea className="form-control" value={form.objective} onChange={e => setForm({ ...form, objective: e.target.value })} rows={2} placeholder="Cel i zakres audytu..." /></label>
+          <label>Lead Auditor * <input className="form-control" value={form.lead_auditor} onChange={e => setForm({ ...form, lead_auditor: e.target.value })} /></label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label>Priorytet
+              <select className="form-control" value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
+                <option value="low">Niski</option>
+                <option value="medium">Średni</option>
+                <option value="high">Wysoki</option>
+                <option value="critical">Krytyczny</option>
               </select>
             </label>
-            <label>Cel audytu * <textarea className="form-control" value={form.objective} onChange={e => setForm({ ...form, objective: e.target.value })} rows={2} placeholder="Cel i zakres audytu..." /></label>
-            <label>Lead Auditor * <input className="form-control" value={form.lead_auditor} onChange={e => setForm({ ...form, lead_auditor: e.target.value })} /></label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <label>Priorytet
-                <select className="form-control" value={form.priority} onChange={e => setForm({ ...form, priority: e.target.value })}>
-                  <option value="low">Niski</option>
-                  <option value="medium">Średni</option>
-                  <option value="high">Wysoki</option>
-                  <option value="critical">Krytyczny</option>
-                </select>
-              </label>
-              <label>Scope
-                <select className="form-control" value={form.scope_type} onChange={e => setForm({ ...form, scope_type: e.target.value })}>
-                  <option value="organization">Cała organizacja</option>
-                  <option value="org_unit">Jednostka org.</option>
-                  <option value="service">Usługa</option>
-                </select>
-              </label>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <label>Planowany start <input className="form-control" type="date" value={form.planned_start} onChange={e => setForm({ ...form, planned_start: e.target.value })} /></label>
-              <label>Planowany koniec <input className="form-control" type="date" value={form.planned_end} onChange={e => setForm({ ...form, planned_end: e.target.value })} /></label>
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-              <button className="btn" onClick={() => setShowModal(false)}>Anuluj</button>
-              <button className="btn btn-primary" onClick={handleCreate} disabled={!form.name.trim() || !form.framework_id || !form.objective.trim() || !form.lead_auditor.trim()}>Utwórz</button>
-            </div>
+            <label>Scope
+              <select className="form-control" value={form.scope_type} onChange={e => setForm({ ...form, scope_type: e.target.value })}>
+                <option value="organization">Cała organizacja</option>
+                <option value="org_unit">Jednostka org.</option>
+                <option value="service">Usługa</option>
+              </select>
+            </label>
           </div>
-        </Modal>
-      )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label>Planowany start <input className="form-control" type="date" value={form.planned_start} onChange={e => setForm({ ...form, planned_start: e.target.value })} /></label>
+            <label>Planowany koniec <input className="form-control" type="date" value={form.planned_end} onChange={e => setForm({ ...form, planned_end: e.target.value })} /></label>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <button className="btn" onClick={() => setShowModal(false)}>Anuluj</button>
+            <button className="btn btn-primary" onClick={handleCreate} disabled={!form.name.trim() || !form.framework_id || !form.objective.trim() || !form.lead_auditor.trim()}>Utwórz</button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

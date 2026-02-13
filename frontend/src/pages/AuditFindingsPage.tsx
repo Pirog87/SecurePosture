@@ -152,7 +152,8 @@ export default function AuditFindingsPage() {
     if (!f.target_date || ["resolved", "closed"].includes(f.status)) return false;
     return new Date(f.target_date) < new Date();
   }).length;
-  const resolved = src.filter(f => ["resolved", "closed"].includes(f.status)).length;
+  const _resolved = src.filter(f => ["resolved", "closed"].includes(f.status)).length;
+  void _resolved;
 
   const allOpen = findings.filter(f => ["open", "in_progress"].includes(f.status)).length;
   const allCritical = findings.filter(f => f.severity === "critical" || f.severity === "high").length;
@@ -160,7 +161,8 @@ export default function AuditFindingsPage() {
     if (!f.target_date || ["resolved", "closed"].includes(f.status)) return false;
     return new Date(f.target_date) < new Date();
   }).length;
-  const allResolved = findings.filter(f => ["resolved", "closed"].includes(f.status)).length;
+  const _allResolved = findings.filter(f => ["resolved", "closed"].includes(f.status)).length;
+  void _allResolved;
 
   const isFiltered = table.filteredCount !== table.totalCount;
 

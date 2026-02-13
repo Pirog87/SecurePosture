@@ -277,8 +277,7 @@ export default function TestTemplatesPage() {
       </div>
 
       {/* ── Create modal ── */}
-      {showModal && (
-        <Modal title="Nowy szablon testu" onClose={() => setShowModal(false)}>
+      <Modal open={showModal} title="Nowy szablon testu" onClose={() => setShowModal(false)}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label>Nazwa * <input className="form-control" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="np. Test kontroli dostępu" /></label>
             <label>Typ testu
@@ -301,7 +300,6 @@ export default function TestTemplatesPage() {
             </div>
           </div>
         </Modal>
-      )}
     </div>
   );
 }

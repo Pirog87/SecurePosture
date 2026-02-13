@@ -339,8 +339,7 @@ export default function AuditEngagementDetailPage() {
       )}
 
       {/* Test Modal */}
-      {showTestModal && (
-        <Modal title="Dodaj test audytowy" onClose={() => setShowTestModal(false)}>
+      <Modal open={showTestModal} title="Dodaj test audytowy" onClose={() => setShowTestModal(false)}>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <label>Nazwa * <input className="form-control" value={testForm.name} onChange={(e) => setTestForm({ ...testForm, name: e.target.value })} /></label>
             <label>Typ
@@ -357,32 +356,29 @@ export default function AuditEngagementDetailPage() {
             </div>
           </div>
         </Modal>
-      )}
 
       {/* Finding Modal */}
-      {showFindingModal && (
-        <Modal title="Nowe ustalenie audytowe (format IIA)" onClose={() => setShowFindingModal(false)}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <label>Tytuł * <input className="form-control" value={findingForm.title} onChange={(e) => setFindingForm({ ...findingForm, title: e.target.value })} /></label>
-            <label>Stan faktyczny (Condition) * <textarea className="form-control" value={findingForm.condition_text} onChange={(e) => setFindingForm({ ...findingForm, condition_text: e.target.value })} rows={3} placeholder="Co jest — co faktycznie stwierdzono" /></label>
-            <label>Kryterium (Criteria) * <textarea className="form-control" value={findingForm.criteria_text} onChange={(e) => setFindingForm({ ...findingForm, criteria_text: e.target.value })} rows={3} placeholder="Co powinno być — wymaganie" /></label>
-            <label>Severity
-              <select className="form-control" value={findingForm.severity} onChange={(e) => setFindingForm({ ...findingForm, severity: e.target.value })}>
-                <option value="informational">Informational</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="critical">Critical</option>
-              </select>
-            </label>
-            <label>Rekomendacja <textarea className="form-control" value={findingForm.recommendation} onChange={(e) => setFindingForm({ ...findingForm, recommendation: e.target.value })} rows={2} /></label>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button className="btn" onClick={() => setShowFindingModal(false)}>Anuluj</button>
-              <button className="btn btn-primary" onClick={createFinding} disabled={!findingForm.title.trim() || !findingForm.condition_text.trim() || !findingForm.criteria_text.trim()}>Utwórz</button>
-            </div>
+      <Modal open={showFindingModal} title="Nowe ustalenie audytowe (format IIA)" onClose={() => setShowFindingModal(false)}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label>Tytuł * <input className="form-control" value={findingForm.title} onChange={(e) => setFindingForm({ ...findingForm, title: e.target.value })} /></label>
+          <label>Stan faktyczny (Condition) * <textarea className="form-control" value={findingForm.condition_text} onChange={(e) => setFindingForm({ ...findingForm, condition_text: e.target.value })} rows={3} placeholder="Co jest — co faktycznie stwierdzono" /></label>
+          <label>Kryterium (Criteria) * <textarea className="form-control" value={findingForm.criteria_text} onChange={(e) => setFindingForm({ ...findingForm, criteria_text: e.target.value })} rows={3} placeholder="Co powinno być — wymaganie" /></label>
+          <label>Severity
+            <select className="form-control" value={findingForm.severity} onChange={(e) => setFindingForm({ ...findingForm, severity: e.target.value })}>
+              <option value="informational">Informational</option>
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="critical">Critical</option>
+            </select>
+          </label>
+          <label>Rekomendacja <textarea className="form-control" value={findingForm.recommendation} onChange={(e) => setFindingForm({ ...findingForm, recommendation: e.target.value })} rows={2} /></label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setShowFindingModal(false)}>Anuluj</button>
+            <button className="btn btn-primary" onClick={createFinding} disabled={!findingForm.title.trim() || !findingForm.condition_text.trim() || !findingForm.criteria_text.trim()}>Utwórz</button>
           </div>
-        </Modal>
-      )}
+        </div>
+      </Modal>
     </div>
   );
 }

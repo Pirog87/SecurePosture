@@ -61,17 +61,15 @@ const sections: { title: string; items: NavItem[] }[] = [
     ],
   },
   {
-    title: "Framework Engine",
+    title: "Compliance & Audit",
     items: [
-      { to: "/frameworks", icon: "📐", label: "Frameworki" },
-      { to: "/assessments", icon: "📝", label: "Oceny" },
-    ],
-  },
-  {
-    title: "CIS Benchmark",
-    items: [
-      { to: "/cis", icon: "📋", label: "Lista Ocen CIS" },
-      { to: "/cis/assess", icon: "✅", label: "Formularz CIS" },
+      { to: "/compliance", icon: "📊", label: "Dashboard Zgodności" },
+      { to: "/frameworks", icon: "📚", label: "Biblioteka Frameworków" },
+      { to: "/compliance/assessments", icon: "✅", label: "Oceny Zgodności" },
+      { to: "/framework-mappings", icon: "🔗", label: "Mapowanie Frameworków" },
+      { to: "/audit-programs", icon: "📋", label: "Program Audytów" },
+      { to: "/audit-engagements", icon: "🔍", label: "Zadania Audytowe" },
+      { to: "/test-templates", icon: "📖", label: "Katalog Testów" },
     ],
   },
   {

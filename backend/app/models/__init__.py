@@ -37,6 +37,23 @@ from .framework import (
     AssessmentAnswer,
 )
 from .control_effectiveness import ControlImplementation, ControlEffectivenessTest
+from .compliance import (
+    ComplianceAssessment,
+    RequirementAssessment,
+    Evidence,
+    RequirementAssessmentEvidence,
+    ComplianceAssessmentHistory,
+    AuditProgram,
+    AuditEngagement,
+    AuditEngagementAuditor,
+    AuditEngagementScope,
+    TestTemplate,
+    TestTemplateRequirement,
+    AuditTest,
+    ComplianceAuditFinding,
+    AuditReport,
+    FrameworkMapping,
+)
 from .smart_catalog import (
     ThreatCatalog,
     WeaknessCatalog,
@@ -82,4 +99,9 @@ __all__ = [
     "ThreatWeaknessLink", "ThreatControlLink", "WeaknessControlLink",
     "AIProviderConfig", "AIAuditLog",
     "ControlImplementation", "ControlEffectivenessTest",
+    "ComplianceAssessment", "RequirementAssessment",
+    "Evidence", "RequirementAssessmentEvidence", "ComplianceAssessmentHistory",
+    "AuditProgram", "AuditEngagement", "AuditEngagementAuditor", "AuditEngagementScope",
+    "TestTemplate", "TestTemplateRequirement", "AuditTest",
+    "ComplianceAuditFinding", "AuditReport", "FrameworkMapping",
 ]

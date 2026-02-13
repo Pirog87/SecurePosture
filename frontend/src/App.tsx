@@ -4,8 +4,6 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import DashboardPage from "./pages/DashboardPage";
 import RisksPage from "./pages/RisksPage";
 import ReviewsPage from "./pages/ReviewsPage";
-import CisListPage from "./pages/CisListPage";
-import CisAssessPage from "./pages/CisAssessPage";
 
 import DictionariesPage from "./pages/DictionariesPage";
 import AssetRegistryPage from "./pages/AssetRegistryPage";
@@ -32,6 +30,16 @@ import SmartCatalogPage from "./pages/SmartCatalogPage";
 import AIConfigPage from "./pages/AIConfigPage";
 import ControlEffectivenessPage from "./pages/ControlEffectivenessPage";
 
+// Compliance & Audit module
+import ComplianceDashboardPage from "./pages/ComplianceDashboardPage";
+import ComplianceAssessmentsPage from "./pages/ComplianceAssessmentsPage";
+import ComplianceAssessmentFormPage from "./pages/ComplianceAssessmentFormPage";
+import AuditProgramsPage from "./pages/AuditProgramsPage";
+import AuditEngagementsPage from "./pages/AuditEngagementsPage";
+import AuditEngagementDetailPage from "./pages/AuditEngagementDetailPage";
+import FrameworkMappingsPage from "./pages/FrameworkMappingsPage";
+import TestTemplatesPage from "./pages/TestTemplatesPage";
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -47,11 +55,30 @@ export default function App() {
           <Route path="assets/admin" element={<CmdbAdminPage />} />
           <Route path="risks" element={<RisksPage />} />
           <Route path="reviews" element={<ReviewsPage />} />
+
+          {/* Framework Library (kept at /frameworks for backward compat) */}
           <Route path="frameworks" element={<FrameworksPage />} />
           <Route path="frameworks/:fwId" element={<FrameworkDetailPage />} />
+
+          {/* Legacy dimension-based assessments (existing Framework Engine) */}
           <Route path="assessments" element={<AssessmentsPage />} />
           <Route path="assessments/new" element={<AssessmentsPage />} />
           <Route path="assessments/:assessmentId" element={<AssessmentFormPage />} />
+
+          {/* Compliance & Audit module — new */}
+          <Route path="compliance" element={<ComplianceDashboardPage />} />
+          <Route path="compliance/assessments" element={<ComplianceAssessmentsPage />} />
+          <Route path="compliance/assessments/:assessmentId" element={<ComplianceAssessmentFormPage />} />
+          <Route path="framework-mappings" element={<FrameworkMappingsPage />} />
+          <Route path="audit-programs" element={<AuditProgramsPage />} />
+          <Route path="audit-engagements" element={<AuditEngagementsPage />} />
+          <Route path="audit-engagements/:engId" element={<AuditEngagementDetailPage />} />
+          <Route path="test-templates" element={<TestTemplatesPage />} />
+
+          {/* Legacy CIS routes — redirect to framework library */}
+          <Route path="cis" element={<Navigate to="/frameworks" replace />} />
+          <Route path="cis/assess" element={<Navigate to="/compliance/assessments" replace />} />
+
           <Route path="vulnerabilities" element={<VulnerabilitiesPage />} />
           <Route path="incidents" element={<IncidentsPage />} />
           <Route path="policies" element={<PoliciesPage />} />
@@ -59,8 +86,6 @@ export default function App() {
           <Route path="audits" element={<AuditsPage />} />
           <Route path="vendors" element={<VendorsPage />} />
           <Route path="awareness" element={<AwarenessPage />} />
-          <Route path="cis" element={<CisListPage />} />
-          <Route path="cis/assess" element={<CisAssessPage />} />
           <Route path="org-context" element={<OrgContextPage />} />
           <Route path="org-structure" element={<Navigate to="/org-context" replace />} />
           <Route path="smart-catalog" element={<SmartCatalogPage />} />

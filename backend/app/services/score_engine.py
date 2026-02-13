@@ -140,8 +140,8 @@ async def calc_incident_score(s: AsyncSession, cfg: SecurityScoreConfig) -> floa
     for inc in incidents:
         sev = await _de_label(s, inc.severity_id) or "medium"
         sev_counts[sev] = sev_counts.get(sev, 0) + 1
-        if inc.time_to_resolution:
-            sev_ttrs.setdefault(sev, []).append(float(inc.time_to_resolution))
+        if inc.ttr_minutes:
+            sev_ttrs.setdefault(sev, []).append(float(inc.ttr_minutes) / 60)
         lessons_total += 1
         if inc.lessons_learned:
             lessons_with += 1
@@ -205,12 +205,22 @@ async def calc_exception_score(s: AsyncSession, cfg: SecurityScoreConfig) -> flo
 # ═══════════════════ PILLAR 5: CONTROL MATURITY ═══════════════════
 
 async def calc_maturity_score(s: AsyncSession, cfg: SecurityScoreConfig) -> float:
+    # Use approved assessment preferentially, fallback to latest any-status
     q = (select(Assessment)
-         .where(Assessment.is_active.is_(True))
+         .where(Assessment.is_active.is_(True), Assessment.status == "approved")
          .order_by(Assessment.created_at.desc()))
     assessment = (await s.execute(q)).scalars().first()
     if not assessment:
+        q = (select(Assessment)
+             .where(Assessment.is_active.is_(True))
+             .order_by(Assessment.created_at.desc()))
+        assessment = (await s.execute(q)).scalars().first()
+    if not assessment:
         return 0.0
+
+    # If assessment already has overall_score computed, use it directly
+    if assessment.overall_score is not None:
+        return _clamp(float(assessment.overall_score))
 
     answers_q = select(AssessmentAnswer).where(AssessmentAnswer.assessment_id == assessment.id)
     answers = (await s.execute(answers_q)).scalars().all()
@@ -219,6 +229,8 @@ async def calc_maturity_score(s: AsyncSession, cfg: SecurityScoreConfig) -> floa
 
     scores = []
     for a in answers:
+        if a.not_applicable:
+            continue
         if a.level_id:
             level = await s.get(DimensionLevel, a.level_id)
             if level and level.value is not None:
@@ -228,8 +240,8 @@ async def calc_maturity_score(s: AsyncSession, cfg: SecurityScoreConfig) -> floa
         return 0.0
 
     avg = sum(scores) / len(scores)
-    # Normalize: assume max level value is around 5
-    return _clamp(avg / 5 * 100)
+    # Dimension levels are 0.00–1.00; multiply by 100 for percentage
+    return _clamp(avg * 100)
 
 
 # ═══════════════════ PILLAR 6: AUDIT ═══════════════════

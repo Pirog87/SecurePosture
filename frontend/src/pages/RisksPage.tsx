@@ -661,10 +661,10 @@ function PlannedSafeguardPicker({ lookups, setLookups, assetId, plannedSafeguard
   const [adding, setAdding] = useState(false);
 
   const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
-  const assetTypeId = selectedAsset?.asset_type_id ?? null;
+  const assetCategoryId = selectedAsset?.category_id ?? null;
 
-  const available = assetTypeId
-    ? lookups.safeguards.filter(s => s.asset_type_id === assetTypeId || s.asset_type_id === null)
+  const available = assetCategoryId
+    ? lookups.safeguards.filter(s => s.asset_category_ids?.includes(assetCategoryId) || s.asset_category_ids?.length === 0)
     : lookups.safeguards;
 
   const filtered = search.length >= 1
@@ -1128,20 +1128,19 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
   consequenceDescription: string;
   setConsequenceDescription: (v: string) => void;
 }) {
-  // Determine asset_type_id from selected asset
+  // Determine asset_category_id from selected asset (for Smart Catalog filtering)
   const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
-  const assetTypeId = selectedAsset?.asset_type_id ?? null;
-  const assetTypeName = selectedAsset?.asset_type_name ?? null;
+  const assetCategoryId = selectedAsset?.category_id ?? null;
 
-  // Filter catalogs by asset type (show matching + untyped)
-  const filteredThreats = assetTypeId
-    ? lookups.threats.filter(t => t.asset_type_id === assetTypeId || t.asset_type_id === null)
+  // Filter catalogs by asset category (show matching + uncategorized)
+  const filteredThreats = assetCategoryId
+    ? lookups.threats.filter(t => t.asset_category_ids?.includes(assetCategoryId) || t.asset_category_ids?.length === 0)
     : lookups.threats;
-  const filteredVulns = assetTypeId
-    ? lookups.vulns.filter(v => v.asset_type_id === assetTypeId || v.asset_type_id === null)
+  const filteredVulns = assetCategoryId
+    ? lookups.vulns.filter(v => v.asset_category_ids?.includes(assetCategoryId) || v.asset_category_ids?.length === 0)
     : lookups.vulns;
-  const filteredSafeguards = assetTypeId
-    ? lookups.safeguards.filter(s => s.asset_type_id === assetTypeId || s.asset_type_id === null)
+  const filteredSafeguards = assetCategoryId
+    ? lookups.safeguards.filter(s => s.asset_category_ids?.includes(assetCategoryId) || s.asset_category_ids?.length === 0)
     : lookups.safeguards;
 
   return (
@@ -1157,12 +1156,12 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
           <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>Scenariusz ryzyka</div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Zdefiniuj zagrozenia, podatnosci i zabezpieczenia</div>
         </div>
-        {assetTypeName && (
+        {selectedAsset?.category_name && (
           <div style={{
             marginLeft: "auto", fontSize: 11, color: "var(--blue)", padding: "3px 10px",
             background: "rgba(59,130,246,0.08)", borderRadius: 12, fontWeight: 500,
           }}>
-            Typ: <strong>{assetTypeName}</strong>
+            Kategoria: <strong>{selectedAsset.category_name}</strong>
           </div>
         )}
       </div>
@@ -1355,17 +1354,19 @@ function SmartCatalogSuggestionsPanel({
   // Load suggestions for a selected Smart Catalog threat
   const loadSuggestions = async (threatId: number) => {
     setSugLoading(true);
-    try {
-      const [ws, cs] = await Promise.all([
-        api.get<SuggestionItem[]>(`/api/v1/suggestions/weaknesses?threat_id=${threatId}`),
-        api.get<SuggestionItem[]>(`/api/v1/suggestions/controls?threat_id=${threatId}`),
-      ]);
-      setSugWeaknesses(ws);
-      setSugControls(cs);
-    } catch {
-      setSugWeaknesses([]);
-      setSugControls([]);
-    } finally { setSugLoading(false); }
+    const [ws, cs] = await Promise.all([
+      api.get<SuggestionItem[]>(`/api/v1/suggestions/weaknesses?threat_id=${threatId}`).catch((e) => {
+        console.warn("Suggestions/weaknesses error:", e);
+        return [] as SuggestionItem[];
+      }),
+      api.get<SuggestionItem[]>(`/api/v1/suggestions/controls?threat_id=${threatId}`).catch((e) => {
+        console.warn("Suggestions/controls error:", e);
+        return [] as SuggestionItem[];
+      }),
+    ]);
+    setSugWeaknesses(ws);
+    setSugControls(cs);
+    setSugLoading(false);
   };
 
   // Apply a Smart Catalog threat: find/create in simple catalog and add to selection

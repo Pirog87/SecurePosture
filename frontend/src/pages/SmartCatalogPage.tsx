@@ -564,12 +564,14 @@ export default function SmartCatalogPage() {
                       <td><CIABadge cia={t.cia_impact} /></td>
                       <td>{t.is_system ? "SYS" : ""}</td>
                       <td>
-                        {!t.is_system && (
-                          <div style={{ display: "flex", gap: 4 }}>
-                            <button className="btn btn-ghost btn-xs" onClick={e => { e.stopPropagation(); setEditItem(t); setShowForm(true); }}>Edytuj</button>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button className="btn btn-ghost btn-xs" onClick={e => { e.stopPropagation(); setEditItem(t); setShowForm(true); }}>
+                            {t.is_system ? "Podglad" : "Edytuj"}
+                          </button>
+                          {!t.is_system && (
                             <button className="btn btn-ghost btn-xs" style={{ color: "#dc2626" }} onClick={e => { e.stopPropagation(); handleArchive("threat", t.id); }}>Arch.</button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -645,12 +647,14 @@ export default function SmartCatalogPage() {
                   <td style={{ fontSize: 12, color: "var(--text-muted)", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.description}</td>
                   <td>{w.is_system ? "SYS" : ""}</td>
                   <td>
-                    {!w.is_system && (
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <button className="btn btn-ghost btn-xs" onClick={() => { setEditItem(w); setShowForm(true); }}>Edytuj</button>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button className="btn btn-ghost btn-xs" onClick={() => { setEditItem(w); setShowForm(true); }}>
+                        {w.is_system ? "Podglad" : "Edytuj"}
+                      </button>
+                      {!w.is_system && (
                         <button className="btn btn-ghost btn-xs" style={{ color: "#dc2626" }} onClick={() => handleArchive("weakness", w.id)}>Arch.</button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -687,12 +691,14 @@ export default function SmartCatalogPage() {
                   <td style={{ fontSize: 12, color: "var(--text-muted)", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.description}</td>
                   <td>{c.is_system ? "SYS" : ""}</td>
                   <td>
-                    {!c.is_system && (
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <button className="btn btn-ghost btn-xs" onClick={() => { setEditItem(c); setShowForm(true); }}>Edytuj</button>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button className="btn btn-ghost btn-xs" onClick={() => { setEditItem(c); setShowForm(true); }}>
+                        {c.is_system ? "Podglad" : "Edytuj"}
+                      </button>
+                      {!c.is_system && (
                         <button className="btn btn-ghost btn-xs" style={{ color: "#dc2626" }} onClick={() => handleArchive("control", c.id)}>Arch.</button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -897,20 +903,26 @@ function FormModal({
     onSave(data);
   };
 
+  const isReadOnly = editItem?.is_system === true;
   const categories = tab === "threats" ? THREAT_CATEGORIES : tab === "weaknesses" ? WEAKNESS_CATEGORIES : CONTROL_CATEGORIES;
-  const title = editItem ? "Edytuj wpis" : "Nowy wpis";
+  const title = isReadOnly ? "Podglad wpisu (systemowy)" : editItem ? "Edytuj wpis" : "Nowy wpis";
 
   return (
     <Modal open={open} onClose={onClose} title={title} wide>
+      {isReadOnly && (
+        <div style={{ background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 6, padding: "8px 12px", marginBottom: 16, fontSize: 12, color: "var(--blue)" }}>
+          Wpis systemowy — tylko podglad. Aby edytowac, utworz kopie jako wpis organizacyjny.
+        </div>
+      )}
       <form onSubmit={handleSubmit}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div>
             <label className="label">Ref ID</label>
-            <input className="input" value={refId} onChange={e => setRefId(e.target.value)} required placeholder="np. T-100" disabled={!!editItem} />
+            <input className="input" value={refId} onChange={e => setRefId(e.target.value)} required placeholder="np. T-100" disabled={!!editItem} readOnly={isReadOnly} />
           </div>
           <div>
             <label className="label">Kategoria</label>
-            <select className="input" value={category} onChange={e => setCategory(e.target.value)} required>
+            <select className="input" value={category} onChange={e => setCategory(e.target.value)} required disabled={isReadOnly}>
               <option value="">Wybierz...</option>
               {categories.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
@@ -919,12 +931,12 @@ function FormModal({
 
         <div style={{ marginTop: 12 }}>
           <label className="label">Nazwa</label>
-          <input className="input" value={name} onChange={e => setName(e.target.value)} required placeholder="Nazwa zagrozenia / slabosci / zabezpieczenia" />
+          <input className="input" value={name} onChange={e => setName(e.target.value)} required placeholder="Nazwa zagrozenia / slabosci / zabezpieczenia" readOnly={isReadOnly} />
         </div>
 
         <div style={{ marginTop: 12 }}>
           <label className="label">Opis</label>
-          <textarea className="input" value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="Opcjonalny opis..." />
+          <textarea className="input" value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder="Opcjonalny opis..." readOnly={isReadOnly} />
         </div>
 
         {tab === "threats" && (
@@ -987,10 +999,12 @@ function FormModal({
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
-          <button type="button" className="btn btn-ghost" onClick={onClose}>Anuluj</button>
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saving ? "Zapisywanie..." : editItem ? "Zapisz zmiany" : "Dodaj"}
-          </button>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>{isReadOnly ? "Zamknij" : "Anuluj"}</button>
+          {!isReadOnly && (
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? "Zapisywanie..." : editItem ? "Zapisz zmiany" : "Dodaj"}
+            </button>
+          )}
         </div>
       </form>
     </Modal>

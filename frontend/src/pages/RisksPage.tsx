@@ -1192,6 +1192,302 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
           <textarea className="form-control" rows={2} value={consequenceDescription} onChange={e => setConsequenceDescription(e.target.value)} placeholder="Opisz potencjalne konsekwencje materializacji ryzyka..." />
         </div>
       </div>
+
+      {/* ═══ Smart Catalog Suggestions Panel ═══ */}
+      <SmartCatalogSuggestionsPanel
+        assetId={assetId}
+        lookups={lookups}
+        setLookups={setLookups}
+        threatIds={threatIds}
+        setThreatIds={setThreatIds}
+        vulnerabilityIds={vulnerabilityIds}
+        setVulnerabilityIds={setVulnerabilityIds}
+        safeguardIds={safeguardIds}
+        setSafeguardIds={setSafeguardIds}
+      />
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   SmartCatalogSuggestionsPanel — picks from Smart Catalog + suggestions
+   ═══════════════════════════════════════════════════════════════════ */
+
+interface CatalogEntry {
+  id: number;
+  ref_id: string;
+  name: string;
+  description: string | null;
+  category: string;
+}
+
+interface SuggestionItem {
+  weakness_id?: number;
+  control_id?: number;
+  ref_id: string;
+  name: string;
+  relevance?: string;
+  effectiveness?: string;
+}
+
+function SmartCatalogSuggestionsPanel({
+  assetId, lookups, setLookups,
+  threatIds, setThreatIds,
+  vulnerabilityIds, setVulnerabilityIds,
+  safeguardIds, setSafeguardIds,
+}: {
+  assetId: number | null;
+  lookups: FormLookups;
+  setLookups: React.Dispatch<React.SetStateAction<FormLookups | null>>;
+  threatIds: number[];
+  setThreatIds: (ids: number[]) => void;
+  vulnerabilityIds: number[];
+  setVulnerabilityIds: (ids: number[]) => void;
+  safeguardIds: number[];
+  setSafeguardIds: (ids: number[]) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [catalogThreats, setCatalogThreats] = useState<CatalogEntry[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectedCatThreat, setSelectedCatThreat] = useState<CatalogEntry | null>(null);
+  const [sugWeaknesses, setSugWeaknesses] = useState<SuggestionItem[]>([]);
+  const [sugControls, setSugControls] = useState<SuggestionItem[]>([]);
+  const [sugLoading, setSugLoading] = useState(false);
+
+  // Determine asset_category_id from selected asset
+  const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
+  const assetCategoryId = selectedAsset?.asset_category_id ?? null;
+
+  // Load Smart Catalog threats
+  const loadCatalogThreats = async () => {
+    setCatalogLoading(true);
+    try {
+      const url = assetCategoryId
+        ? `/api/v1/threat-catalog?asset_category_id=${assetCategoryId}`
+        : "/api/v1/threat-catalog";
+      const data = await api.get<CatalogEntry[]>(url);
+      setCatalogThreats(data);
+    } catch { setCatalogThreats([]); }
+    finally { setCatalogLoading(false); }
+  };
+
+  // Load suggestions for a selected Smart Catalog threat
+  const loadSuggestions = async (threatId: number) => {
+    setSugLoading(true);
+    try {
+      const [ws, cs] = await Promise.all([
+        api.get<SuggestionItem[]>(`/api/v1/suggestions/weaknesses?threat_id=${threatId}`),
+        api.get<SuggestionItem[]>(`/api/v1/suggestions/controls?threat_id=${threatId}`),
+      ]);
+      setSugWeaknesses(ws);
+      setSugControls(cs);
+    } catch {
+      setSugWeaknesses([]);
+      setSugControls([]);
+    } finally { setSugLoading(false); }
+  };
+
+  // Apply a Smart Catalog threat: find/create in simple catalog and add to selection
+  const applyThreat = async (entry: CatalogEntry) => {
+    const existing = lookups.threats.find(t => t.name.toLowerCase() === entry.name.toLowerCase());
+    if (existing) {
+      if (!threatIds.includes(existing.id)) setThreatIds([...threatIds, existing.id]);
+      return;
+    }
+    try {
+      const created = await api.post<Threat>("/api/v1/threats", { name: entry.name });
+      setLookups(prev => prev ? { ...prev, threats: [...prev.threats, created] } : prev);
+      setThreatIds([...threatIds, created.id]);
+    } catch { /* ignore */ }
+  };
+
+  const applyWeakness = async (entry: SuggestionItem) => {
+    const existing = lookups.vulns.find(v => v.name.toLowerCase() === entry.name.toLowerCase());
+    if (existing) {
+      if (!vulnerabilityIds.includes(existing.id)) setVulnerabilityIds([...vulnerabilityIds, existing.id]);
+      return;
+    }
+    try {
+      const created = await api.post<Vulnerability>("/api/v1/vulnerabilities", { name: entry.name });
+      setLookups(prev => prev ? { ...prev, vulns: [...prev.vulns, created] } : prev);
+      setVulnerabilityIds([...vulnerabilityIds, created.id]);
+    } catch { /* ignore */ }
+  };
+
+  const applyControl = async (entry: SuggestionItem) => {
+    const existing = lookups.safeguards.find(s => s.name.toLowerCase() === entry.name.toLowerCase());
+    if (existing) {
+      if (!safeguardIds.includes(existing.id)) setSafeguardIds([...safeguardIds, existing.id]);
+      return;
+    }
+    try {
+      const created = await api.post<Safeguard>("/api/v1/safeguards", { name: entry.name });
+      setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
+      setSafeguardIds([...safeguardIds, created.id]);
+    } catch { /* ignore */ }
+  };
+
+  const applyAllSuggestions = async () => {
+    for (const w of sugWeaknesses) await applyWeakness(w);
+    for (const c of sugControls) await applyControl(c);
+  };
+
+  const filteredCatalog = search.length >= 2
+    ? catalogThreats.filter(t =>
+        t.ref_id.toLowerCase().includes(search.toLowerCase()) ||
+        t.name.toLowerCase().includes(search.toLowerCase())
+      ).slice(0, 10)
+    : catalogThreats.slice(0, 10);
+
+  const LEVEL_COLORS: Record<string, string> = { HIGH: "#dc2626", MEDIUM: "#f59e0b", LOW: "#16a34a" };
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div
+        style={{
+          display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+          padding: "10px 14px", borderRadius: 8,
+          background: expanded ? "rgba(139,92,246,0.06)" : "rgba(139,92,246,0.03)",
+          border: `1px solid ${expanded ? "rgba(139,92,246,0.3)" : "rgba(139,92,246,0.1)"}`,
+          transition: "all 0.2s",
+        }}
+        onClick={() => {
+          setExpanded(!expanded);
+          if (!expanded && catalogThreats.length === 0) loadCatalogThreats();
+        }}
+      >
+        <span style={{ fontSize: 16 }}>&#129504;</span>
+        <span style={{ fontWeight: 600, fontSize: 13, color: "#8b5cf6" }}>Smart Catalog — Sugestie zagrozen i zabezpieczen</span>
+        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-muted)" }}>
+          {expanded ? "Zwi\u0144" : "Rozwi\u0144"}
+        </span>
+      </div>
+
+      {expanded && (
+        <div style={{ border: "1px solid rgba(139,92,246,0.15)", borderTop: "none", borderRadius: "0 0 8px 8px", padding: 16 }}>
+          {catalogLoading ? (
+            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 16 }}>Ladowanie Smart Catalog...</div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              {/* Left: Threat picker */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#8b5cf6", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  Wybierz zagrozenie z katalogu
+                  {assetCategoryId && <span style={{ fontWeight: 400, textTransform: "none" }}> (filtr wg aktywa)</span>}
+                </div>
+                <input
+                  className="form-control"
+                  style={{ fontSize: 12, marginBottom: 8 }}
+                  placeholder="Szukaj w Smart Catalog (ref_id lub nazwa)..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                />
+                <div style={{ maxHeight: 240, overflow: "auto", border: "1px solid var(--border)", borderRadius: 6 }}>
+                  {filteredCatalog.map(t => (
+                    <div
+                      key={t.id}
+                      style={{
+                        padding: "7px 10px", fontSize: 12, cursor: "pointer",
+                        borderBottom: "1px solid var(--border)",
+                        background: selectedCatThreat?.id === t.id ? "rgba(139,92,246,0.1)" : "transparent",
+                      }}
+                      onClick={() => {
+                        setSelectedCatThreat(t);
+                        loadSuggestions(t.id);
+                      }}
+                    >
+                      <span style={{ fontFamily: "monospace", fontWeight: 600, color: "#8b5cf6", marginRight: 6 }}>{t.ref_id}</span>
+                      {t.name}
+                    </div>
+                  ))}
+                  {filteredCatalog.length === 0 && (
+                    <div style={{ padding: 12, textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}>Brak wynikow</div>
+                  )}
+                </div>
+                {selectedCatThreat && (
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ marginTop: 8, background: "#dc262620", color: "#dc2626", border: "1px solid #dc262640", fontSize: 11 }}
+                    onClick={() => applyThreat(selectedCatThreat)}
+                  >
+                    + Zastosuj zagrozenie: {selectedCatThreat.ref_id}
+                  </button>
+                )}
+              </div>
+
+              {/* Right: Suggestions */}
+              <div>
+                {!selectedCatThreat && (
+                  <div style={{ textAlign: "center", color: "var(--text-muted)", fontSize: 12, padding: 32 }}>
+                    Wybierz zagrozenie z katalogu aby zobaczyc sugestie slabosci i zabezpieczen
+                  </div>
+                )}
+
+                {selectedCatThreat && sugLoading && (
+                  <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 16 }}>Ladowanie sugestii...</div>
+                )}
+
+                {selectedCatThreat && !sugLoading && (
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#8b5cf6" }}>
+                        Sugestie dla: {selectedCatThreat.ref_id}
+                      </span>
+                      {(sugWeaknesses.length > 0 || sugControls.length > 0) && (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          style={{ fontSize: 10, background: "#16a34a20", color: "#16a34a", border: "1px solid #16a34a40" }}
+                          onClick={applyAllSuggestions}
+                        >
+                          Zastosuj wszystkie
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Weaknesses */}
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#f59e0b", marginBottom: 4, marginTop: 8 }}>
+                      Slabosci ({sugWeaknesses.length})
+                    </div>
+                    {sugWeaknesses.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Brak sugestii</div>}
+                    {sugWeaknesses.map(w => (
+                      <div key={w.weakness_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                        <span style={{ fontSize: 11 }}>
+                          <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{w.ref_id}</span> {w.name}
+                        </span>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 3, background: (LEVEL_COLORS[w.relevance ?? ""] ?? "#666") + "22", color: LEVEL_COLORS[w.relevance ?? ""] ?? "#666" }}>{w.relevance}</span>
+                          <button type="button" style={{ fontSize: 10, cursor: "pointer", color: "#16a34a", background: "none", border: "none", fontWeight: 600 }} onClick={() => applyWeakness(w)}>+Dodaj</button>
+                        </div>
+                      </div>
+                    ))}
+
+                    {/* Controls */}
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#16a34a", marginBottom: 4, marginTop: 12 }}>
+                      Zabezpieczenia ({sugControls.length})
+                    </div>
+                    {sugControls.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Brak sugestii</div>}
+                    {sugControls.map(c => (
+                      <div key={c.control_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                        <span style={{ fontSize: 11 }}>
+                          <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{c.ref_id}</span> {c.name}
+                        </span>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 3, background: (LEVEL_COLORS[c.effectiveness ?? ""] ?? "#666") + "22", color: LEVEL_COLORS[c.effectiveness ?? ""] ?? "#666" }}>{c.effectiveness}</span>
+                          <button type="button" style={{ fontSize: 10, cursor: "pointer", color: "#16a34a", background: "none", border: "none", fontWeight: 600 }} onClick={() => applyControl(c)}>+Dodaj</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -169,6 +169,21 @@ class WeaknessControlLinkCreate(BaseModel):
     description: str | None = None
 
 
+class ThreatWeaknessLinkUpdate(BaseModel):
+    relevance: str | None = Field(None, max_length=10)
+    description: str | None = None
+
+
+class ThreatControlLinkUpdate(BaseModel):
+    effectiveness: str | None = Field(None, max_length=10)
+    description: str | None = None
+
+
+class WeaknessControlLinkUpdate(BaseModel):
+    effectiveness: str | None = Field(None, max_length=10)
+    description: str | None = None
+
+
 # ═══════════════════════════════════════════════════════════════════
 # Suggestions
 # ═══════════════════════════════════════════════════════════════════

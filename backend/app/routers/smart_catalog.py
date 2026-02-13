@@ -48,12 +48,15 @@ from app.schemas.smart_catalog import (
     ThreatCatalogOut,
     ThreatCatalogUpdate,
     ThreatControlLinkCreate,
+    ThreatControlLinkUpdate,
     ThreatSuggestion,
     ThreatWeaknessLinkCreate,
+    ThreatWeaknessLinkUpdate,
     WeaknessCatalogCreate,
     WeaknessCatalogOut,
     WeaknessCatalogUpdate,
     WeaknessControlLinkCreate,
+    WeaknessControlLinkUpdate,
     WeaknessSuggestion,
 )
 from app.services.suggestion_engine import SuggestionEngine
@@ -500,6 +503,29 @@ async def create_threat_weakness_link(body: ThreatWeaknessLinkCreate, s: AsyncSe
     )
 
 
+@router.put("/api/v1/links/threat-weakness/{link_id}", response_model=LinkOut)
+async def update_threat_weakness_link(link_id: int, body: ThreatWeaknessLinkUpdate, s: AsyncSession = Depends(get_session)):
+    lnk = await s.get(ThreatWeaknessLink, link_id)
+    if not lnk:
+        raise HTTPException(404, "Link nie istnieje")
+    if lnk.is_system:
+        raise HTTPException(403, "Nie mozna edytowac systemowego powiazania")
+    if body.relevance is not None:
+        lnk.relevance = body.relevance
+    if body.description is not None:
+        lnk.description = body.description
+    await s.commit()
+    await s.refresh(lnk)
+    t = await s.get(ThreatCatalog, lnk.threat_id)
+    w = await s.get(WeaknessCatalog, lnk.weakness_id)
+    return LinkOut(
+        id=lnk.id, relevance=lnk.relevance, description=lnk.description,
+        is_system=lnk.is_system, created_at=lnk.created_at,
+        threat_id=lnk.threat_id, threat_ref_id=t.ref_id, threat_name=t.name,
+        weakness_id=lnk.weakness_id, weakness_ref_id=w.ref_id, weakness_name=w.name,
+    )
+
+
 @router.delete("/api/v1/links/threat-weakness/{link_id}")
 async def delete_threat_weakness_link(link_id: int, s: AsyncSession = Depends(get_session)):
     lnk = await s.get(ThreatWeaknessLink, link_id)
@@ -562,6 +588,29 @@ async def create_threat_control_link(body: ThreatControlLinkCreate, s: AsyncSess
     )
 
 
+@router.put("/api/v1/links/threat-control/{link_id}", response_model=LinkOut)
+async def update_threat_control_link(link_id: int, body: ThreatControlLinkUpdate, s: AsyncSession = Depends(get_session)):
+    lnk = await s.get(ThreatControlLink, link_id)
+    if not lnk:
+        raise HTTPException(404, "Link nie istnieje")
+    if lnk.is_system:
+        raise HTTPException(403, "Nie mozna edytowac systemowego powiazania")
+    if body.effectiveness is not None:
+        lnk.effectiveness = body.effectiveness
+    if body.description is not None:
+        lnk.description = body.description
+    await s.commit()
+    await s.refresh(lnk)
+    t = await s.get(ThreatCatalog, lnk.threat_id)
+    c = await s.get(ControlCatalog, lnk.control_id)
+    return LinkOut(
+        id=lnk.id, effectiveness=lnk.effectiveness, description=lnk.description,
+        is_system=lnk.is_system, created_at=lnk.created_at,
+        threat_id=lnk.threat_id, threat_ref_id=t.ref_id, threat_name=t.name,
+        control_id=lnk.control_id, control_ref_id=c.ref_id, control_name=c.name,
+    )
+
+
 @router.delete("/api/v1/links/threat-control/{link_id}")
 async def delete_threat_control_link(link_id: int, s: AsyncSession = Depends(get_session)):
     lnk = await s.get(ThreatControlLink, link_id)
@@ -612,6 +661,29 @@ async def create_weakness_control_link(body: WeaknessControlLinkCreate, s: Async
         effectiveness=body.effectiveness, description=body.description,
     )
     s.add(lnk)
+    await s.commit()
+    await s.refresh(lnk)
+    w = await s.get(WeaknessCatalog, lnk.weakness_id)
+    c = await s.get(ControlCatalog, lnk.control_id)
+    return LinkOut(
+        id=lnk.id, effectiveness=lnk.effectiveness, description=lnk.description,
+        is_system=lnk.is_system, created_at=lnk.created_at,
+        weakness_id=lnk.weakness_id, weakness_ref_id=w.ref_id, weakness_name=w.name,
+        control_id=lnk.control_id, control_ref_id=c.ref_id, control_name=c.name,
+    )
+
+
+@router.put("/api/v1/links/weakness-control/{link_id}", response_model=LinkOut)
+async def update_weakness_control_link(link_id: int, body: WeaknessControlLinkUpdate, s: AsyncSession = Depends(get_session)):
+    lnk = await s.get(WeaknessControlLink, link_id)
+    if not lnk:
+        raise HTTPException(404, "Link nie istnieje")
+    if lnk.is_system:
+        raise HTTPException(403, "Nie mozna edytowac systemowego powiazania")
+    if body.effectiveness is not None:
+        lnk.effectiveness = body.effectiveness
+    if body.description is not None:
+        lnk.description = body.description
     await s.commit()
     await s.refresh(lnk)
     w = await s.get(WeaknessCatalog, lnk.weakness_id)

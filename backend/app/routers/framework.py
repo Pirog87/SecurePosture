@@ -235,15 +235,53 @@ async def update_framework(
     return FrameworkOut.model_validate(fw)
 
 
-@router.delete("/{fw_id}", summary="Soft-delete framework")
+@router.delete("/{fw_id}", summary="Usun framework")
 async def delete_framework(fw_id: int, s: AsyncSession = Depends(get_session)):
+    """Delete a framework.
+
+    Published frameworks are soft-deleted (archived).
+    Non-published frameworks (draft, review, deprecated, archived) are hard-deleted.
+    """
+    from sqlalchemy import delete as sa_delete
+    from app.models.framework import Assessment
+
     fw = await s.get(Framework, fw_id)
     if not fw:
         raise HTTPException(404, "Framework nie istnieje")
-    fw.is_active = False
-    fw.lifecycle_status = "archived"
+
+    # Check for active assessments
+    assessment_count = (await s.execute(
+        select(func.count(Assessment.id)).where(
+            Assessment.framework_id == fw_id,
+            Assessment.is_active.is_(True),
+        )
+    )).scalar() or 0
+
+    if fw.lifecycle_status == "published":
+        # Published -> soft-delete (archive)
+        fw.is_active = False
+        fw.lifecycle_status = "archived"
+        await s.commit()
+        return {"status": "archived", "id": fw_id}
+
+    if assessment_count > 0:
+        raise HTTPException(
+            409,
+            f"Framework ma {assessment_count} aktywnych ocen. "
+            "Usun lub zarchiwizuj oceny przed usunieciem frameworka.",
+        )
+
+    # Non-published -> hard-delete (cascade will handle nodes, dimensions, versions)
+    await s.execute(
+        sa_delete(FrameworkNodeSecurityArea).where(
+            FrameworkNodeSecurityArea.framework_node_id.in_(
+                select(FrameworkNode.id).where(FrameworkNode.framework_id == fw_id)
+            )
+        )
+    )
+    await s.delete(fw)
     await s.commit()
-    return {"status": "archived", "id": fw_id}
+    return {"status": "deleted", "id": fw_id}
 
 
 # ===================================================

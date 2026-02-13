@@ -156,45 +156,98 @@ async def _create_dimensions_from_scores_definition(
 # EXCEL PARSER (CISO Assistant v2 format)
 # ===================================================
 
+async def _clear_framework_data(s: AsyncSession, fw: Framework) -> None:
+    """Clear all nodes, dimensions, and area mappings for a framework (for re-import)."""
+    from sqlalchemy import delete as sa_delete
+    from app.models.framework import FrameworkNodeSecurityArea
+
+    # Delete area mappings for this framework's nodes
+    await s.execute(
+        sa_delete(FrameworkNodeSecurityArea).where(
+            FrameworkNodeSecurityArea.framework_node_id.in_(
+                select(FrameworkNode.id).where(FrameworkNode.framework_id == fw.id)
+            )
+        )
+    )
+    # Delete nodes
+    await s.execute(
+        sa_delete(FrameworkNode).where(FrameworkNode.framework_id == fw.id)
+    )
+    # Delete dimensions + levels
+    dims = (await s.execute(
+        select(AssessmentDimension).where(AssessmentDimension.framework_id == fw.id)
+    )).scalars().all()
+    for dim in dims:
+        await s.execute(
+            sa_delete(DimensionLevel).where(DimensionLevel.dimension_id == dim.id)
+        )
+    await s.execute(
+        sa_delete(AssessmentDimension).where(AssessmentDimension.framework_id == fw.id)
+    )
+    await s.flush()
+
+
 async def import_from_excel(
     s: AsyncSession, file: BinaryIO, imported_by: str = "admin"
 ) -> Framework:
-    """Import framework from CISO Assistant Excel v2 format."""
+    """Import framework from CISO Assistant Excel v2 format.
+
+    If a framework with the same URN already exists, it is updated (re-imported).
+    """
     wb = load_workbook(file, read_only=True, data_only=True)
 
     # 1. Read library_content metadata tab
     meta = _read_excel_metadata(wb)
 
-    # 2. Check for duplicate URN
+    # 2. Check for existing URN — re-import if found
     fw_urn = _normalize_urn(meta.get("framework_urn"))
+    existing = None
     if fw_urn:
         existing = (await s.execute(
             select(Framework).where(Framework.urn == fw_urn)
         )).scalar_one_or_none()
-        if existing:
-            raise ValueError(f"Framework with URN '{fw_urn}' already exists (id={existing.id})")
 
-    # 3. Create Framework record
-    fw = Framework(
-        urn=fw_urn,
-        ref_id=meta.get("framework_ref_id") or meta.get("ref_id"),
-        name=meta.get("framework_name") or meta.get("library_name", "Unnamed Framework"),
-        description=meta.get("framework_description") or meta.get("library_description"),
-        version=meta.get("library_version"),
-        provider=meta.get("library_provider"),
-        packager=meta.get("library_packager"),
-        copyright=meta.get("library_copyright"),
-        source_format="ciso_assistant_excel",
-        locale=meta.get("library_locale", "en"),
-        implementation_groups_definition=meta.get("implementation_groups_definition"),
-        imported_at=datetime.utcnow(),
-        imported_by=imported_by,
-        lifecycle_status="published",
-        edit_version=1,
-        published_version=meta.get("library_version"),
-    )
-    s.add(fw)
-    await s.flush()
+    if existing:
+        # Re-import: clear old data, update metadata
+        fw = existing
+        await _clear_framework_data(s, fw)
+        fw.ref_id = meta.get("framework_ref_id") or meta.get("ref_id") or fw.ref_id
+        fw.name = meta.get("framework_name") or meta.get("library_name") or fw.name
+        fw.description = meta.get("framework_description") or meta.get("library_description") or fw.description
+        fw.version = meta.get("library_version") or fw.version
+        fw.provider = meta.get("library_provider") or fw.provider
+        fw.packager = meta.get("library_packager") or fw.packager
+        fw.copyright = meta.get("library_copyright") or fw.copyright
+        fw.implementation_groups_definition = meta.get("implementation_groups_definition") or fw.implementation_groups_definition
+        fw.imported_at = datetime.utcnow()
+        fw.imported_by = imported_by
+        fw.edit_version += 1
+        fw.last_edited_by = imported_by
+        fw.last_edited_at = datetime.utcnow()
+        fw.published_version = meta.get("library_version") or fw.published_version
+        log.info("Re-importing framework %s (id=%d)", fw.name, fw.id)
+    else:
+        # 3. Create Framework record
+        fw = Framework(
+            urn=fw_urn,
+            ref_id=meta.get("framework_ref_id") or meta.get("ref_id"),
+            name=meta.get("framework_name") or meta.get("library_name", "Unnamed Framework"),
+            description=meta.get("framework_description") or meta.get("library_description"),
+            version=meta.get("library_version"),
+            provider=meta.get("library_provider"),
+            packager=meta.get("library_packager"),
+            copyright=meta.get("library_copyright"),
+            source_format="ciso_assistant_excel",
+            locale=meta.get("library_locale", "en"),
+            implementation_groups_definition=meta.get("implementation_groups_definition"),
+            imported_at=datetime.utcnow(),
+            imported_by=imported_by,
+            lifecycle_status="published",
+            edit_version=1,
+            published_version=meta.get("library_version"),
+        )
+        s.add(fw)
+        await s.flush()
 
     # 4. Read nodes from framework tab
     tab_name = meta.get("framework_ref_id") or meta.get("ref_id")
@@ -212,12 +265,13 @@ async def import_from_excel(
     else:
         dims_count = await _create_default_dimensions(s, fw)
 
-    # 7. Create initial version record
+    # 7. Create version record
+    change_msg = f"Re-import z Excel: {fw.name}" if existing else f"Import z Excel: {fw.name}"
     s.add(FrameworkVersionHistory(
         framework_id=fw.id,
-        edit_version=1,
-        lifecycle_status="published",
-        change_summary=f"Import z Excel: {fw.name}",
+        edit_version=fw.edit_version,
+        lifecycle_status=fw.lifecycle_status,
+        change_summary=change_msg,
         changed_by=imported_by,
         snapshot_nodes_count=total,
         snapshot_assessable_count=assessable,
@@ -346,7 +400,10 @@ def _extract_framework_from_yaml(data: dict) -> tuple[dict, dict]:
 async def import_from_yaml(
     s: AsyncSession, file: BinaryIO, imported_by: str = "admin"
 ) -> Framework:
-    """Import framework from CISO Assistant YAML format."""
+    """Import framework from CISO Assistant YAML format.
+
+    If a framework with the same URN already exists, it is updated (re-imported).
+    """
     content = file.read()
     if isinstance(content, bytes):
         content = content.decode("utf-8")
@@ -357,40 +414,59 @@ async def import_from_yaml(
 
     fw_data, lib_meta = _extract_framework_from_yaml(data)
 
-    # Check for duplicate URN
+    # Check for existing URN — re-import if found
     fw_urn = _normalize_urn(fw_data.get("urn") or lib_meta.get("urn"))
+    existing = None
     if fw_urn:
         existing = (await s.execute(
             select(Framework).where(Framework.urn == fw_urn)
         )).scalar_one_or_none()
-        if existing:
-            raise ValueError(f"Framework with URN '{fw_urn}' already exists (id={existing.id})")
 
     # version can be int in YAML -- convert to str
     version_raw = fw_data.get("version") or lib_meta.get("version")
     version_str = str(version_raw) if version_raw is not None else None
 
-    # Create Framework record
-    fw = Framework(
-        urn=fw_urn,
-        ref_id=fw_data.get("ref_id") or lib_meta.get("ref_id"),
-        name=fw_data.get("name") or lib_meta.get("name", "Unnamed Framework"),
-        description=fw_data.get("description") or lib_meta.get("description"),
-        version=version_str,
-        provider=fw_data.get("provider") or lib_meta.get("provider"),
-        packager=fw_data.get("packager") or lib_meta.get("packager"),
-        copyright=fw_data.get("copyright") or lib_meta.get("copyright"),
-        source_format="ciso_assistant_yaml",
-        locale=fw_data.get("locale") or lib_meta.get("locale", "en"),
-        implementation_groups_definition=fw_data.get("implementation_groups_definition"),
-        imported_at=datetime.utcnow(),
-        imported_by=imported_by,
-        lifecycle_status="published",
-        edit_version=1,
-        published_version=version_str,
-    )
-    s.add(fw)
-    await s.flush()
+    if existing:
+        # Re-import: clear old data, update metadata
+        fw = existing
+        await _clear_framework_data(s, fw)
+        fw.ref_id = fw_data.get("ref_id") or lib_meta.get("ref_id") or fw.ref_id
+        fw.name = fw_data.get("name") or lib_meta.get("name") or fw.name
+        fw.description = fw_data.get("description") or lib_meta.get("description") or fw.description
+        fw.version = version_str or fw.version
+        fw.provider = fw_data.get("provider") or lib_meta.get("provider") or fw.provider
+        fw.packager = fw_data.get("packager") or lib_meta.get("packager") or fw.packager
+        fw.copyright = fw_data.get("copyright") or lib_meta.get("copyright") or fw.copyright
+        fw.implementation_groups_definition = fw_data.get("implementation_groups_definition") or fw.implementation_groups_definition
+        fw.imported_at = datetime.utcnow()
+        fw.imported_by = imported_by
+        fw.edit_version += 1
+        fw.last_edited_by = imported_by
+        fw.last_edited_at = datetime.utcnow()
+        fw.published_version = version_str or fw.published_version
+        log.info("Re-importing framework %s (id=%d)", fw.name, fw.id)
+    else:
+        # Create Framework record
+        fw = Framework(
+            urn=fw_urn,
+            ref_id=fw_data.get("ref_id") or lib_meta.get("ref_id"),
+            name=fw_data.get("name") or lib_meta.get("name", "Unnamed Framework"),
+            description=fw_data.get("description") or lib_meta.get("description"),
+            version=version_str,
+            provider=fw_data.get("provider") or lib_meta.get("provider"),
+            packager=fw_data.get("packager") or lib_meta.get("packager"),
+            copyright=fw_data.get("copyright") or lib_meta.get("copyright"),
+            source_format="ciso_assistant_yaml",
+            locale=fw_data.get("locale") or lib_meta.get("locale", "en"),
+            implementation_groups_definition=fw_data.get("implementation_groups_definition"),
+            imported_at=datetime.utcnow(),
+            imported_by=imported_by,
+            lifecycle_status="published",
+            edit_version=1,
+            published_version=version_str,
+        )
+        s.add(fw)
+        await s.flush()
 
     # Parse nodes -- CISO Assistant uses flat list with parent_urn + depth
     req_nodes = fw_data.get("requirement_nodes", [])
@@ -419,12 +495,13 @@ async def import_from_yaml(
         else:
             await _create_default_dimensions(s, fw)
 
-    # Create initial version record
+    # Create version record
+    change_msg = f"Re-import z YAML: {fw.name}" if existing else f"Import z YAML: {fw.name}"
     s.add(FrameworkVersionHistory(
         framework_id=fw.id,
-        edit_version=1,
-        lifecycle_status="published",
-        change_summary=f"Import z YAML: {fw.name}",
+        edit_version=fw.edit_version,
+        lifecycle_status=fw.lifecycle_status,
+        change_summary=change_msg,
         changed_by=imported_by,
         snapshot_nodes_count=total,
         snapshot_assessable_count=assessable,

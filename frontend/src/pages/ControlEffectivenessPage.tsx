@@ -145,6 +145,7 @@ const columns: ColumnDef<ImplRecord>[] = [
   { key: "coverage_percent", header: "Pokrycie %", defaultVisible: false },
   { key: "last_test_date", header: "Ostatni test" },
   { key: "next_test_date", header: "Następny test" },
+  { key: "actions", header: "Akcje" },
 ];
 
 /* ── main component ── */
@@ -475,21 +476,23 @@ export default function ControlEffectivenessPage() {
           if (key === "last_test_date") {
             return row.last_test_date || <span style={{ color: "var(--text-muted)" }}>—</span>;
           }
+          if (key === "actions") {
+            return (
+              <div style={{ display: "flex", gap: 4 }}>
+                <button className="btn btn-xs" title="Edytuj" onClick={(e) => { e.stopPropagation(); openEdit(row); }}>
+                  Edytuj
+                </button>
+                <button className="btn btn-xs btn-primary" title="Test" onClick={(e) => { e.stopPropagation(); openTest(row); }}>
+                  + Test
+                </button>
+                <button className="btn btn-xs btn-danger" title="Dezaktywuj" onClick={(e) => { e.stopPropagation(); deactivate(row.id); }}>
+                  X
+                </button>
+              </div>
+            );
+          }
           return undefined;
         }}
-        actions={(row) => (
-          <div style={{ display: "flex", gap: 4 }}>
-            <button className="btn btn-xs" title="Edytuj" onClick={(e) => { e.stopPropagation(); openEdit(row); }}>
-              Edytuj
-            </button>
-            <button className="btn btn-xs btn-primary" title="Test" onClick={(e) => { e.stopPropagation(); openTest(row); }}>
-              + Test
-            </button>
-            <button className="btn btn-xs btn-danger" title="Dezaktywuj" onClick={(e) => { e.stopPropagation(); deactivate(row.id); }}>
-              X
-            </button>
-          </div>
-        )}
       />
 
       {/* Pagination */}

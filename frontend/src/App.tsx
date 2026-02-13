@@ -29,6 +29,7 @@ import SecurityScorePage from "./pages/SecurityScorePage";
 import OrgContextPage from "./pages/OrgContextPage";
 import CmdbAdminPage from "./pages/CmdbAdminPage";
 import ReportsPage from "./pages/ReportsPage";
+import SmartCatalogPage from "./pages/SmartCatalogPage";
 
 export default function App() {
   return (
@@ -61,6 +62,7 @@ export default function App() {
           <Route path="cis/assess" element={<CisAssessPage />} />
           <Route path="org-context" element={<OrgContextPage />} />
           <Route path="org-structure" element={<Navigate to="/org-context" replace />} />
+          <Route path="smart-catalog" element={<SmartCatalogPage />} />
           <Route path="catalogs" element={<CatalogsPage />} />
           <Route path="dictionaries" element={<DictionariesPage />} />
           <Route path="actions" element={<ActionsPage />} />

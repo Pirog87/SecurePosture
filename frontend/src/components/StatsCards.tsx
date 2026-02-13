@@ -16,7 +16,7 @@ export interface StatCard {
 
 interface Props {
   cards: StatCard[];
-  isFiltered: boolean;
+  isFiltered?: boolean;
 }
 
 const mono: React.CSSProperties = {

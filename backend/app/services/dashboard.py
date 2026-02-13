@@ -21,6 +21,7 @@ from app.models.cis import (
     CisSubControl,
 )
 from app.models.dictionary import DictionaryEntry
+from app.models.framework import Assessment, Framework
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk, RiskReviewConfig
 from app.models.asset import Asset
@@ -28,6 +29,7 @@ from app.models.asset_category import AssetCategory
 from app.models.incident import Incident
 from app.models.vulnerability import VulnerabilityRecord
 from app.models.security_area import SecurityDomain as SecurityArea
+from app.services.score_engine import calculate_all_pillars
 from app.schemas.dashboard import (
     AttackCapability,
     CisComparisonUnit,
@@ -543,77 +545,77 @@ async def get_cis_trend(
 
 
 # ══════════════════════════════════════════════
-#  SECURITY POSTURE SCORE (composite)
+#  SECURITY POSTURE SCORE (10-pillar Security Score engine)
 # ══════════════════════════════════════════════
+
+_PILLAR_NAMES = {
+    "risk": "Ryzyka",
+    "vulnerability": "Podatności",
+    "incident": "Incydenty",
+    "exception": "Wyjątki od polityk",
+    "maturity": "Control Maturity",
+    "audit": "Audyty / Findings",
+    "asset": "Aktywa (CMDB)",
+    "tprm": "Dostawcy (TPRM)",
+    "policy": "Polityki",
+    "awareness": "Awareness",
+}
+
+_PILLAR_COLORS = {
+    "risk": "#ef4444",
+    "vulnerability": "#f97316",
+    "incident": "#dc2626",
+    "exception": "#eab308",
+    "maturity": "#8b5cf6",
+    "audit": "#a855f7",
+    "asset": "#6366f1",
+    "tprm": "#0ea5e9",
+    "policy": "#22c55e",
+    "awareness": "#14b8a6",
+}
+
+
+def _score_rating(score: float) -> str:
+    if score >= 80:
+        return "Dobry"
+    elif score >= 60:
+        return "Zadowalający"
+    elif score >= 40:
+        return "Wymaga poprawy"
+    return "Krytyczny"
+
 
 async def get_posture_score(
     s: AsyncSession, org_unit_id: int | None = None
 ) -> PostureScoreResponse:
     org_ref = await _get_org_ref(s, org_unit_id)
-    flt = _org_filter(Risk.org_unit_id, org_unit_id)
 
-    # Dimension 1: Risk posture (0–100, lower risk → higher score)
-    # Max theoretical risk_score ≈ 603, but we cap at 300 for normalization
-    avg_risk = _d((await s.execute(select(func.avg(Risk.risk_score)).where(flt))).scalar()) or 0.0
-    risk_dimension = max(0, 100 - (avg_risk / 3))  # 300 → 0, 0 → 100
+    # Use the 10-pillar Security Score engine
+    result = await calculate_all_pillars(s)
 
-    # Dimension 2: CIS maturity
-    assessment = await _latest_assessment(s, org_unit_id)
-    cis_dimension = _d(assessment.risk_addressed_pct) if assessment and assessment.risk_addressed_pct else 0.0
+    total = result["total_score"]
+    dims = []
+    for key in result["pillars"]:
+        score = result["pillars"][key]
+        weight = result["weights"][key] / 100  # fraction
+        dims.append(PostureDimension(
+            name=_PILLAR_NAMES.get(key, key),
+            score=round(score, 1),
+            weight=weight,
+            color=_PILLAR_COLORS.get(key),
+        ))
 
-    # Dimension 3: Review discipline (% of non-overdue risks)
-    total_risks = (await s.execute(select(func.count()).select_from(Risk).where(flt))).scalar() or 0
-    if total_risks > 0:
-        overdue_count = len(await _get_overdue_risks(s, org_unit_id))
-        review_dimension = ((total_risks - overdue_count) / total_risks) * 100
-    else:
-        review_dimension = 100.0
-
-    # Dimension 4: Safeguard coverage (avg safeguard_rating normalized to 0–100)
-    avg_safeguard = _d((await s.execute(
-        select(func.avg(Risk.safeguard_rating)).where(flt)
-    )).scalar())
-    safeguard_dimension = (avg_safeguard / 0.95 * 100) if avg_safeguard else 0.0
-
-    # Weighted composite
-    weights = {
-        "Zarządzanie ryzykiem": 0.30,
-        "Dojrzałość CIS": 0.35,
-        "Dyscyplina przeglądów": 0.15,
-        "Pokrycie zabezpieczeń": 0.20,
-    }
-    raw_scores = {
-        "Zarządzanie ryzykiem": risk_dimension,
-        "Dojrzałość CIS": cis_dimension,
-        "Dyscyplina przeglądów": review_dimension,
-        "Pokrycie zabezpieczeń": safeguard_dimension,
-    }
-    colors = {
-        "Zarządzanie ryzykiem": "#3b82f6",
-        "Dojrzałość CIS": "#8b5cf6",
-        "Dyscyplina przeglądów": "#22c55e",
-        "Pokrycie zabezpieczeń": "#f97316",
-    }
-    composite = sum(raw_scores[k] * weights[k] for k in weights)
-    composite = round(min(100, max(0, composite)), 1)
-
-    dims = [
-        PostureDimension(name=k, score=round(raw_scores[k], 1), weight=weights[k], color=colors[k])
-        for k in weights
-    ]
-
-    # Benchmark: average posture across all org units (only when viewing single unit)
-    benchmark = None
-    if org_unit_id is not None:
-        all_avg = _d((await s.execute(select(func.avg(Risk.risk_score)))).scalar()) or 0.0
-        benchmark = round(max(0, 100 - (all_avg / 3)), 1)
+    # Sort by weight descending for display
+    dims.sort(key=lambda d: d.weight, reverse=True)
 
     return PostureScoreResponse(
         org_unit=org_ref,
-        score=composite,
-        grade=_grade(composite),
+        score=total,
+        grade=_grade(total),
+        rating=_score_rating(total),
         dimensions=dims,
-        benchmark_avg=benchmark,
+        config_version=result["config_version"],
+        benchmark_avg=None,
     )
 
 
@@ -637,12 +639,47 @@ async def get_executive_summary(
 
     avg_score = _d((await s.execute(select(func.avg(Risk.risk_score)).where(flt))).scalar())
 
-    # CIS
-    assessment = await _latest_assessment(s, org_unit_id)
-    cis_maturity = _d(assessment.maturity_rating) if assessment else None
-    cis_pct = _d(assessment.risk_addressed_pct) if assessment else None
+    # Framework Engine maturity (replaces old CIS-only data)
+    fw_maturity_score: float | None = None
+    fw_maturity_name: str | None = None
+    fw_completion_pct: float | None = None
 
-    # Posture
+    # Try Framework Engine first — find latest approved (or any) assessment
+    fw_q = (
+        select(Assessment)
+        .where(Assessment.is_active.is_(True), Assessment.status == "approved")
+        .order_by(Assessment.created_at.desc())
+    )
+    fw_assessment = (await s.execute(fw_q)).scalars().first()
+    if not fw_assessment:
+        fw_q = (
+            select(Assessment)
+            .where(Assessment.is_active.is_(True))
+            .order_by(Assessment.created_at.desc())
+        )
+        fw_assessment = (await s.execute(fw_q)).scalars().first()
+
+    if fw_assessment:
+        fw_maturity_score = float(fw_assessment.overall_score) if fw_assessment.overall_score else None
+        fw_completion_pct = float(fw_assessment.completion_pct) if fw_assessment.completion_pct else None
+        # Get framework name
+        fw = await s.get(Framework, fw_assessment.framework_id)
+        fw_maturity_name = fw.name if fw else None
+
+    # Legacy CIS fallback — only used if Framework Engine has no data
+    cis_maturity: float | None = None
+    cis_pct: float | None = None
+    if fw_maturity_score is not None:
+        # Map framework score (0–100) to old CIS maturity scale (0–5) for backward compat
+        cis_maturity = round(fw_maturity_score / 20, 2)
+        cis_pct = fw_completion_pct
+    else:
+        # Fallback to old CIS tables
+        old_assessment = await _latest_assessment(s, org_unit_id)
+        cis_maturity = _d(old_assessment.maturity_rating) if old_assessment else None
+        cis_pct = _d(old_assessment.risk_addressed_pct) if old_assessment else None
+
+    # Posture (uses new 10-pillar Security Score engine)
     posture = await get_posture_score(s, org_unit_id)
 
     # Overdue
@@ -698,7 +735,11 @@ async def get_executive_summary(
         select(func.count()).select_from(Incident).where(Incident.is_active.is_(True))
     )).scalar() or 0
 
-    # KPIs
+    # KPIs — updated with Framework Engine maturity
+    maturity_label = fw_maturity_name or "Control Maturity"
+    maturity_val = round(fw_maturity_score, 1) if fw_maturity_score is not None else (cis_maturity or 0)
+    maturity_unit = "/100" if fw_maturity_score is not None else "/5.0"
+
     kpis = [
         ExecutiveKPI(label="Ryzyka ogółem", value=counts.total, color="#3b82f6"),
         ExecutiveKPI(label="Ryzyka krytyczne", value=counts.high, color="#ef4444"),
@@ -707,8 +748,8 @@ async def get_executive_summary(
         ExecutiveKPI(label="CMDB Coverage", value=cmdb_coverage_pct, unit="%", color="#8b5cf6"),
         ExecutiveKPI(label="Otwarte podatności", value=open_vulns, color="#ea580c" if open_vulns > 5 else "#22c55e"),
         ExecutiveKPI(label="Otwarte incydenty", value=open_incidents, color="#ef4444" if open_incidents > 0 else "#22c55e"),
-        ExecutiveKPI(label="CIS Maturity Rating", value=cis_maturity or 0, unit="/5.0", color="#8b5cf6"),
-        ExecutiveKPI(label="Security Posture", value=posture.score, unit="/100", color="#22c55e"),
+        ExecutiveKPI(label=maturity_label, value=maturity_val, unit=maturity_unit, color="#8b5cf6"),
+        ExecutiveKPI(label="Security Score", value=posture.score, unit="/100", color="#22c55e"),
         ExecutiveKPI(label="Przeterminowane przeglądy", value=len(overdue), color="#ef4444" if overdue else "#22c55e"),
     ]
 
@@ -717,6 +758,9 @@ async def get_executive_summary(
         kpis=kpis,
         risk_counts=counts,
         avg_risk_score=avg_score,
+        maturity_score=fw_maturity_score,
+        maturity_framework_name=fw_maturity_name,
+        maturity_completion_pct=fw_completion_pct,
         cis_maturity_rating=cis_maturity,
         cis_risk_addressed_pct=cis_pct,
         posture_score=posture.score,

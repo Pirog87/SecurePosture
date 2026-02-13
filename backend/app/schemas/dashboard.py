@@ -48,9 +48,14 @@ class ExecutiveSummary(BaseModel):
     kpis: list[ExecutiveKPI]
     risk_counts: RiskLevelCounts
     avg_risk_score: float | None = None
+    # Framework Engine maturity (replaces old CIS-only fields)
+    maturity_score: float | None = None         # Framework Engine overall_score (0–100)
+    maturity_framework_name: str | None = None  # e.g. "CIS Controls v8"
+    maturity_completion_pct: float | None = None
+    # Legacy aliases — populated from Framework Engine data for backward compat
     cis_maturity_rating: float | None = None
     cis_risk_addressed_pct: float | None = None
-    posture_score: float | None = None      # composite 0–100
+    posture_score: float | None = None      # composite 0–100 (from Security Score engine)
     posture_grade: str | None = None        # A / B / C / D / F
     overdue_reviews_count: int = 0
     top_risks: list["TopRiskItem"] = []
@@ -226,14 +231,13 @@ class PostureDimension(BaseModel):
 
 class PostureScoreResponse(BaseModel):
     """
-    Composite Security Posture Score blending:
-    - Risk posture (inverse of risk severity)
-    - CIS maturity
-    - Review discipline (% on-time reviews)
-    - Safeguard coverage (avg safeguard rating)
+    Composite Security Posture Score from the 10-pillar Security Score engine.
+    Replaces the old 4-dimension hardcoded posture scoring.
     """
     org_unit: OrgUnitRef | None = None
     score: float = Field(..., ge=0, le=100, description="Composite score 0–100")
     grade: str                      # A / B / C / D / F
+    rating: str | None = None       # "Dobry" / "Zadowalający" / "Wymaga poprawy" / "Krytyczny"
     dimensions: list[PostureDimension] = []
+    config_version: int | None = None
     benchmark_avg: float | None = None  # average across all org units for context

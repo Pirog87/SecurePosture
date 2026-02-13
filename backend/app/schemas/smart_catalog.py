@@ -271,3 +271,69 @@ class AITestResult(BaseModel):
     success: bool
     message: str
     response_time_ms: int | None = None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# AI Endpoints (available only when ai_enabled=true)
+# ═══════════════════════════════════════════════════════════════════
+
+class AIScenarioRequest(BaseModel):
+    asset_category_id: int
+    org_context: str | None = None
+
+
+class AIScenarioOut(BaseModel):
+    scenarios: list[dict] = []
+    ai_request_id: int | None = None
+
+
+class AIEnrichRequest(BaseModel):
+    scope: str = Field(default="all", pattern="^(threats|weaknesses|controls|all)$")
+
+
+class AIEnrichOut(BaseModel):
+    suggestions: list[dict] = []
+    ai_request_id: int | None = None
+
+
+class AISearchRequest(BaseModel):
+    query: str = Field(..., min_length=3, max_length=500)
+
+
+class AISearchOut(BaseModel):
+    asset_category_codes: list[str] = []
+    threat_categories: list[str] = []
+    keywords: list[str] = []
+    interpretation: str | None = None
+
+
+class AIGapRequest(BaseModel):
+    asset_category_id: int | None = None
+
+
+class AIGapOut(BaseModel):
+    critical_gaps: list[dict] = []
+    recommendations: list[dict] = []
+    coverage_pct: float | None = None
+    immediate_actions: list[dict] = []
+
+
+class AIAssistRequest(BaseModel):
+    entry_type: str = Field(..., pattern="^(threat|weakness|control)$")
+    name: str = Field(..., min_length=1, max_length=300)
+    description: str = Field(default="", max_length=2000)
+
+
+class AIAssistOut(BaseModel):
+    applicable_asset_categories: list[str] = []
+    category: str | None = None
+    cia_impact: dict | None = None
+    suggested_correlations: list[dict] = []
+
+
+class AIUsageStatsOut(BaseModel):
+    requests_count: int = 0
+    tokens_used: int = 0
+    cost_usd: float = 0.0
+    acceptance_rate: float | None = None
+    by_action: dict = {}

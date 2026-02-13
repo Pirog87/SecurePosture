@@ -11,6 +11,7 @@ const titles: Record<string, string> = {
   "/cis/assess": "CIS Benchmark — Formularz Oceny",
   "/org-structure": "Struktura Organizacyjna",
   "/catalogs": "Katalogi",
+  "/smart-catalog": "Katalog Zagrozen, Podatnosci i Zabezpieczen",
   "/dictionaries": "Slowniki",
   "/actions": "Dzialania",
   "/audit": "Audit Trail",

@@ -1129,20 +1129,27 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
   consequenceDescription: string;
   setConsequenceDescription: (v: string) => void;
 }) {
-  // Determine asset_category_id from selected asset (for Smart Catalog filtering)
+  // Determine asset_category_id from selected asset (for Katalog Zagrozen filtering)
   const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
   const assetCategoryId = selectedAsset?.category_id ?? null;
 
-  // Filter catalogs by asset category (show matching + uncategorized)
-  const filteredThreats = assetCategoryId
+  // "Show all" toggle — by default filtered by asset category
+  const [showAllThreats, setShowAllThreats] = useState(false);
+  const [showAllVulns, setShowAllVulns] = useState(false);
+  const [showAllSafeguards, setShowAllSafeguards] = useState(false);
+
+  // Filter catalogs by asset category (show matching + uncategorized) unless "show all" is checked
+  const filteredThreats = (assetCategoryId && !showAllThreats)
     ? lookups.threats.filter(t => t.asset_category_ids?.includes(assetCategoryId) || t.asset_category_ids?.length === 0)
     : lookups.threats;
-  const filteredVulns = assetCategoryId
+  const filteredVulns = (assetCategoryId && !showAllVulns)
     ? lookups.vulns.filter(v => v.asset_category_ids?.includes(assetCategoryId) || v.asset_category_ids?.length === 0)
     : lookups.vulns;
-  const filteredSafeguards = assetCategoryId
+  const filteredSafeguards = (assetCategoryId && !showAllSafeguards)
     ? lookups.safeguards.filter(s => s.asset_category_ids?.includes(assetCategoryId) || s.asset_category_ids?.length === 0)
     : lookups.safeguards;
+
+  const hasFilter = !!assetCategoryId;
 
   return (
     <div>
@@ -1163,6 +1170,9 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
             background: "rgba(59,130,246,0.08)", borderRadius: 12, fontWeight: 500,
           }}>
             Kategoria: <strong>{selectedAsset.category_name}</strong>
+            <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>
+              (filtr aktywny — sugestie dopasowane do kategorii)
+            </span>
           </div>
         )}
       </div>
@@ -1188,53 +1198,77 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
 
       {/* ── Threats / Vulnerabilities / Safeguards — 3 column cards ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
-        <TagMultiSelect<Threat>
-          label="Zagrozenia"
-          icon={"\u26A0\uFE0F"}
-          compact
-          items={filteredThreats}
-          allItems={lookups.threats}
-          selectedIds={threatIds}
-          onChange={setThreatIds}
-          color="var(--red)"
-          onAdd={async (name) => {
-            const created = await api.post<Threat>("/api/v1/threat-catalog", { name });
-            setLookups(prev => prev ? { ...prev, threats: [...prev.threats, created] } : prev);
-            return created;
-          }}
-        />
+        <div>
+          <TagMultiSelect<Threat>
+            label="Zagrozenia"
+            icon={"\u26A0\uFE0F"}
+            compact
+            items={filteredThreats}
+            allItems={lookups.threats}
+            selectedIds={threatIds}
+            onChange={setThreatIds}
+            color="var(--red)"
+            onAdd={async (name) => {
+              const created = await api.post<Threat>("/api/v1/threat-catalog", { name });
+              setLookups(prev => prev ? { ...prev, threats: [...prev.threats, created] } : prev);
+              return created;
+            }}
+          />
+          {hasFilter && (
+            <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 10, color: "var(--text-muted)", marginTop: 4, cursor: "pointer" }}>
+              <input type="checkbox" checked={showAllThreats} onChange={e => setShowAllThreats(e.target.checked)} />
+              Pokaz wszystkie ({lookups.threats.length}) zamiast filtrowanych ({filteredThreats.length})
+            </label>
+          )}
+        </div>
 
-        <TagMultiSelect<Vulnerability>
-          label="Podatnosci"
-          icon={"\uD83D\uDD13"}
-          compact
-          items={filteredVulns}
-          allItems={lookups.vulns}
-          selectedIds={vulnerabilityIds}
-          onChange={setVulnerabilityIds}
-          color="var(--orange)"
-          onAdd={async (name) => {
-            const created = await api.post<Vulnerability>("/api/v1/weakness-catalog", { name });
-            setLookups(prev => prev ? { ...prev, vulns: [...prev.vulns, created] } : prev);
-            return created;
-          }}
-        />
+        <div>
+          <TagMultiSelect<Vulnerability>
+            label="Podatnosci"
+            icon={"\uD83D\uDD13"}
+            compact
+            items={filteredVulns}
+            allItems={lookups.vulns}
+            selectedIds={vulnerabilityIds}
+            onChange={setVulnerabilityIds}
+            color="var(--orange)"
+            onAdd={async (name) => {
+              const created = await api.post<Vulnerability>("/api/v1/weakness-catalog", { name });
+              setLookups(prev => prev ? { ...prev, vulns: [...prev.vulns, created] } : prev);
+              return created;
+            }}
+          />
+          {hasFilter && (
+            <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 10, color: "var(--text-muted)", marginTop: 4, cursor: "pointer" }}>
+              <input type="checkbox" checked={showAllVulns} onChange={e => setShowAllVulns(e.target.checked)} />
+              Pokaz wszystkie ({lookups.vulns.length}) zamiast filtrowanych ({filteredVulns.length})
+            </label>
+          )}
+        </div>
 
-        <TagMultiSelect<Safeguard>
-          label="Zabezpieczenia"
-          icon={"\uD83D\uDEE1\uFE0F"}
-          compact
-          items={filteredSafeguards}
-          allItems={lookups.safeguards}
-          selectedIds={safeguardIds}
-          onChange={setSafeguardIds}
-          color="var(--green)"
-          onAdd={async (name) => {
-            const created = await api.post<Safeguard>("/api/v1/control-catalog", { name });
-            setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
-            return created;
-          }}
-        />
+        <div>
+          <TagMultiSelect<Safeguard>
+            label="Zabezpieczenia"
+            icon={"\uD83D\uDEE1\uFE0F"}
+            compact
+            items={filteredSafeguards}
+            allItems={lookups.safeguards}
+            selectedIds={safeguardIds}
+            onChange={setSafeguardIds}
+            color="var(--green)"
+            onAdd={async (name) => {
+              const created = await api.post<Safeguard>("/api/v1/control-catalog", { name });
+              setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
+              return created;
+            }}
+          />
+          {hasFilter && (
+            <label style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 10, color: "var(--text-muted)", marginTop: 4, cursor: "pointer" }}>
+              <input type="checkbox" checked={showAllSafeguards} onChange={e => setShowAllSafeguards(e.target.checked)} />
+              Pokaz wszystkie ({lookups.safeguards.length}) zamiast filtrowanych ({filteredSafeguards.length})
+            </label>
+          )}
+        </div>
       </div>
 
       {/* ── Text fields — 2 column ── */}
@@ -1275,7 +1309,7 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
         </div>
       </div>
 
-      {/* ═══ Smart Catalog Suggestions Panel ═══ */}
+      {/* ═══ Katalog Zagrozen Suggestions Panel ═══ */}
       <SmartCatalogSuggestionsPanel
         assetId={assetId}
         lookups={lookups}
@@ -1293,7 +1327,7 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
 
 
 /* ═══════════════════════════════════════════════════════════════════
-   SmartCatalogSuggestionsPanel — picks from Smart Catalog + suggestions
+   SmartCatalogSuggestionsPanel — picks from Katalog Zagrozen + suggestions
    ═══════════════════════════════════════════════════════════════════ */
 
 interface CatalogEntry {
@@ -1342,7 +1376,7 @@ function SmartCatalogSuggestionsPanel({
   const selectedAsset = assetId ? lookups.assets.find(a => a.id === assetId) : null;
   const assetCategoryId = selectedAsset?.asset_category_id ?? null;
 
-  // Load Smart Catalog threats
+  // Load Katalog Zagrozen threats
   const loadCatalogThreats = async () => {
     setCatalogLoading(true);
     try {
@@ -1355,7 +1389,7 @@ function SmartCatalogSuggestionsPanel({
     finally { setCatalogLoading(false); }
   };
 
-  // Load suggestions for a selected Smart Catalog threat
+  // Load suggestions for a selected Katalog Zagrozen threat
   const loadSuggestions = async (threatId: number) => {
     setSugLoading(true);
     const [ws, cs] = await Promise.all([
@@ -1373,7 +1407,7 @@ function SmartCatalogSuggestionsPanel({
     setSugLoading(false);
   };
 
-  // Apply a Smart Catalog threat: find/create in simple catalog and add to selection
+  // Apply a Katalog Zagrozen threat: find/create in simple catalog and add to selection
   const applyThreat = async (entry: CatalogEntry) => {
     const existing = lookups.threats.find(t => t.name.toLowerCase() === entry.name.toLowerCase());
     if (existing) {
@@ -1458,7 +1492,7 @@ function SmartCatalogSuggestionsPanel({
           display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13,
         }}>{"\uD83E\uDDE0"}</div>
         <div>
-          <div style={{ fontWeight: 600, fontSize: 12, color: "#8b5cf6" }}>Smart Catalog</div>
+          <div style={{ fontWeight: 600, fontSize: 12, color: "#8b5cf6" }}>Katalog Zagrozen</div>
           <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Sugestie zagrozen i zabezpieczen z katalogu ISO</div>
         </div>
         <span style={{
@@ -1472,7 +1506,7 @@ function SmartCatalogSuggestionsPanel({
       {expanded && (
         <div style={{ border: "1px solid rgba(139,92,246,0.2)", borderTop: "none", borderRadius: "0 0 8px 8px", padding: 16 }}>
           {catalogLoading ? (
-            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 16 }}>Ladowanie Smart Catalog...</div>
+            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 16 }}>Ladowanie Katalog Zagrozen...</div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               {/* Left: Threat picker */}
@@ -1484,7 +1518,7 @@ function SmartCatalogSuggestionsPanel({
                 <input
                   className="form-control"
                   style={{ fontSize: 12, marginBottom: 8 }}
-                  placeholder="Szukaj w Smart Catalog (ref_id lub nazwa)..."
+                  placeholder="Szukaj w Katalog Zagrozen (ref_id lub nazwa)..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />

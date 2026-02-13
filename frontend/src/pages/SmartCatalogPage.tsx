@@ -109,8 +109,8 @@ const BASE_TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "threats", label: "Zagrozenia", icon: "⚡" },
   { key: "weaknesses", label: "Podatnosci", icon: "🔓" },
   { key: "controls", label: "Zabezpieczenia", icon: "🛡" },
-  { key: "correlations", label: "Korelacje", icon: "🔗" },
-  { key: "coverage", label: "Pokrycie", icon: "📊" },
+  { key: "correlations", label: "Mapa Powiazan", icon: "🔗" },
+  { key: "coverage", label: "Analiza Luk i Skutecznosci", icon: "📊" },
 ];
 
 const AI_TAB = { key: "ai" as TabKey, label: "AI Asystent", icon: "🤖" };
@@ -299,6 +299,18 @@ export default function SmartCatalogPage() {
   /* Coverage */
   const [coverageData, setCoverageData] = useState<Record<number, CoverageResult>>({});
   const [coverageLoading, setCoverageLoading] = useState(false);
+  const [coverageExpanded, setCoverageExpanded] = useState<Record<number, boolean>>({});
+
+  /* All links (for tri-panel, detail panels, inline linking) */
+  const [allTWLinks, setAllTWLinks] = useState<LinkRecord[]>([]);
+  const [allTCLinks, setAllTCLinks] = useState<LinkRecord[]>([]);
+  const [allWCLinks, setAllWCLinks] = useState<LinkRecord[]>([]);
+  const [allLinksLoaded, setAllLinksLoaded] = useState(false);
+  const [triSearch, setTriSearch] = useState<{ threats: string; weaknesses: string; controls: string }>({ threats: "", weaknesses: "", controls: "" });
+  const [triSelected, setTriSelected] = useState<{ type: "threat" | "weakness" | "control"; id: number } | null>(null);
+  const [showQuickLink, setShowQuickLink] = useState(false);
+  const [quickLinkType, setQuickLinkType] = useState<"tw" | "tc" | "wc">("tw");
+  const [showEffectiveness, setShowEffectiveness] = useState(false);
 
   /* Table features per tab */
   const [showFilters, setShowFilters] = useState(false);
@@ -359,6 +371,35 @@ export default function SmartCatalogPage() {
     finally { setLinksLoading(false); }
   }, []);
 
+  const fetchAllLinksData = useCallback(async () => {
+    try {
+      const [tw, tc, wc] = await Promise.all([
+        fetch(`${API}/api/v1/links/threat-weakness`).then(r => r.json()).catch(() => []),
+        fetch(`${API}/api/v1/links/threat-control`).then(r => r.json()).catch(() => []),
+        fetch(`${API}/api/v1/links/weakness-control`).then(r => r.json()).catch(() => []),
+      ]);
+      setAllTWLinks(tw);
+      setAllTCLinks(tc);
+      setAllWCLinks(wc);
+      setAllLinksLoaded(true);
+    } catch { /* ignore */ }
+  }, []);
+
+  const getLinksForThreat = useCallback((threatId: number) => ({
+    weaknesses: allTWLinks.filter(l => l.threat_id === threatId),
+    controls: allTCLinks.filter(l => l.threat_id === threatId),
+  }), [allTWLinks, allTCLinks]);
+
+  const getLinksForWeakness = useCallback((weaknessId: number) => ({
+    threats: allTWLinks.filter(l => l.weakness_id === weaknessId),
+    controls: allWCLinks.filter(l => l.weakness_id === weaknessId),
+  }), [allTWLinks, allWCLinks]);
+
+  const getLinksForControl = useCallback((controlId: number) => ({
+    threats: allTCLinks.filter(l => l.control_id === controlId),
+    weaknesses: allWCLinks.filter(l => l.control_id === controlId),
+  }), [allTCLinks, allWCLinks]);
+
   const fetchCoverage = useCallback(async () => {
     setCoverageLoading(true);
     const leafCats = assetCategories.filter(c => !c.is_abstract);
@@ -375,12 +416,25 @@ export default function SmartCatalogPage() {
 
   /* Tab change effects */
   useEffect(() => {
-    if (tab === "correlations") fetchLinks(corrType);
-  }, [tab, corrType, fetchLinks]);
+    if (tab === "correlations") {
+      fetchLinks(corrType);
+      if (!allLinksLoaded) fetchAllLinksData();
+    }
+  }, [tab, corrType, fetchLinks, allLinksLoaded, fetchAllLinksData]);
 
   useEffect(() => {
-    if (tab === "coverage" && assetCategories.length > 0) fetchCoverage();
-  }, [tab, assetCategories, fetchCoverage]);
+    if (tab === "coverage" && assetCategories.length > 0) {
+      fetchCoverage();
+      if (!allLinksLoaded) fetchAllLinksData();
+    }
+  }, [tab, assetCategories, fetchCoverage, allLinksLoaded, fetchAllLinksData]);
+
+  /* Load all links when viewing detail panels (for linked items) */
+  useEffect(() => {
+    if ((selectedThreat || selectedWeakness || selectedControl) && !allLinksLoaded) {
+      fetchAllLinksData();
+    }
+  }, [selectedThreat, selectedWeakness, selectedControl, allLinksLoaded, fetchAllLinksData]);
 
   /* Reset selections on tab change */
   useEffect(() => {
@@ -538,7 +592,7 @@ export default function SmartCatalogPage() {
     <div>
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>Smart Catalog</h2>
+        <h2 style={{ margin: 0 }}>Katalog Zagrozen, Podatnosci i Zabezpieczen</h2>
       </div>
 
       {/* Tabs */}
@@ -659,7 +713,45 @@ export default function SmartCatalogPage() {
                     </>
                   )}
 
-                  <SectionHeader number={"\u2463"} label={`Sugerowane podatnosci (${suggestedWeaknesses.length})`} />
+                  {/* ── Istniejace powiazania (z korelacji) ── */}
+                  {allLinksLoaded && (() => {
+                    const tLinks = getLinksForThreat(selectedThreat.id);
+                    return (
+                      <>
+                        <SectionHeader number={"\u2463"} label={`Powiazane podatnosci (${tLinks.weaknesses.length})`} />
+                        {tLinks.weaknesses.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Brak powiazan</p>}
+                        {tLinks.weaknesses.map(l => (
+                          <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                            <span style={{ fontSize: 12, cursor: "pointer", color: "var(--blue)" }}
+                              onClick={() => {
+                                const w = weaknesses.find(x => x.id === l.weakness_id);
+                                if (w) { setTab("weaknesses"); setSelectedWeakness(w); }
+                              }}>
+                              <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{l.weakness_ref_id}</span> {l.weakness_name}
+                            </span>
+                            {l.relevance && <Badge text={l.relevance} color={LEVEL_COLORS[l.relevance]} />}
+                          </div>
+                        ))}
+
+                        <SectionHeader number={"\u2464"} label={`Powiazane zabezpieczenia (${tLinks.controls.length})`} />
+                        {tLinks.controls.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Brak powiazan</p>}
+                        {tLinks.controls.map(l => (
+                          <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                            <span style={{ fontSize: 12, cursor: "pointer", color: "var(--blue)" }}
+                              onClick={() => {
+                                const c = controls.find(x => x.id === l.control_id);
+                                if (c) { setTab("controls"); setSelectedControl(c); }
+                              }}>
+                              <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{l.control_ref_id}</span> {l.control_name}
+                            </span>
+                            {l.effectiveness && <Badge text={l.effectiveness} color={LEVEL_COLORS[l.effectiveness]} />}
+                          </div>
+                        ))}
+                      </>
+                    );
+                  })()}
+
+                  <SectionHeader number={"\u2465"} label={`Sugerowane podatnosci (${suggestedWeaknesses.length})`} />
                   {suggestedWeaknesses.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Brak sugestii</p>}
                   {suggestedWeaknesses.map(sw => (
                     <div key={sw.weakness_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
@@ -670,7 +762,7 @@ export default function SmartCatalogPage() {
                     </div>
                   ))}
 
-                  <SectionHeader number={"\u2464"} label={`Sugerowane zabezpieczenia (${suggestedControls.length})`} />
+                  <SectionHeader number={"\u2466"} label={`Sugerowane zabezpieczenia (${suggestedControls.length})`} />
                   {suggestedControls.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Brak sugestii</p>}
                   {suggestedControls.map(sc => (
                     <div key={sc.control_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
@@ -778,6 +870,44 @@ export default function SmartCatalogPage() {
                       </div>
                     </>
                   )}
+
+                  {/* ── Powiazania ── */}
+                  {allLinksLoaded && (() => {
+                    const wLinks = getLinksForWeakness(selectedWeakness.id);
+                    return (
+                      <>
+                        <SectionHeader number={"\u2463"} label={`Powiazane zagrozenia (${wLinks.threats.length})`} />
+                        {wLinks.threats.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Brak powiazan</p>}
+                        {wLinks.threats.map(l => (
+                          <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                            <span style={{ fontSize: 12, cursor: "pointer", color: "var(--blue)" }}
+                              onClick={() => {
+                                const t = threats.find(x => x.id === l.threat_id);
+                                if (t) { setTab("threats"); setSelectedThreat(t); fetchSuggestions(t.id); }
+                              }}>
+                              <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{l.threat_ref_id}</span> {l.threat_name}
+                            </span>
+                            {l.relevance && <Badge text={l.relevance} color={LEVEL_COLORS[l.relevance]} />}
+                          </div>
+                        ))}
+
+                        <SectionHeader number={"\u2464"} label={`Powiazane zabezpieczenia (${wLinks.controls.length})`} />
+                        {wLinks.controls.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Brak powiazan</p>}
+                        {wLinks.controls.map(l => (
+                          <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                            <span style={{ fontSize: 12, cursor: "pointer", color: "var(--blue)" }}
+                              onClick={() => {
+                                const c = controls.find(x => x.id === l.control_id);
+                                if (c) { setTab("controls"); setSelectedControl(c); }
+                              }}>
+                              <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{l.control_ref_id}</span> {l.control_name}
+                            </span>
+                            {l.effectiveness && <Badge text={l.effectiveness} color={LEVEL_COLORS[l.effectiveness]} />}
+                          </div>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             )}
@@ -876,6 +1006,44 @@ export default function SmartCatalogPage() {
                       </div>
                     </>
                   )}
+
+                  {/* ── Powiazania ── */}
+                  {allLinksLoaded && (() => {
+                    const cLinks = getLinksForControl(selectedControl.id);
+                    return (
+                      <>
+                        <SectionHeader number={"\u2463"} label={`Powiazane zagrozenia (${cLinks.threats.length})`} />
+                        {cLinks.threats.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Brak powiazan</p>}
+                        {cLinks.threats.map(l => (
+                          <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                            <span style={{ fontSize: 12, cursor: "pointer", color: "var(--blue)" }}
+                              onClick={() => {
+                                const t = threats.find(x => x.id === l.threat_id);
+                                if (t) { setTab("threats"); setSelectedThreat(t); fetchSuggestions(t.id); }
+                              }}>
+                              <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{l.threat_ref_id}</span> {l.threat_name}
+                            </span>
+                            {l.effectiveness && <Badge text={l.effectiveness} color={LEVEL_COLORS[l.effectiveness]} />}
+                          </div>
+                        ))}
+
+                        <SectionHeader number={"\u2464"} label={`Powiazane podatnosci (${cLinks.weaknesses.length})`} />
+                        {cLinks.weaknesses.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Brak powiazan</p>}
+                        {cLinks.weaknesses.map(l => (
+                          <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                            <span style={{ fontSize: 12, cursor: "pointer", color: "var(--blue)" }}
+                              onClick={() => {
+                                const w = weaknesses.find(x => x.id === l.weakness_id);
+                                if (w) { setTab("weaknesses"); setSelectedWeakness(w); }
+                              }}>
+                              <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{l.weakness_ref_id}</span> {l.weakness_name}
+                            </span>
+                            {l.effectiveness && <Badge text={l.effectiveness} color={LEVEL_COLORS[l.effectiveness]} />}
+                          </div>
+                        ))}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             )}
@@ -883,159 +1051,514 @@ export default function SmartCatalogPage() {
         </>
       )}
 
-      {/* ═══════════ CORRELATIONS TAB ═══════════ */}
+      {/* ═══════════ CORRELATIONS TAB — TRI-PANEL VIEW ═══════════ */}
       {tab === "correlations" && (
-        <>
-          <div className="toolbar" style={{ flexWrap: "wrap", gap: 8, marginBottom: 0 }}>
-            <div className="toolbar-left" style={{ alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-                {linkTable.filteredCount !== linkTable.totalCount ? `${linkTable.filteredCount} / ${linkTable.totalCount}` : linkTable.totalCount} korelacji
+        <div>
+          {/* Info bar */}
+          <div style={{
+            background: "rgba(139,92,246,0.06)", border: "1px solid rgba(139,92,246,0.15)",
+            borderRadius: 8, padding: "10px 16px", marginBottom: 14, fontSize: 12, color: "var(--text-secondary)",
+            display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <span style={{ fontSize: 16 }}>💡</span>
+            <span>
+              <strong>Mapa powiazan</strong> — trojstronny widok zagrozen, podatnosci i zabezpieczen.
+              Kliknij element w dowolnej kolumnie aby zobaczyc jego powiazania. Mozesz tworzyc nowe korelacje bezposrednio z tego widoku.
+            </span>
+          </div>
+
+          {/* Toolbar */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                Korelacje: <strong>{allTWLinks.length + allTCLinks.length + allWCLinks.length}</strong>
               </span>
-              <select className="form-control" value={corrType} onChange={e => setCorrType(e.target.value as "tw" | "tc" | "wc")} style={{ width: 260, padding: "5px 10px", fontSize: 12 }}>
+              <select className="form-control" value={corrType} onChange={e => { setCorrType(e.target.value as "tw" | "tc" | "wc"); setTriSelected(null); }} style={{ width: 260, padding: "5px 10px", fontSize: 12 }}>
                 <option value="tw">Zagrozenie ↔ Podatnosc</option>
                 <option value="tc">Zagrozenie ↔ Zabezpieczenie</option>
                 <option value="wc">Podatnosc ↔ Zabezpieczenie</option>
               </select>
-              <input
-                className="form-control"
-                style={{ width: 200, padding: "5px 10px", fontSize: 12 }}
-                placeholder="Szukaj korelacji..."
-                value={linkTable.search}
-                onChange={e => linkTable.setSearch(e.target.value)}
-              />
-              {linkTable.hasActiveFilters && (
-                <button className="btn btn-sm" style={{ fontSize: 11, color: "var(--red)" }} onClick={linkTable.clearAllFilters}>
-                  Wyczysc filtry
-                </button>
-              )}
             </div>
-            <div className="toolbar-right" style={{ alignItems: "center" }}>
-              <button className="btn btn-primary btn-sm" onClick={() => { setEditLink(null); setShowLinkForm(true); }}>
-                + Nowa korelacja
-              </button>
+            <button className="btn btn-primary btn-sm" onClick={() => { setEditLink(null); setShowLinkForm(true); }}>
+              + Nowa korelacja
+            </button>
+          </div>
+
+          {/* ── Tri-panel: three columns ── */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+            {/* Threats Column */}
+            <div style={{ border: "1px solid rgba(220,38,38,0.2)", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ background: "rgba(220,38,38,0.08)", padding: "8px 12px", display: "flex", alignItems: "center", gap: 6 }}>
+                <span>⚡</span>
+                <span style={{ fontWeight: 600, fontSize: 12, color: "#dc2626" }}>Zagrozenia ({threats.length})</span>
+              </div>
+              <div style={{ padding: "8px 8px 4px" }}>
+                <input className="form-control" style={{ fontSize: 11, padding: "4px 8px", marginBottom: 6 }}
+                  placeholder="Szukaj zagrozen..." value={triSearch.threats}
+                  onChange={e => setTriSearch(s => ({ ...s, threats: e.target.value }))} />
+              </div>
+              <div style={{ maxHeight: 320, overflowY: "auto", padding: "0 4px 4px" }}>
+                {threats
+                  .filter(t => !triSearch.threats || t.ref_id.toLowerCase().includes(triSearch.threats.toLowerCase()) || t.name.toLowerCase().includes(triSearch.threats.toLowerCase()))
+                  .map(t => {
+                    const isSelected = triSelected?.type === "threat" && triSelected.id === t.id;
+                    const isLinked = triSelected && triSelected.type !== "threat" && (
+                      (triSelected.type === "weakness" && allTWLinks.some(l => l.threat_id === t.id && l.weakness_id === triSelected.id)) ||
+                      (triSelected.type === "control" && allTCLinks.some(l => l.threat_id === t.id && l.control_id === triSelected.id))
+                    );
+                    return (
+                      <div key={t.id} style={{
+                        padding: "5px 8px", fontSize: 11, cursor: "pointer", borderRadius: 4, marginBottom: 2,
+                        background: isSelected ? "rgba(220,38,38,0.15)" : isLinked ? "rgba(220,38,38,0.08)" : "transparent",
+                        border: isLinked ? "1px solid rgba(220,38,38,0.3)" : "1px solid transparent",
+                        fontWeight: isSelected || isLinked ? 600 : 400,
+                      }} onClick={() => setTriSelected(isSelected ? null : { type: "threat", id: t.id })}>
+                        <span style={{ fontFamily: "monospace", color: "#dc2626", marginRight: 4 }}>{t.ref_id}</span>
+                        {t.name}
+                        {isLinked && <span style={{ marginLeft: 4, color: "#dc2626" }}>●</span>}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+
+            {/* Weaknesses Column */}
+            <div style={{ border: "1px solid rgba(245,158,11,0.2)", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ background: "rgba(245,158,11,0.08)", padding: "8px 12px", display: "flex", alignItems: "center", gap: 6 }}>
+                <span>🔓</span>
+                <span style={{ fontWeight: 600, fontSize: 12, color: "#f59e0b" }}>Podatnosci ({weaknesses.length})</span>
+              </div>
+              <div style={{ padding: "8px 8px 4px" }}>
+                <input className="form-control" style={{ fontSize: 11, padding: "4px 8px", marginBottom: 6 }}
+                  placeholder="Szukaj podatnosci..." value={triSearch.weaknesses}
+                  onChange={e => setTriSearch(s => ({ ...s, weaknesses: e.target.value }))} />
+              </div>
+              <div style={{ maxHeight: 320, overflowY: "auto", padding: "0 4px 4px" }}>
+                {weaknesses
+                  .filter(w => !triSearch.weaknesses || w.ref_id.toLowerCase().includes(triSearch.weaknesses.toLowerCase()) || w.name.toLowerCase().includes(triSearch.weaknesses.toLowerCase()))
+                  .map(w => {
+                    const isSelected = triSelected?.type === "weakness" && triSelected.id === w.id;
+                    const isLinked = triSelected && triSelected.type !== "weakness" && (
+                      (triSelected.type === "threat" && allTWLinks.some(l => l.weakness_id === w.id && l.threat_id === triSelected.id)) ||
+                      (triSelected.type === "control" && allWCLinks.some(l => l.weakness_id === w.id && l.control_id === triSelected.id))
+                    );
+                    return (
+                      <div key={w.id} style={{
+                        padding: "5px 8px", fontSize: 11, cursor: "pointer", borderRadius: 4, marginBottom: 2,
+                        background: isSelected ? "rgba(245,158,11,0.15)" : isLinked ? "rgba(245,158,11,0.08)" : "transparent",
+                        border: isLinked ? "1px solid rgba(245,158,11,0.3)" : "1px solid transparent",
+                        fontWeight: isSelected || isLinked ? 600 : 400,
+                      }} onClick={() => setTriSelected(isSelected ? null : { type: "weakness", id: w.id })}>
+                        <span style={{ fontFamily: "monospace", color: "#f59e0b", marginRight: 4 }}>{w.ref_id}</span>
+                        {w.name}
+                        {isLinked && <span style={{ marginLeft: 4, color: "#f59e0b" }}>●</span>}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+
+            {/* Controls Column */}
+            <div style={{ border: "1px solid rgba(22,163,74,0.2)", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ background: "rgba(22,163,74,0.08)", padding: "8px 12px", display: "flex", alignItems: "center", gap: 6 }}>
+                <span>🛡</span>
+                <span style={{ fontWeight: 600, fontSize: 12, color: "#16a34a" }}>Zabezpieczenia ({controls.length})</span>
+              </div>
+              <div style={{ padding: "8px 8px 4px" }}>
+                <input className="form-control" style={{ fontSize: 11, padding: "4px 8px", marginBottom: 6 }}
+                  placeholder="Szukaj zabezpieczen..." value={triSearch.controls}
+                  onChange={e => setTriSearch(s => ({ ...s, controls: e.target.value }))} />
+              </div>
+              <div style={{ maxHeight: 320, overflowY: "auto", padding: "0 4px 4px" }}>
+                {controls
+                  .filter(c => !triSearch.controls || c.ref_id.toLowerCase().includes(triSearch.controls.toLowerCase()) || c.name.toLowerCase().includes(triSearch.controls.toLowerCase()))
+                  .map(c => {
+                    const isSelected = triSelected?.type === "control" && triSelected.id === c.id;
+                    const isLinked = triSelected && triSelected.type !== "control" && (
+                      (triSelected.type === "threat" && allTCLinks.some(l => l.control_id === c.id && l.threat_id === triSelected.id)) ||
+                      (triSelected.type === "weakness" && allWCLinks.some(l => l.control_id === c.id && l.weakness_id === triSelected.id))
+                    );
+                    return (
+                      <div key={c.id} style={{
+                        padding: "5px 8px", fontSize: 11, cursor: "pointer", borderRadius: 4, marginBottom: 2,
+                        background: isSelected ? "rgba(22,163,74,0.15)" : isLinked ? "rgba(22,163,74,0.08)" : "transparent",
+                        border: isLinked ? "1px solid rgba(22,163,74,0.3)" : "1px solid transparent",
+                        fontWeight: isSelected || isLinked ? 600 : 400,
+                      }} onClick={() => setTriSelected(isSelected ? null : { type: "control", id: c.id })}>
+                        <span style={{ fontFamily: "monospace", color: "#16a34a", marginRight: 4 }}>{c.ref_id}</span>
+                        {c.name}
+                        {isLinked && <span style={{ marginLeft: 4, color: "#16a34a" }}>●</span>}
+                      </div>
+                    );
+                  })}
+              </div>
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: selectedLink ? "1fr 400px" : "1fr", gap: 14 }}>
-            {linksLoading ? (
-              <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Ladowanie korelacji...</div>
-            ) : (
-              <DataTable<LinkRecord>
-                columns={LINK_COLUMNS}
-                visibleColumns={linkCols}
-                data={linkTable.pageData}
-                rowKey={r => r.id}
-                selectedKey={selectedLink?.id ?? null}
-                onRowClick={r => setSelectedLink(selectedLink?.id === r.id ? null : r)}
-                renderCell={renderLinkCell}
-                sortField={linkTable.sortField}
-                sortDir={linkTable.sortDir}
-                onSort={linkTable.toggleSort}
-                columnFilters={linkTable.columnFilters}
-                onColumnFilter={linkTable.setColumnFilter}
-                showFilters={showFilters}
-                page={linkTable.page}
-                totalPages={linkTable.totalPages}
-                pageSize={linkTable.pageSize}
-                totalItems={linkTable.totalCount}
-                filteredItems={linkTable.filteredCount}
-                onPageChange={linkTable.setPage}
-                onPageSizeChange={linkTable.setPageSize}
-                loading={linksLoading}
-                emptyMessage="Brak korelacji."
-                emptyFilteredMessage="Brak korelacji pasujacych do filtrow."
-              />
-            )}
+          {/* ── Selected item links panel ── */}
+          {triSelected && (() => {
+            const item = triSelected.type === "threat"
+              ? threats.find(t => t.id === triSelected.id)
+              : triSelected.type === "weakness"
+                ? weaknesses.find(w => w.id === triSelected.id)
+                : controls.find(c => c.id === triSelected.id);
+            if (!item) return null;
+            const typeLabel = triSelected.type === "threat" ? "Zagrozenie" : triSelected.type === "weakness" ? "Podatnosc" : "Zabezpieczenie";
+            const typeColor = triSelected.type === "threat" ? "#dc2626" : triSelected.type === "weakness" ? "#f59e0b" : "#16a34a";
 
-            {/* Detail Panel */}
-            {selectedLink && (
-              <div className="card" style={{ position: "sticky", top: 0, alignSelf: "start", maxHeight: "calc(100vh - 100px)", overflowY: "auto" }}>
+            const linkedWeaknesses = triSelected.type === "threat"
+              ? allTWLinks.filter(l => l.threat_id === triSelected.id)
+              : triSelected.type === "control"
+                ? allWCLinks.filter(l => l.control_id === triSelected.id)
+                : [];
+            const linkedThreats = triSelected.type === "weakness"
+              ? allTWLinks.filter(l => l.weakness_id === triSelected.id)
+              : triSelected.type === "control"
+                ? allTCLinks.filter(l => l.control_id === triSelected.id)
+                : [];
+            const linkedControls = triSelected.type === "threat"
+              ? allTCLinks.filter(l => l.threat_id === triSelected.id)
+              : triSelected.type === "weakness"
+                ? allWCLinks.filter(l => l.weakness_id === triSelected.id)
+                : [];
+
+            return (
+              <div style={{ border: `1px solid ${typeColor}30`, borderRadius: 8, padding: 16 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <div className="card-title" style={{ margin: 0 }}>Szczegoly korelacji</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 700, color: typeColor }}>{typeLabel}:</span>
+                    <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{item.ref_id}</span>
+                    <span style={{ fontWeight: 500 }}>{item.name}</span>
+                  </div>
                   <div style={{ display: "flex", gap: 4 }}>
-                    <button className="btn btn-sm" onClick={() => { setEditLink(selectedLink); setShowLinkForm(true); }}>Edytuj</button>
-                    {!selectedLink.is_system && (
-                      <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => handleDeleteLink(selectedLink.id)}>Usun</button>
-                    )}
-                    <button className="btn btn-sm" onClick={() => setSelectedLink(null)}>&#10005;</button>
+                    <button className="btn btn-sm" onClick={() => { setEditItem(item); setShowForm(true); }}>Edytuj</button>
+                    <button className="btn btn-sm" onClick={() => setTriSelected(null)}>✕</button>
                   </div>
                 </div>
 
-                <div style={{ fontSize: 12, lineHeight: 2 }}>
-                  {selectedLink.threat_ref_id && (
-                    <>
-                      <SectionHeader number={"\u2460"} label="Zagrozenie" />
-                      <DetailRow label="Ref ID" value={<span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{selectedLink.threat_ref_id}</span>} />
-                      <DetailRow label="Nazwa" value={<strong>{selectedLink.threat_name}</strong>} />
-                    </>
-                  )}
-
-                  {selectedLink.weakness_ref_id && (
-                    <>
-                      <SectionHeader number={selectedLink.threat_ref_id ? "\u2461" : "\u2460"} label="Podatnosc" />
-                      <DetailRow label="Ref ID" value={<span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{selectedLink.weakness_ref_id}</span>} />
-                      <DetailRow label="Nazwa" value={<strong>{selectedLink.weakness_name}</strong>} />
-                    </>
-                  )}
-
-                  {selectedLink.control_ref_id && (
-                    <>
-                      <SectionHeader number={"\u2462"} label="Zabezpieczenie" />
-                      <DetailRow label="Ref ID" value={<span style={{ fontFamily: "'JetBrains Mono',monospace" }}>{selectedLink.control_ref_id}</span>} />
-                      <DetailRow label="Nazwa" value={<strong>{selectedLink.control_name}</strong>} />
-                    </>
-                  )}
-
-                  <SectionHeader number={"\u2463"} label="Parametry korelacji" />
-                  {selectedLink.relevance && <DetailRow label="Istotnosc" value={<Badge text={selectedLink.relevance} color={LEVEL_COLORS[selectedLink.relevance]} />} />}
-                  {selectedLink.effectiveness && <DetailRow label="Skutecznosc" value={<Badge text={selectedLink.effectiveness} color={LEVEL_COLORS[selectedLink.effectiveness]} />} />}
-                  <DetailRow label="Typ" value={<Badge text={selectedLink.is_system ? "Systemowy" : "Organizacyjny"} color={selectedLink.is_system ? "#3b82f6" : "#16a34a"} />} />
-
-                  {selectedLink.description && (
-                    <>
-                      <SectionHeader number={"\u2464"} label="Opis" />
-                      <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset, var(--bg-alt))", borderRadius: 6, padding: 8, marginBottom: 8 }}>
-                        {selectedLink.description}
+                <div style={{ display: "grid", gridTemplateColumns: triSelected.type === "weakness" ? "1fr 1fr" : triSelected.type === "threat" ? "1fr 1fr" : "1fr 1fr", gap: 16 }}>
+                  {/* Linked threats (if not a threat) */}
+                  {triSelected.type !== "threat" && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#dc2626", marginBottom: 6 }}>
+                        Powiazane zagrozenia ({linkedThreats.length})
                       </div>
-                    </>
+                      {linkedThreats.map(l => (
+                        <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+                          <span>
+                            <span style={{ fontFamily: "monospace", fontWeight: 600, color: "#dc2626" }}>{l.threat_ref_id}</span> {l.threat_name}
+                          </span>
+                          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                            {(l.relevance || l.effectiveness) && <Badge text={(l.relevance ?? l.effectiveness)!} color={LEVEL_COLORS[(l.relevance ?? l.effectiveness)!]} />}
+                            {!l.is_system && (
+                              <button style={{ fontSize: 10, cursor: "pointer", color: "var(--red)", background: "none", border: "none" }}
+                                onClick={() => handleDeleteLink(l.id)}>✕</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <button className="btn btn-sm" style={{ marginTop: 6, fontSize: 10, color: "#dc2626" }}
+                        onClick={() => {
+                          setEditLink(null);
+                          setCorrType(triSelected.type === "weakness" ? "tw" : "tc");
+                          setShowLinkForm(true);
+                        }}>
+                        + Powiaz z zagrozeniem
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Linked weaknesses (if not a weakness) */}
+                  {triSelected.type !== "weakness" && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#f59e0b", marginBottom: 6 }}>
+                        Powiazane podatnosci ({linkedWeaknesses.length})
+                      </div>
+                      {linkedWeaknesses.map(l => (
+                        <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+                          <span>
+                            <span style={{ fontFamily: "monospace", fontWeight: 600, color: "#f59e0b" }}>{l.weakness_ref_id}</span> {l.weakness_name}
+                          </span>
+                          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                            {(l.relevance || l.effectiveness) && <Badge text={(l.relevance ?? l.effectiveness)!} color={LEVEL_COLORS[(l.relevance ?? l.effectiveness)!]} />}
+                            {!l.is_system && (
+                              <button style={{ fontSize: 10, cursor: "pointer", color: "var(--red)", background: "none", border: "none" }}
+                                onClick={() => handleDeleteLink(l.id)}>✕</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <button className="btn btn-sm" style={{ marginTop: 6, fontSize: 10, color: "#f59e0b" }}
+                        onClick={() => {
+                          setEditLink(null);
+                          setCorrType(triSelected.type === "threat" ? "tw" : "wc");
+                          setShowLinkForm(true);
+                        }}>
+                        + Powiaz z podatnoscia
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Linked controls (if not a control) */}
+                  {triSelected.type !== "control" && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#16a34a", marginBottom: 6 }}>
+                        Powiazane zabezpieczenia ({linkedControls.length})
+                      </div>
+                      {linkedControls.map(l => (
+                        <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+                          <span>
+                            <span style={{ fontFamily: "monospace", fontWeight: 600, color: "#16a34a" }}>{l.control_ref_id}</span> {l.control_name}
+                          </span>
+                          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                            {l.effectiveness && <Badge text={l.effectiveness} color={LEVEL_COLORS[l.effectiveness]} />}
+                            {!l.is_system && (
+                              <button style={{ fontSize: 10, cursor: "pointer", color: "var(--red)", background: "none", border: "none" }}
+                                onClick={() => handleDeleteLink(l.id)}>✕</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <button className="btn btn-sm" style={{ marginTop: 6, fontSize: 10, color: "#16a34a" }}
+                        onClick={() => {
+                          setEditLink(null);
+                          setCorrType(triSelected.type === "threat" ? "tc" : "wc");
+                          setShowLinkForm(true);
+                        }}>
+                        + Powiaz z zabezpieczeniem
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
-            )}
-          </div>
-        </>
+            );
+          })()}
+
+          {/* ── Classic table view (collapsed by default) ── */}
+          <details style={{ marginTop: 16 }}>
+            <summary style={{ cursor: "pointer", fontSize: 12, color: "var(--text-muted)", padding: "8px 0" }}>
+              Widok tabelaryczny korelacji ({linkTable.totalCount})
+            </summary>
+            <div style={{ marginTop: 8 }}>
+              <div className="toolbar" style={{ flexWrap: "wrap", gap: 8, marginBottom: 0 }}>
+                <div className="toolbar-left" style={{ alignItems: "center" }}>
+                  <input className="form-control" style={{ width: 200, padding: "5px 10px", fontSize: 12 }}
+                    placeholder="Szukaj korelacji..." value={linkTable.search}
+                    onChange={e => linkTable.setSearch(e.target.value)} />
+                </div>
+              </div>
+              {linksLoading ? (
+                <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Ladowanie...</div>
+              ) : (
+                <DataTable<LinkRecord>
+                  columns={LINK_COLUMNS} visibleColumns={linkCols} data={linkTable.pageData}
+                  rowKey={r => r.id} selectedKey={selectedLink?.id ?? null}
+                  onRowClick={r => setSelectedLink(selectedLink?.id === r.id ? null : r)}
+                  renderCell={renderLinkCell}
+                  sortField={linkTable.sortField} sortDir={linkTable.sortDir} onSort={linkTable.toggleSort}
+                  columnFilters={linkTable.columnFilters} onColumnFilter={linkTable.setColumnFilter}
+                  showFilters={showFilters}
+                  page={linkTable.page} totalPages={linkTable.totalPages}
+                  pageSize={linkTable.pageSize} totalItems={linkTable.totalCount}
+                  filteredItems={linkTable.filteredCount}
+                  onPageChange={linkTable.setPage} onPageSizeChange={linkTable.setPageSize}
+                  loading={linksLoading} emptyMessage="Brak korelacji."
+                  emptyFilteredMessage="Brak korelacji pasujacych do filtrow."
+                />
+              )}
+            </div>
+          </details>
+        </div>
       )}
 
-      {/* ═══════════ COVERAGE TAB ═══════════ */}
+      {/* ═══════════ COVERAGE TAB — INTERACTIVE ═══════════ */}
       {tab === "coverage" && (
-        <div className="card" style={{ padding: 24 }}>
-          <h3 style={{ margin: "0 0 16px" }}>Analiza pokrycia zagrozeniami wg kategorii aktywow</h3>
-          {coverageLoading ? (
-            <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>Analizowanie pokrycia...</div>
-          ) : assetCategories.length === 0 ? (
-            <div style={{ color: "var(--text-muted)" }}>Brak kategorii aktywow</div>
-          ) : (
-            <>
-              {assetCategories
-                .filter(ac => coverageData[ac.id] && coverageData[ac.id].total_threats > 0)
-                .sort((a, b) => (coverageData[a.id]?.coverage_pct ?? 0) - (coverageData[b.id]?.coverage_pct ?? 0))
-                .map(ac => {
-                  const cov = coverageData[ac.id];
-                  return (
-                    <CoverageMeter
-                      key={ac.id}
-                      label={`${ac.name} (${cov.covered}/${cov.total_threats})`}
-                      pct={cov.coverage_pct}
-                      gaps={cov.gaps.length}
-                    />
-                  );
-                })
-              }
-              {Object.keys(coverageData).length === 0 && (
-                <div style={{ color: "var(--text-muted)" }}>Brak danych pokrycia — sprawdz czy tabele korelacji maja dane.</div>
-              )}
-            </>
-          )}
+        <div>
+          {/* Explanation header */}
+          <div style={{
+            background: "rgba(59,130,246,0.06)", border: "1px solid rgba(59,130,246,0.15)",
+            borderRadius: 8, padding: "14px 18px", marginBottom: 16, fontSize: 12, lineHeight: 1.8,
+          }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "var(--blue)", marginBottom: 6 }}>
+              Analiza Luk i Skutecznosci Zabezpieczen
+            </div>
+            <div style={{ color: "var(--text-secondary)" }}>
+              Ta analiza pokazuje, dla kazdej kategorii aktywow:
+            </div>
+            <ul style={{ margin: "4px 0 0 16px", padding: 0, color: "var(--text-secondary)" }}>
+              <li><strong>Pokrycie</strong> — ile zagrozen przypisanych do kategorii ma powiazane zabezpieczenia (korelacje Zagrozenie↔Zabezpieczenie)</li>
+              <li><strong>Luki</strong> — zagrozenia BEZ zabezpieczen. Kliknij luke aby od razu dodac brakujace zabezpieczenie</li>
+              <li><strong>Skutecznosc</strong> — sredni poziom skutecznosci zastosowanych zabezpieczen (na podstawie ocen korelacji)</li>
+            </ul>
+          </div>
+
+          {/* Coverage meters */}
+          <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 14 }}>Pokrycie wg kategorii aktywow</h3>
+            {coverageLoading ? (
+              <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>Analizowanie pokrycia...</div>
+            ) : assetCategories.length === 0 ? (
+              <div style={{ color: "var(--text-muted)" }}>Brak kategorii aktywow</div>
+            ) : (
+              <>
+                {assetCategories
+                  .filter(ac => coverageData[ac.id] && coverageData[ac.id].total_threats > 0)
+                  .sort((a, b) => (coverageData[a.id]?.coverage_pct ?? 0) - (coverageData[b.id]?.coverage_pct ?? 0))
+                  .map(ac => {
+                    const cov = coverageData[ac.id];
+                    const isExpanded = coverageExpanded[ac.id] ?? false;
+                    return (
+                      <div key={ac.id} style={{ marginBottom: 16 }}>
+                        <div
+                          style={{ cursor: "pointer" }}
+                          onClick={() => setCoverageExpanded(prev => ({ ...prev, [ac.id]: !prev[ac.id] }))}
+                        >
+                          <CoverageMeter
+                            label={`${ac.name} (${cov.covered}/${cov.total_threats})`}
+                            pct={cov.coverage_pct}
+                            gaps={cov.gaps.length}
+                          />
+                        </div>
+
+                        {/* Expanded gap details */}
+                        {isExpanded && cov.gaps.length > 0 && (
+                          <div style={{
+                            marginTop: 4, marginLeft: 8, padding: "10px 14px",
+                            background: "rgba(220,38,38,0.04)", border: "1px solid rgba(220,38,38,0.15)",
+                            borderRadius: 6,
+                          }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#dc2626", marginBottom: 8 }}>
+                              Luki — zagrozenia bez zabezpieczen ({cov.gaps.length})
+                            </div>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
+                              Te zagrozenia nie maja powiazanego zabezpieczenia. Kliknij "Dodaj zabezpieczenie" aby utworzyc korelacje.
+                            </div>
+                            {cov.gaps.map((gap, gi) => (
+                              <div key={gi} style={{
+                                display: "flex", justifyContent: "space-between", alignItems: "center",
+                                padding: "6px 0", borderBottom: "1px solid var(--border)",
+                              }}>
+                                <span style={{ fontSize: 12 }}>
+                                  <span style={{ color: "#dc2626", marginRight: 6 }}>⚠</span>
+                                  {gap.ref_id && <span style={{ fontFamily: "monospace", fontWeight: 600, marginRight: 4 }}>{gap.ref_id}</span>}
+                                  {gap.name ?? "Nieznane zagrozenie"}
+                                </span>
+                                <button
+                                  className="btn btn-sm"
+                                  style={{ fontSize: 10, color: "#16a34a", border: "1px solid rgba(22,163,74,0.3)", background: "rgba(22,163,74,0.06)" }}
+                                  onClick={() => {
+                                    const threatItem = threats.find(t => t.ref_id === gap.ref_id);
+                                    if (threatItem) {
+                                      setCorrType("tc");
+                                      setEditLink(null);
+                                      setShowLinkForm(true);
+                                    }
+                                  }}
+                                >
+                                  + Dodaj zabezpieczenie
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {isExpanded && cov.gaps.length === 0 && (
+                          <div style={{
+                            marginTop: 4, marginLeft: 8, padding: "8px 14px", fontSize: 12,
+                            background: "rgba(22,163,74,0.06)", border: "1px solid rgba(22,163,74,0.15)",
+                            borderRadius: 6, color: "#16a34a",
+                          }}>
+                            ✓ Pelne pokrycie — wszystkie zagrozenia maja powiazane zabezpieczenia
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                }
+                {Object.keys(coverageData).length === 0 && (
+                  <div style={{ color: "var(--text-muted)" }}>Brak danych pokrycia — sprawdz czy tabele korelacji maja dane.</div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── Control Effectiveness Assessment ── */}
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 14 }}>Ocena Skutecznosci Zabezpieczen</h3>
+              <button className="btn btn-sm" onClick={() => setShowEffectiveness(!showEffectiveness)} style={{ fontSize: 11 }}>
+                {showEffectiveness ? "Zwien" : "Rozwin analize"}
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+              Ocena skutecznosci kazdego zabezpieczenia na podstawie: ilosci pokrywanych zagrozen,
+              sredniego poziomu skutecznosci (z korelacji) oraz pokrycia kategorii aktywow.
+            </div>
+
+            {showEffectiveness && allLinksLoaded && (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "2px solid var(--border)" }}>
+                      <th style={{ textAlign: "left", padding: "8px 6px", color: "var(--text-muted)" }}>Zabezpieczenie</th>
+                      <th style={{ textAlign: "center", padding: "8px 6px", color: "var(--text-muted)" }}>Pokrywa zagrozen</th>
+                      <th style={{ textAlign: "center", padding: "8px 6px", color: "var(--text-muted)" }}>Pokrywa podatnosci</th>
+                      <th style={{ textAlign: "center", padding: "8px 6px", color: "var(--text-muted)" }}>Sred. skutecznosc</th>
+                      <th style={{ textAlign: "left", padding: "8px 6px", color: "var(--text-muted)" }}>Ocena</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {controls.map(c => {
+                      const tcLinks = allTCLinks.filter(l => l.control_id === c.id);
+                      const wcLinks = allWCLinks.filter(l => l.control_id === c.id);
+                      const allEffs = [...tcLinks, ...wcLinks].map(l => l.effectiveness).filter(Boolean);
+                      const effScore = allEffs.length > 0
+                        ? allEffs.reduce((sum, e) => sum + (e === "HIGH" ? 3 : e === "MEDIUM" ? 2 : 1), 0) / allEffs.length
+                        : 0;
+                      const effLabel = effScore >= 2.5 ? "Skuteczne" : effScore >= 1.5 ? "Czesciowe" : effScore > 0 ? "Niewystarczajace" : "Brak oceny";
+                      const effColor = effScore >= 2.5 ? "#16a34a" : effScore >= 1.5 ? "#f59e0b" : effScore > 0 ? "#dc2626" : "var(--text-muted)";
+                      const barPct = effScore > 0 ? (effScore / 3) * 100 : 0;
+
+                      return (
+                        <tr key={c.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                          <td style={{ padding: "6px" }}>
+                            <span style={{ fontFamily: "monospace", fontWeight: 600, color: "#16a34a", marginRight: 4 }}>{c.ref_id}</span>
+                            {c.name}
+                          </td>
+                          <td style={{ textAlign: "center", padding: "6px" }}>
+                            <span style={{ fontWeight: 600 }}>{tcLinks.length}</span>
+                          </td>
+                          <td style={{ textAlign: "center", padding: "6px" }}>
+                            <span style={{ fontWeight: 600 }}>{wcLinks.length}</span>
+                          </td>
+                          <td style={{ textAlign: "center", padding: "6px" }}>
+                            {allEffs.length > 0 ? (
+                              <Badge text={effScore >= 2.5 ? "HIGH" : effScore >= 1.5 ? "MEDIUM" : "LOW"}
+                                color={effColor} />
+                            ) : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                          </td>
+                          <td style={{ padding: "6px", minWidth: 160 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <div style={{ flex: 1, height: 6, background: "var(--bg-alt)", borderRadius: 3, overflow: "hidden" }}>
+                                <div style={{
+                                  height: "100%", width: `${barPct}%`, background: effColor,
+                                  borderRadius: 3, transition: "width 0.5s ease",
+                                }} />
+                              </div>
+                              <span style={{ fontSize: 10, color: effColor, fontWeight: 600, whiteSpace: "nowrap" }}>{effLabel}</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {showEffectiveness && !allLinksLoaded && (
+              <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 16 }}>Ladowanie danych korelacji...</div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1080,6 +1603,13 @@ export default function SmartCatalogPage() {
         saving={saving}
         onSave={handleSave}
         assetCategories={assetCategories}
+        threats={threats}
+        weaknesses={weaknesses}
+        controls={controls}
+        allTWLinks={allTWLinks}
+        allTCLinks={allTCLinks}
+        allWCLinks={allWCLinks}
+        onLinksChanged={() => { fetchAllLinksData(); }}
       />
 
       {/* ═══════════ CORRELATION FORM MODAL ═══════════ */}
@@ -1104,6 +1634,7 @@ export default function SmartCatalogPage() {
 
 function FormModal({
   open, onClose, tab, editItem, saving, onSave, assetCategories,
+  threats, weaknesses, controls, allTWLinks, allTCLinks, allWCLinks, onLinksChanged,
 }: {
   open: boolean;
   onClose: () => void;
@@ -1112,6 +1643,13 @@ function FormModal({
   saving: boolean;
   onSave: (data: Record<string, unknown>) => void;
   assetCategories: AssetCategory[];
+  threats?: ThreatRecord[];
+  weaknesses?: WeaknessRecord[];
+  controls?: ControlRecord[];
+  allTWLinks?: LinkRecord[];
+  allTCLinks?: LinkRecord[];
+  allWCLinks?: LinkRecord[];
+  onLinksChanged?: () => void;
 }) {
   const [refId, setRefId] = useState("");
   const [name, setName] = useState("");
@@ -1259,6 +1797,21 @@ function FormModal({
           </div>
         )}
 
+        {/* ── Inline linking section (only when editing existing item) ── */}
+        {editItem && !isReadOnly && threats && weaknesses && controls && (
+          <InlineLinkingSection
+            tab={tab}
+            editItemId={editItem.id}
+            threats={threats}
+            weaknesses={weaknesses}
+            controls={controls}
+            allTWLinks={allTWLinks ?? []}
+            allTCLinks={allTCLinks ?? []}
+            allWCLinks={allWCLinks ?? []}
+            onLinksChanged={onLinksChanged}
+          />
+        )}
+
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
           <button type="button" className="btn btn-ghost" onClick={onClose}>{isReadOnly ? "Zamknij" : "Anuluj"}</button>
           {!isReadOnly && (
@@ -1269,6 +1822,235 @@ function FormModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   Inline Linking Section (inside FormModal)
+   ══════════════════════════════════════════════════════════ */
+
+function InlineLinkingSection({
+  tab, editItemId, threats, weaknesses, controls,
+  allTWLinks, allTCLinks, allWCLinks, onLinksChanged,
+}: {
+  tab: TabKey;
+  editItemId: number;
+  threats: ThreatRecord[];
+  weaknesses: WeaknessRecord[];
+  controls: ControlRecord[];
+  allTWLinks: LinkRecord[];
+  allTCLinks: LinkRecord[];
+  allWCLinks: LinkRecord[];
+  onLinksChanged?: () => void;
+}) {
+  const [addingLink, setAddingLink] = useState(false);
+  const [newLinkTarget, setNewLinkTarget] = useState<number | "">("");
+  const [newLinkLevel, setNewLinkLevel] = useState("MEDIUM");
+  const [linkSection, setLinkSection] = useState<"first" | "second">("first");
+
+  const API = import.meta.env.VITE_API_URL ?? "";
+
+  // Determine what links to show based on tab type
+  const isTheat = tab === "threats";
+  const isWeakness = tab === "weaknesses";
+  const isControl = tab === "controls";
+
+  // Get current links
+  const linkedWeaknesses = isTheat ? allTWLinks.filter(l => l.threat_id === editItemId) : [];
+  const linkedThreatsTW = isWeakness ? allTWLinks.filter(l => l.weakness_id === editItemId) : [];
+  const linkedThreatsTC = isControl ? allTCLinks.filter(l => l.control_id === editItemId) : [];
+  const linkedControlsTC = isTheat ? allTCLinks.filter(l => l.threat_id === editItemId) : [];
+  const linkedControlsWC = isWeakness ? allWCLinks.filter(l => l.weakness_id === editItemId) : [];
+  const linkedWeaknessesWC = isControl ? allWCLinks.filter(l => l.control_id === editItemId) : [];
+
+  const firstLinks = isTheat ? linkedWeaknesses : isWeakness ? linkedThreatsTW : linkedThreatsTC;
+  const secondLinks = isTheat ? linkedControlsTC : isWeakness ? linkedControlsWC : linkedWeaknessesWC;
+
+  const firstLabel = isTheat ? "Powiazane podatnosci" : isWeakness ? "Powiazane zagrozenia" : "Powiazane zagrozenia";
+  const secondLabel = isTheat ? "Powiazane zabezpieczenia" : isWeakness ? "Powiazane zabezpieczenia" : "Powiazane podatnosci";
+
+  const firstColor = isTheat ? "#f59e0b" : "#dc2626";
+  const secondColor = isTheat ? "#16a34a" : isWeakness ? "#16a34a" : "#f59e0b";
+
+  const firstItems = isTheat ? weaknesses : isWeakness ? threats : threats;
+  const secondItems = isTheat ? controls : isWeakness ? controls : weaknesses;
+
+  const firstLinkedIds = new Set(firstLinks.map(l => l.weakness_id ?? l.threat_id ?? l.control_id));
+  const secondLinkedIds = new Set(secondLinks.map(l => l.control_id ?? l.weakness_id ?? l.threat_id));
+
+  const availableFirst = firstItems.filter(i => !firstLinkedIds.has(i.id));
+  const availableSecond = secondItems.filter(i => !secondLinkedIds.has(i.id));
+
+  const handleAddLink = async () => {
+    if (!newLinkTarget) return;
+    setAddingLink(true);
+    try {
+      let ep = "";
+      const data: Record<string, unknown> = {};
+
+      if (linkSection === "first") {
+        if (isTheat) {
+          ep = "threat-weakness";
+          data.threat_id = editItemId;
+          data.weakness_id = Number(newLinkTarget);
+          data.relevance = newLinkLevel;
+        } else if (isWeakness) {
+          ep = "threat-weakness";
+          data.threat_id = Number(newLinkTarget);
+          data.weakness_id = editItemId;
+          data.relevance = newLinkLevel;
+        } else {
+          ep = "threat-control";
+          data.threat_id = Number(newLinkTarget);
+          data.control_id = editItemId;
+          data.effectiveness = newLinkLevel;
+        }
+      } else {
+        if (isTheat) {
+          ep = "threat-control";
+          data.threat_id = editItemId;
+          data.control_id = Number(newLinkTarget);
+          data.effectiveness = newLinkLevel;
+        } else if (isWeakness) {
+          ep = "weakness-control";
+          data.weakness_id = editItemId;
+          data.control_id = Number(newLinkTarget);
+          data.effectiveness = newLinkLevel;
+        } else {
+          ep = "weakness-control";
+          data.weakness_id = Number(newLinkTarget);
+          data.control_id = editItemId;
+          data.effectiveness = newLinkLevel;
+        }
+      }
+
+      await fetch(`${API}/api/v1/links/${ep}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      setNewLinkTarget("");
+      setNewLinkLevel("MEDIUM");
+      onLinksChanged?.();
+    } catch (e) {
+      alert("Blad dodawania powiazania: " + (e instanceof Error ? e.message : e));
+    } finally {
+      setAddingLink(false);
+    }
+  };
+
+  const handleRemoveLink = async (linkId: number, ep: string) => {
+    try {
+      await fetch(`${API}/api/v1/links/${ep}/${linkId}`, { method: "DELETE" });
+      onLinksChanged?.();
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div style={{ marginTop: 20, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--blue)", marginBottom: 12 }}>
+        Powiazania z innymi elementami katalogu
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* First group */}
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: firstColor, marginBottom: 6 }}>
+            {firstLabel} ({firstLinks.length})
+          </div>
+          {firstLinks.map(l => {
+            const ref = l.weakness_ref_id ?? l.threat_ref_id ?? l.control_ref_id;
+            const nm = l.weakness_name ?? l.threat_name ?? l.control_name;
+            const level = l.relevance ?? l.effectiveness;
+            const ep = isTheat ? "threat-weakness" : isWeakness ? "threat-weakness" : "threat-control";
+            return (
+              <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+                <span>
+                  <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{ref}</span> {nm}
+                </span>
+                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  {level && <Badge text={level} color={LEVEL_COLORS[level]} />}
+                  {!l.is_system && (
+                    <button style={{ fontSize: 10, cursor: "pointer", color: "var(--red)", background: "none", border: "none" }}
+                      onClick={() => handleRemoveLink(l.id, ep)}>✕</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {/* Add new link */}
+          <div style={{ display: "flex", gap: 4, marginTop: 6, alignItems: "center" }}>
+            <select className="form-control" style={{ flex: 1, fontSize: 11, padding: "3px 6px" }}
+              value={linkSection === "first" ? newLinkTarget : ""} onChange={e => { setLinkSection("first"); setNewLinkTarget(e.target.value ? Number(e.target.value) : ""); }}>
+              <option value="">+ Dodaj...</option>
+              {availableFirst.map(i => <option key={i.id} value={i.id}>{i.ref_id} — {i.name}</option>)}
+            </select>
+            {linkSection === "first" && newLinkTarget && (
+              <>
+                <select className="form-control" style={{ width: 80, fontSize: 11, padding: "3px 6px" }}
+                  value={newLinkLevel} onChange={e => setNewLinkLevel(e.target.value)}>
+                  <option value="HIGH">HIGH</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="LOW">LOW</option>
+                </select>
+                <button className="btn btn-sm" style={{ fontSize: 10 }} disabled={addingLink} onClick={handleAddLink}>
+                  {addingLink ? "..." : "Dodaj"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Second group */}
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: secondColor, marginBottom: 6 }}>
+            {secondLabel} ({secondLinks.length})
+          </div>
+          {secondLinks.map(l => {
+            const ref = l.control_ref_id ?? l.weakness_ref_id ?? l.threat_ref_id;
+            const nm = l.control_name ?? l.weakness_name ?? l.threat_name;
+            const level = l.effectiveness ?? l.relevance;
+            const ep = isTheat ? "threat-control" : isWeakness ? "weakness-control" : "weakness-control";
+            return (
+              <div key={l.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", borderBottom: "1px solid var(--border)", fontSize: 11 }}>
+                <span>
+                  <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{ref}</span> {nm}
+                </span>
+                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  {level && <Badge text={level} color={LEVEL_COLORS[level]} />}
+                  {!l.is_system && (
+                    <button style={{ fontSize: 10, cursor: "pointer", color: "var(--red)", background: "none", border: "none" }}
+                      onClick={() => handleRemoveLink(l.id, ep)}>✕</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {/* Add new link */}
+          <div style={{ display: "flex", gap: 4, marginTop: 6, alignItems: "center" }}>
+            <select className="form-control" style={{ flex: 1, fontSize: 11, padding: "3px 6px" }}
+              value={linkSection === "second" ? newLinkTarget : ""} onChange={e => { setLinkSection("second"); setNewLinkTarget(e.target.value ? Number(e.target.value) : ""); }}>
+              <option value="">+ Dodaj...</option>
+              {availableSecond.map(i => <option key={i.id} value={i.id}>{i.ref_id} — {i.name}</option>)}
+            </select>
+            {linkSection === "second" && newLinkTarget && (
+              <>
+                <select className="form-control" style={{ width: 80, fontSize: 11, padding: "3px 6px" }}
+                  value={newLinkLevel} onChange={e => setNewLinkLevel(e.target.value)}>
+                  <option value="HIGH">HIGH</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="LOW">LOW</option>
+                </select>
+                <button className="btn btn-sm" style={{ fontSize: 10 }} disabled={addingLink} onClick={handleAddLink}>
+                  {addingLink ? "..." : "Dodaj"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -30,6 +30,7 @@ import CmdbAdminPage from "./pages/CmdbAdminPage";
 import ReportsPage from "./pages/ReportsPage";
 import SmartCatalogPage from "./pages/SmartCatalogPage";
 import AIConfigPage from "./pages/AIConfigPage";
+import ControlEffectivenessPage from "./pages/ControlEffectivenessPage";
 
 export default function App() {
   return (
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="org-context" element={<OrgContextPage />} />
           <Route path="org-structure" element={<Navigate to="/org-context" replace />} />
           <Route path="smart-catalog" element={<SmartCatalogPage />} />
+          <Route path="control-effectiveness" element={<ControlEffectivenessPage />} />
           <Route path="ai-config" element={<AIConfigPage />} />
           <Route path="catalogs" element={<Navigate to="/smart-catalog" replace />} />
           <Route path="dictionaries" element={<DictionariesPage />} />

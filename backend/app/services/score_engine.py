@@ -15,6 +15,7 @@ from app.models.vendor import Vendor
 from app.models.awareness import AwarenessCampaign, AwarenessResult
 from app.models.dictionary import DictionaryEntry, DictionaryType
 from app.models.framework import Assessment, AssessmentAnswer, DimensionLevel
+from app.models.control_effectiveness import ControlImplementation
 from app.models.security_score import SecurityScoreConfig
 
 
@@ -204,8 +205,8 @@ async def calc_exception_score(s: AsyncSession, cfg: SecurityScoreConfig) -> flo
 
 # ═══════════════════ PILLAR 5: CONTROL MATURITY ═══════════════════
 
-async def calc_maturity_score(s: AsyncSession, cfg: SecurityScoreConfig) -> float:
-    # Use approved assessment preferentially, fallback to latest any-status
+async def _calc_framework_maturity(s: AsyncSession) -> float | None:
+    """Sub-score from framework assessment (0–100 or None if no data)."""
     q = (select(Assessment)
          .where(Assessment.is_active.is_(True), Assessment.status == "approved")
          .order_by(Assessment.created_at.desc()))
@@ -216,16 +217,15 @@ async def calc_maturity_score(s: AsyncSession, cfg: SecurityScoreConfig) -> floa
              .order_by(Assessment.created_at.desc()))
         assessment = (await s.execute(q)).scalars().first()
     if not assessment:
-        return 0.0
+        return None
 
-    # If assessment already has overall_score computed, use it directly
     if assessment.overall_score is not None:
-        return _clamp(float(assessment.overall_score))
+        return float(assessment.overall_score)
 
     answers_q = select(AssessmentAnswer).where(AssessmentAnswer.assessment_id == assessment.id)
     answers = (await s.execute(answers_q)).scalars().all()
     if not answers:
-        return 0.0
+        return None
 
     scores = []
     for a in answers:
@@ -237,11 +237,48 @@ async def calc_maturity_score(s: AsyncSession, cfg: SecurityScoreConfig) -> floa
                 scores.append(float(level.value))
 
     if not scores:
-        return 0.0
+        return None
 
-    avg = sum(scores) / len(scores)
-    # Dimension levels are 0.00–1.00; multiply by 100 for percentage
-    return _clamp(avg * 100)
+    return sum(scores) / len(scores) * 100
+
+
+async def _calc_control_effectiveness(s: AsyncSession) -> float | None:
+    """Sub-score from control effectiveness assessments (0–100 or None if no data)."""
+    q = select(ControlImplementation).where(
+        ControlImplementation.is_active.is_(True),
+        ControlImplementation.status.in_(["implemented", "partial"]),
+    )
+    impls = (await s.execute(q)).scalars().all()
+    if not impls:
+        return None
+
+    # Weighted score: implemented=1.0, partial=0.5
+    status_w = {"implemented": 1.0, "partial": 0.5}
+    weighted_scores = []
+    for i in impls:
+        eff = float(i.overall_effectiveness) if i.overall_effectiveness is not None else None
+        if eff is not None:
+            w = status_w.get(i.status, 0.5)
+            weighted_scores.append(eff * w)
+
+    if not weighted_scores:
+        return None
+
+    return sum(weighted_scores) / len(weighted_scores)
+
+
+async def calc_maturity_score(s: AsyncSession, cfg: SecurityScoreConfig) -> float:
+    fw_score = await _calc_framework_maturity(s)
+    eff_score = await _calc_control_effectiveness(s)
+
+    if fw_score is not None and eff_score is not None:
+        # Blend: 60% framework maturity + 40% operational effectiveness
+        return _clamp(fw_score * 0.6 + eff_score * 0.4)
+    elif fw_score is not None:
+        return _clamp(fw_score)
+    elif eff_score is not None:
+        return _clamp(eff_score)
+    return 0.0
 
 
 # ═══════════════════ PILLAR 6: AUDIT ═══════════════════
@@ -465,9 +502,17 @@ async def calculate_all_pillars(s: AsyncSession) -> dict:
 
     total = sum(scores[k] * weights[k] / 100 for k in scores)
 
+    # Extra detail: control effectiveness sub-scores
+    fw_maturity = await _calc_framework_maturity(s)
+    ctrl_eff = await _calc_control_effectiveness(s)
+
     return {
         "total_score": round(total, 1),
         "pillars": {k: round(v, 1) for k, v in scores.items()},
         "weights": weights,
         "config_version": cfg.version,
+        "maturity_detail": {
+            "framework_maturity": round(fw_maturity, 1) if fw_maturity is not None else None,
+            "control_effectiveness": round(ctrl_eff, 1) if ctrl_eff is not None else None,
+        },
     }

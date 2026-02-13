@@ -26,6 +26,7 @@ const sections: { title: string; items: NavItem[] }[] = [
     title: "Katalogi Bezpieczenstwa",
     items: [
       { to: "/smart-catalog", icon: "🛡", label: "Zagrozenia i Zabezpieczenia" },
+      { to: "/control-effectiveness", icon: "✅", label: "Skuteczność Zabezpieczeń" },
     ],
   },
   {

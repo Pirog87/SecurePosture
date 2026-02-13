@@ -987,7 +987,7 @@ function ActionSearchWithCreate({ riskId, existingLinks, lookups, orgTree, strat
    TagMultiSelect — reusable multi-select with tags + inline add
    ═══════════════════════════════════════════════════════════════════ */
 
-function TagMultiSelect<T extends { id: number; name: string }>({ label, items, selectedIds, onChange, onAdd, color, icon, compact }: {
+function TagMultiSelect<T extends { id: number; name: string }>({ label, items, selectedIds, onChange, onAdd, color, icon, compact, allItems }: {
   label: string;
   items: T[];
   selectedIds: number[];
@@ -996,6 +996,7 @@ function TagMultiSelect<T extends { id: number; name: string }>({ label, items, 
   color: string;
   icon?: string;
   compact?: boolean;
+  allItems?: T[];
 }) {
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState(false);
@@ -1039,7 +1040,7 @@ function TagMultiSelect<T extends { id: number; name: string }>({ label, items, 
       {selectedIds.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
           {selectedIds.map(id => {
-            const item = items.find(i => i.id === id);
+            const item = (allItems ?? items).find(i => i.id === id);
             return (
               <span key={id} style={{
                 display: "inline-flex", alignItems: "center", gap: 3,
@@ -1192,6 +1193,7 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
           icon={"\u26A0\uFE0F"}
           compact
           items={filteredThreats}
+          allItems={lookups.threats}
           selectedIds={threatIds}
           onChange={setThreatIds}
           color="var(--red)"
@@ -1207,6 +1209,7 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
           icon={"\uD83D\uDD13"}
           compact
           items={filteredVulns}
+          allItems={lookups.vulns}
           selectedIds={vulnerabilityIds}
           onChange={setVulnerabilityIds}
           color="var(--orange)"
@@ -1222,6 +1225,7 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
           icon={"\uD83D\uDEE1\uFE0F"}
           compact
           items={filteredSafeguards}
+          allItems={lookups.safeguards}
           selectedIds={safeguardIds}
           onChange={setSafeguardIds}
           color="var(--green)"
@@ -1410,9 +1414,19 @@ function SmartCatalogSuggestionsPanel({
   };
 
   const applyAllSuggestions = async () => {
-    for (const w of sugWeaknesses) await applyWeakness(w);
-    for (const c of sugControls) await applyControl(c);
+    for (const w of visibleWeaknesses) await applyWeakness(w);
+    for (const c of visibleControls) await applyControl(c);
   };
+
+  // Filter out suggestions already added to the scenario
+  const selectedVulnNames = new Set(
+    vulnerabilityIds.map(id => lookups.vulns.find(v => v.id === id)?.name?.toLowerCase()).filter(Boolean)
+  );
+  const selectedSafeguardNames = new Set(
+    safeguardIds.map(id => lookups.safeguards.find(s => s.id === id)?.name?.toLowerCase()).filter(Boolean)
+  );
+  const visibleWeaknesses = sugWeaknesses.filter(w => !selectedVulnNames.has(w.name.toLowerCase()));
+  const visibleControls = sugControls.filter(c => !selectedSafeguardNames.has(c.name.toLowerCase()));
 
   const filteredCatalog = search.length >= 2
     ? catalogThreats.filter(t =>
@@ -1526,7 +1540,7 @@ function SmartCatalogSuggestionsPanel({
                       <span style={{ fontSize: 12, fontWeight: 600, color: "#8b5cf6" }}>
                         Sugestie dla: {selectedCatThreat.ref_id}
                       </span>
-                      {(sugWeaknesses.length > 0 || sugControls.length > 0) && (
+                      {(visibleWeaknesses.length > 0 || visibleControls.length > 0) && (
                         <button
                           type="button"
                           className="btn btn-sm"
@@ -1540,10 +1554,10 @@ function SmartCatalogSuggestionsPanel({
 
                     {/* Weaknesses */}
                     <div style={{ fontSize: 11, fontWeight: 600, color: "#f59e0b", marginBottom: 4, marginTop: 8 }}>
-                      Slabosci ({sugWeaknesses.length})
+                      Slabosci ({visibleWeaknesses.length})
                     </div>
-                    {sugWeaknesses.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Brak sugestii</div>}
-                    {sugWeaknesses.map(w => (
+                    {visibleWeaknesses.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Brak sugestii</div>}
+                    {visibleWeaknesses.map(w => (
                       <div key={w.weakness_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
                         <span style={{ fontSize: 11 }}>
                           <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{w.ref_id}</span> {w.name}
@@ -1557,10 +1571,10 @@ function SmartCatalogSuggestionsPanel({
 
                     {/* Controls */}
                     <div style={{ fontSize: 11, fontWeight: 600, color: "#16a34a", marginBottom: 4, marginTop: 12 }}>
-                      Zabezpieczenia ({sugControls.length})
+                      Zabezpieczenia ({visibleControls.length})
                     </div>
-                    {sugControls.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Brak sugestii</div>}
-                    {sugControls.map(c => (
+                    {visibleControls.length === 0 && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Brak sugestii</div>}
+                    {visibleControls.map(c => (
                       <div key={c.control_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
                         <span style={{ fontSize: 11 }}>
                           <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{c.ref_id}</span> {c.name}

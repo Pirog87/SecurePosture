@@ -621,7 +621,7 @@ CREATE TABLE audit_findings (
 -- (Deferred because audit_findings/policy_exceptions created above)
 -- ═══════════════════════════════════════════════════════════════════════
 
-ALTER TABLE vulnerability_register
+ALTER TABLE vulnerabilities_registry
     ADD CONSTRAINT fk_vulnreg_finding   FOREIGN KEY (finding_id)   REFERENCES audit_findings(id),
     ADD CONSTRAINT fk_vulnreg_exception FOREIGN KEY (exception_id) REFERENCES policy_exceptions(id);
 
@@ -869,39 +869,37 @@ INSERT INTO security_score_config (version, is_active, changed_by, change_reason
 
 CREATE TABLE security_score_snapshots (
     id                      INT AUTO_INCREMENT PRIMARY KEY,
-    snapshot_date           DATE NOT NULL,
-    org_unit_id             INT,
+    snapshot_date           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     total_score             DECIMAL(5,2) NOT NULL,
-    -- 10 pillar scores
-    pillar_risks_score      DECIMAL(5,2),
-    pillar_risks_weight     DECIMAL(4,2),
-    pillar_vulns_score      DECIMAL(5,2),
-    pillar_vulns_weight     DECIMAL(4,2),
-    pillar_incidents_score  DECIMAL(5,2),
-    pillar_incidents_weight DECIMAL(4,2),
-    pillar_exceptions_score DECIMAL(5,2),
-    pillar_exceptions_weight DECIMAL(4,2),
-    pillar_maturity_score   DECIMAL(5,2),
-    pillar_maturity_weight  DECIMAL(4,2),
-    pillar_audit_score      DECIMAL(5,2),
-    pillar_audit_weight     DECIMAL(4,2),
-    pillar_assets_score     DECIMAL(5,2),
-    pillar_assets_weight    DECIMAL(4,2),
-    pillar_tprm_score       DECIMAL(5,2),
-    pillar_tprm_weight      DECIMAL(4,2),
-    pillar_policies_score   DECIMAL(5,2),
-    pillar_policies_weight  DECIMAL(4,2),
-    pillar_awareness_score  DECIMAL(5,2),
-    pillar_awareness_weight DECIMAL(4,2),
+    -- 10 pillar scores (matching ORM SecurityScoreSnapshot)
+    risk_score              DECIMAL(5,2),
+    vulnerability_score     DECIMAL(5,2),
+    incident_score          DECIMAL(5,2),
+    exception_score         DECIMAL(5,2),
+    maturity_score          DECIMAL(5,2),
+    audit_score             DECIMAL(5,2),
+    asset_score             DECIMAL(5,2),
+    tprm_score              DECIMAL(5,2),
+    policy_score            DECIMAL(5,2),
+    awareness_score         DECIMAL(5,2),
+    -- Weights at time of snapshot
+    w_risk                  DECIMAL(5,2),
+    w_vulnerability         DECIMAL(5,2),
+    w_incident              DECIMAL(5,2),
+    w_exception             DECIMAL(5,2),
+    w_maturity              DECIMAL(5,2),
+    w_audit                 DECIMAL(5,2),
+    w_asset                 DECIMAL(5,2),
+    w_tprm                  DECIMAL(5,2),
+    w_policy                DECIMAL(5,2),
+    w_awareness             DECIMAL(5,2),
     -- Meta
-    config_version          VARCHAR(20),
-    triggered_by            ENUM('scheduled','manual','framework_assessment','config_change') NOT NULL DEFAULT 'scheduled',
+    config_version          INT,
+    triggered_by            VARCHAR(50),
     created_by              VARCHAR(200),
     created_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    INDEX ix_sssnapshot_date (snapshot_date),
-    INDEX ix_sssnapshot_org  (org_unit_id),
-    CONSTRAINT fk_sssnapshot_orgunit FOREIGN KEY (org_unit_id) REFERENCES org_units(id)
+    INDEX ix_sssnapshot_date (snapshot_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 

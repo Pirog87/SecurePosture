@@ -22,9 +22,20 @@ from app.models.smart_catalog import (
     WeaknessControlLink,
 )
 from app.schemas.smart_catalog import (
+    AIAssistOut,
+    AIAssistRequest,
     AIConfigOut,
     AIConfigUpdate,
+    AIEnrichOut,
+    AIEnrichRequest,
+    AIGapOut,
+    AIGapRequest,
+    AIScenarioOut,
+    AIScenarioRequest,
+    AISearchOut,
+    AISearchRequest,
     AITestResult,
+    AIUsageStatsOut,
     ControlCatalogCreate,
     ControlCatalogOut,
     ControlCatalogUpdate,
@@ -840,3 +851,226 @@ async def deactivate_ai(s: AsyncSession = Depends(get_session)):
     config.is_active = False
     await s.commit()
     return {"status": "deactivated"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# AI-powered endpoints (available only when AI is configured + active)
+# Return 503 when AI not configured, 403 when feature disabled,
+# 429 when rate limited.
+# ═══════════════════════════════════════════════════════════════════
+
+async def _get_ai_svc(s: AsyncSession):
+    """Helper: get AI service, raise 503 if not available."""
+    from app.services.ai_service import (
+        AINotConfiguredException,
+        get_ai_service,
+    )
+    svc = await get_ai_service(s)
+    if not svc.is_available:
+        raise HTTPException(
+            503,
+            "AI nie jest skonfigurowane lub wylaczone. "
+            "Administrator moze aktywowac AI w Ustawienia > Integracja AI.",
+        )
+    return svc
+
+
+def _get_user_id(user_id: int = Query(1, alias="user_id")) -> int:
+    return user_id
+
+
+@router.post("/api/v1/ai/generate-scenarios", response_model=AIScenarioOut)
+async def ai_generate_scenarios(
+    body: AIScenarioRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered risk scenario generation for an asset category."""
+    from app.services.ai_service import (
+        AIFeatureDisabledException,
+        AIRateLimitException,
+    )
+    svc = await _get_ai_svc(s)
+    try:
+        scenarios = await svc.generate_scenarios(
+            asset_category_id=body.asset_category_id,
+            user_id=user_id,
+            org_context=body.org_context,
+        )
+        await s.commit()
+        return AIScenarioOut(scenarios=scenarios)
+    except AIFeatureDisabledException as e:
+        raise HTTPException(403, str(e))
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/enrich-correlations", response_model=AIEnrichOut)
+async def ai_enrich_correlations(
+    body: AIEnrichRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI suggests missing correlations between catalog entries."""
+    from app.services.ai_service import (
+        AIFeatureDisabledException,
+        AIRateLimitException,
+    )
+    svc = await _get_ai_svc(s)
+    try:
+        suggestions = await svc.enrich_correlations(
+            user_id=user_id,
+            scope=body.scope,
+        )
+        await s.commit()
+        return AIEnrichOut(suggestions=suggestions)
+    except AIFeatureDisabledException as e:
+        raise HTTPException(403, str(e))
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/search", response_model=AISearchOut)
+async def ai_search_catalog(
+    body: AISearchRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered natural language search in the catalog."""
+    from app.services.ai_service import (
+        AIFeatureDisabledException,
+        AIRateLimitException,
+    )
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.search_catalog(query=body.query, user_id=user_id)
+        await s.commit()
+        return AISearchOut(
+            asset_category_codes=result.get("asset_category_codes", []),
+            threat_categories=result.get("threat_categories", []),
+            keywords=result.get("keywords", []),
+            interpretation=result.get("interpretation"),
+        )
+    except AIFeatureDisabledException as e:
+        raise HTTPException(403, str(e))
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/gap-analysis", response_model=AIGapOut)
+async def ai_gap_analysis(
+    body: AIGapRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered gap analysis of security coverage."""
+    from app.services.ai_service import (
+        AIFeatureDisabledException,
+        AIRateLimitException,
+    )
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.gap_analysis(
+            user_id=user_id,
+            asset_category_id=body.asset_category_id,
+        )
+        await s.commit()
+        return AIGapOut(
+            critical_gaps=result.get("critical_gaps", []),
+            recommendations=result.get("recommendations", []),
+            coverage_pct=result.get("coverage_pct"),
+            immediate_actions=result.get("immediate_actions", []),
+        )
+    except AIFeatureDisabledException as e:
+        raise HTTPException(403, str(e))
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/assist-entry", response_model=AIAssistOut)
+async def ai_assist_entry(
+    body: AIAssistRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI suggests classification and correlations for a new catalog entry."""
+    from app.services.ai_service import (
+        AIFeatureDisabledException,
+        AIRateLimitException,
+    )
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.assist_entry(
+            entry_type=body.entry_type,
+            name=body.name,
+            description=body.description,
+            user_id=user_id,
+        )
+        await s.commit()
+        return AIAssistOut(
+            applicable_asset_categories=result.get("applicable_asset_categories", []),
+            category=result.get("category"),
+            cia_impact=result.get("cia_impact"),
+            suggested_correlations=result.get("suggested_correlations", []),
+        )
+    except AIFeatureDisabledException as e:
+        raise HTTPException(403, str(e))
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.get("/api/v1/ai/usage-stats", response_model=AIUsageStatsOut)
+async def ai_usage_stats(
+    days: int = Query(30, ge=1, le=365),
+    s: AsyncSession = Depends(get_session),
+):
+    """Get AI usage statistics for the given period."""
+    from sqlalchemy import func as sa_func
+    from app.models.smart_catalog import AIAuditLog
+
+    since = datetime.utcnow() - __import__("datetime").timedelta(days=days)
+
+    q_total = select(sa_func.count()).select_from(AIAuditLog).where(
+        AIAuditLog.created_at >= since
+    )
+    total = (await s.execute(q_total)).scalar() or 0
+
+    q_tokens = select(
+        sa_func.coalesce(sa_func.sum(AIAuditLog.tokens_input), 0)
+        + sa_func.coalesce(sa_func.sum(AIAuditLog.tokens_output), 0)
+    ).where(AIAuditLog.created_at >= since)
+    tokens = (await s.execute(q_tokens)).scalar() or 0
+
+    q_cost = select(
+        sa_func.coalesce(sa_func.sum(AIAuditLog.cost_usd), 0)
+    ).where(AIAuditLog.created_at >= since)
+    cost = float((await s.execute(q_cost)).scalar() or 0)
+
+    # Acceptance rate
+    q_accepted = select(sa_func.count()).select_from(AIAuditLog).where(
+        AIAuditLog.created_at >= since,
+        AIAuditLog.accepted.is_(True),
+    )
+    accepted = (await s.execute(q_accepted)).scalar() or 0
+    q_reviewed = select(sa_func.count()).select_from(AIAuditLog).where(
+        AIAuditLog.created_at >= since,
+        AIAuditLog.accepted.isnot(None),
+    )
+    reviewed = (await s.execute(q_reviewed)).scalar() or 0
+    acceptance_rate = (accepted / reviewed * 100) if reviewed > 0 else None
+
+    # By action type
+    q_by_action = select(
+        AIAuditLog.action_type,
+        sa_func.count().label("cnt"),
+    ).where(AIAuditLog.created_at >= since).group_by(AIAuditLog.action_type)
+    rows = (await s.execute(q_by_action)).all()
+    by_action = {r.action_type: r.cnt for r in rows}
+
+    return AIUsageStatsOut(
+        requests_count=total,
+        tokens_used=tokens,
+        cost_usd=cost,
+        acceptance_rate=acceptance_rate,
+        by_action=by_action,
+    )

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import Modal from "../components/Modal";
 import StatsCards, { type StatCard } from "../components/StatsCards";
+import { useFeatureFlags } from "../hooks/useFeatureFlags";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -98,15 +99,17 @@ interface AssetCategory {
    Constants
    ══════════════════════════════════════════════════════════ */
 
-type TabKey = "threats" | "weaknesses" | "controls" | "correlations" | "coverage";
+type TabKey = "threats" | "weaknesses" | "controls" | "correlations" | "coverage" | "ai";
 
-const TABS: { key: TabKey; label: string; icon: string }[] = [
+const BASE_TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "threats", label: "Zagrozenia", icon: "⚡" },
   { key: "weaknesses", label: "Slabosci", icon: "🔓" },
   { key: "controls", label: "Zabezpieczenia", icon: "🛡" },
   { key: "correlations", label: "Korelacje", icon: "🔗" },
   { key: "coverage", label: "Pokrycie", icon: "📊" },
 ];
+
+const AI_TAB = { key: "ai" as TabKey, label: "AI Asystent", icon: "🤖" };
 
 const THREAT_CATEGORIES = [
   "NATURAL", "ENVIRONMENTAL", "HUMAN_INTENTIONAL", "HUMAN_ACCIDENTAL", "TECHNICAL", "ORGANIZATIONAL",
@@ -183,6 +186,7 @@ function CoverageMeter({ pct, label, gaps }: { pct: number; label: string; gaps:
    ══════════════════════════════════════════════════════════ */
 
 export default function SmartCatalogPage() {
+  const { aiEnabled, hasFeature } = useFeatureFlags();
   const [tab, setTab] = useState<TabKey>("threats");
   const [search, setSearch] = useState("");
 
@@ -193,6 +197,17 @@ export default function SmartCatalogPage() {
   const [assetCategories, setAssetCategories] = useState<AssetCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  /* AI state */
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<Record<string, unknown> | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const TABS = useMemo(() => {
+    const tabs = [...BASE_TABS];
+    if (aiEnabled) tabs.push(AI_TAB);
+    return tabs;
+  }, [aiEnabled]);
 
   /* Filters */
   const [filterCategory, setFilterCategory] = useState("");
@@ -772,6 +787,38 @@ export default function SmartCatalogPage() {
         </div>
       )}
 
+      {/* ═══════════ AI TAB ═══════════ */}
+      {tab === "ai" && aiEnabled && (
+        <AIAssistantPanel
+          assetCategories={assetCategories}
+          aiLoading={aiLoading}
+          aiResult={aiResult}
+          aiError={aiError}
+          hasFeature={hasFeature}
+          onAction={async (action, params) => {
+            setAiLoading(true);
+            setAiError(null);
+            setAiResult(null);
+            try {
+              const res = await fetch(`${API}/api/v1/ai/${action}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(params),
+              });
+              if (!res.ok) {
+                const text = await res.text();
+                throw new Error(res.status === 503 ? "AI niedostepne" : res.status === 429 ? "Limit zapytan przekroczony" : text);
+              }
+              setAiResult(await res.json());
+            } catch (e) {
+              setAiError(e instanceof Error ? e.message : "Blad AI");
+            } finally {
+              setAiLoading(false);
+            }
+          }}
+        />
+      )}
+
       {/* ═══════════ FORM MODAL ═══════════ */}
       <FormModal
         open={showForm}
@@ -947,5 +994,271 @@ function FormModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   AI Assistant Panel (rendered only when AI is enabled)
+   ══════════════════════════════════════════════════════════ */
+
+function AIAssistantPanel({
+  assetCategories,
+  aiLoading,
+  aiResult,
+  aiError,
+  hasFeature,
+  onAction,
+}: {
+  assetCategories: AssetCategory[];
+  aiLoading: boolean;
+  aiResult: Record<string, unknown> | null;
+  aiError: string | null;
+  hasFeature: (name: "scenario_generation" | "correlation_enrichment" | "natural_language_search" | "gap_analysis" | "entry_assist") => boolean;
+  onAction: (action: string, params: Record<string, unknown>) => Promise<void>;
+}) {
+  const [aiMode, setAiMode] = useState<"scenarios" | "enrich" | "search" | "gap" | "assist">("scenarios");
+  const [selectedCatId, setSelectedCatId] = useState<number | "">("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [assistName, setAssistName] = useState("");
+  const [assistDesc, setAssistDesc] = useState("");
+  const [assistType, setAssistType] = useState<"threat" | "weakness" | "control">("threat");
+
+  const modes = [
+    { key: "scenarios", label: "Scenariusze ryzyka", feature: "scenario_generation" as const },
+    { key: "enrich", label: "Wzbogac korelacje", feature: "correlation_enrichment" as const },
+    { key: "search", label: "Wyszukiwanie NL", feature: "natural_language_search" as const },
+    { key: "gap", label: "Analiza luk", feature: "gap_analysis" as const },
+    { key: "assist", label: "Asystent wpisu", feature: "entry_assist" as const },
+  ].filter(m => hasFeature(m.feature));
+
+  const handleRun = () => {
+    switch (aiMode) {
+      case "scenarios":
+        if (selectedCatId) onAction("generate-scenarios", { asset_category_id: Number(selectedCatId) });
+        break;
+      case "enrich":
+        onAction("enrich-correlations", { scope: "all" });
+        break;
+      case "search":
+        if (searchQuery.length >= 3) onAction("search", { query: searchQuery });
+        break;
+      case "gap":
+        onAction("gap-analysis", selectedCatId ? { asset_category_id: Number(selectedCatId) } : {});
+        break;
+      case "assist":
+        if (assistName) onAction("assist-entry", { entry_type: assistType, name: assistName, description: assistDesc });
+        break;
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      {/* Left: Controls */}
+      <div className="card" style={{ padding: 20 }}>
+        <h3 style={{ margin: "0 0 16px", fontSize: "1.1rem" }}>AI Asystent</h3>
+
+        {modes.length === 0 ? (
+          <p style={{ color: "var(--text-muted)" }}>Brak wlaczonych funkcji AI.</p>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+              {modes.map(m => (
+                <button
+                  key={m.key}
+                  className={`btn ${aiMode === m.key ? "btn-primary" : "btn-secondary"}`}
+                  style={{ fontSize: 12 }}
+                  onClick={() => setAiMode(m.key as typeof aiMode)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Scenario generation form */}
+            {aiMode === "scenarios" && (
+              <div>
+                <label className="label">Kategoria aktywa</label>
+                <select className="input" value={selectedCatId} onChange={e => setSelectedCatId(e.target.value ? Number(e.target.value) : "")}>
+                  <option value="">Wybierz kategorie...</option>
+                  {assetCategories.map(ac => <option key={ac.id} value={ac.id}>{ac.name}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Search form */}
+            {aiMode === "search" && (
+              <div>
+                <label className="label">Pytanie</label>
+                <input
+                  className="input"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="np. Jakie zagrozenia dotycza pracy zdalnej?"
+                />
+              </div>
+            )}
+
+            {/* Gap analysis */}
+            {aiMode === "gap" && (
+              <div>
+                <label className="label">Kategoria aktywa (opcjonalnie)</label>
+                <select className="input" value={selectedCatId} onChange={e => setSelectedCatId(e.target.value ? Number(e.target.value) : "")}>
+                  <option value="">Wszystkie kategorie</option>
+                  {assetCategories.map(ac => <option key={ac.id} value={ac.id}>{ac.name}</option>)}
+                </select>
+              </div>
+            )}
+
+            {/* Entry assist */}
+            {aiMode === "assist" && (
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <label className="label">Typ wpisu</label>
+                    <select className="input" value={assistType} onChange={e => setAssistType(e.target.value as typeof assistType)}>
+                      <option value="threat">Zagrozenie</option>
+                      <option value="weakness">Slabosc</option>
+                      <option value="control">Zabezpieczenie</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Nazwa</label>
+                    <input className="input" value={assistName} onChange={e => setAssistName(e.target.value)} placeholder="Nazwa wpisu..." />
+                  </div>
+                </div>
+                <label className="label">Opis</label>
+                <textarea className="input" value={assistDesc} onChange={e => setAssistDesc(e.target.value)} rows={2} placeholder="Opis wpisu..." />
+              </div>
+            )}
+
+            <button
+              className="btn btn-primary"
+              style={{ marginTop: 16 }}
+              onClick={handleRun}
+              disabled={aiLoading}
+            >
+              {aiLoading ? "AI analizuje..." : "Uruchom AI"}
+            </button>
+          </>
+        )}
+
+        {aiError && (
+          <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 6, background: "rgba(239,68,68,0.1)", color: "var(--color-danger, #dc2626)", fontSize: "0.85rem" }}>
+            {aiError}
+          </div>
+        )}
+      </div>
+
+      {/* Right: Results */}
+      <div className="card" style={{ padding: 20 }}>
+        <h3 style={{ margin: "0 0 16px", fontSize: "1.1rem" }}>Wyniki AI</h3>
+        {aiLoading && (
+          <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>
+            AI analizuje dane...
+          </div>
+        )}
+        {!aiLoading && !aiResult && !aiError && (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
+            Wybierz funkcje AI i kliknij "Uruchom AI" aby zobaczyc wyniki.
+          </p>
+        )}
+        {aiResult && (
+          <div style={{ maxHeight: 500, overflow: "auto" }}>
+            <AIResultDisplay data={aiResult} mode={aiMode} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+/* ── AI Result Display ── */
+
+function AIResultDisplay({ data, mode }: { data: Record<string, unknown>; mode: string }) {
+  if (mode === "scenarios" && Array.isArray((data as { scenarios?: unknown[] }).scenarios)) {
+    const scenarios = (data as { scenarios: Record<string, unknown>[] }).scenarios;
+    return (
+      <div>
+        {scenarios.map((s, i) => (
+          <div key={i} style={{ marginBottom: 16, padding: 12, border: "1px solid var(--border)", borderRadius: 8 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              {String(s.threat_ref_id ?? "")} {String(s.threat_name ?? `Scenariusz ${i + 1}`)}
+            </div>
+            {s.rationale && <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "4px 0" }}>{String(s.rationale)}</p>}
+            {Array.isArray(s.weaknesses) && s.weaknesses.length > 0 && (
+              <div style={{ fontSize: "0.8rem", marginTop: 4 }}>
+                <span style={{ fontWeight: 600 }}>Slabosci:</span>{" "}
+                {s.weaknesses.map((w: Record<string, unknown>) => String(w.name ?? w.ref_id ?? "")).join(", ")}
+              </div>
+            )}
+            {Array.isArray(s.suggested_controls) && s.suggested_controls.length > 0 && (
+              <div style={{ fontSize: "0.8rem", marginTop: 4 }}>
+                <span style={{ fontWeight: 600 }}>Zabezpieczenia:</span>{" "}
+                {s.suggested_controls.map((c: Record<string, unknown>) => String(c.name ?? c.ref_id ?? "")).join(", ")}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (mode === "enrich" && Array.isArray((data as { suggestions?: unknown[] }).suggestions)) {
+    const suggestions = (data as { suggestions: Record<string, unknown>[] }).suggestions;
+    return (
+      <div>
+        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: 12 }}>{suggestions.length} sugestii powiazań</p>
+        {suggestions.map((s, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: "0.85rem" }}>
+            <span>
+              <strong>{String(s.threat_ref_id ?? "")}</strong> → {String(s.target_type ?? "")}: <strong>{String(s.target_ref_id ?? "")}</strong>
+            </span>
+            <span style={{ color: "var(--text-muted)" }}>{String(s.relevance ?? "")}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (mode === "gap") {
+    const gaps = data as { critical_gaps?: Record<string, unknown>[]; recommendations?: Record<string, unknown>[]; coverage_pct?: number };
+    return (
+      <div>
+        {gaps.coverage_pct != null && (
+          <div style={{ fontSize: "1.2rem", fontWeight: 700, marginBottom: 12 }}>
+            Pokrycie: {Number(gaps.coverage_pct).toFixed(0)}%
+          </div>
+        )}
+        {Array.isArray(gaps.critical_gaps) && gaps.critical_gaps.length > 0 && (
+          <>
+            <h4 style={{ fontSize: "0.9rem", marginBottom: 8 }}>Krytyczne luki</h4>
+            {gaps.critical_gaps.map((g, i) => (
+              <div key={i} style={{ padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: "0.85rem" }}>
+                <strong>{String(g.area ?? "")}</strong>: {String(g.description ?? "")}
+              </div>
+            ))}
+          </>
+        )}
+        {Array.isArray(gaps.recommendations) && gaps.recommendations.length > 0 && (
+          <>
+            <h4 style={{ fontSize: "0.9rem", marginTop: 16, marginBottom: 8 }}>Rekomendacje</h4>
+            {gaps.recommendations.map((r, i) => (
+              <div key={i} style={{ padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: "0.85rem" }}>
+                <strong>P{String(r.priority ?? "")}:</strong> {String(r.action ?? "")}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // Fallback: show JSON
+  return (
+    <pre style={{ fontSize: "0.8rem", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 400, overflow: "auto" }}>
+      {JSON.stringify(data, null, 2)}
+    </pre>
   );
 }

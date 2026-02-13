@@ -36,6 +36,7 @@ from .framework import (
     Assessment,
     AssessmentAnswer,
 )
+from .control_effectiveness import ControlImplementation, ControlEffectivenessTest
 from .smart_catalog import (
     ThreatCatalog,
     WeaknessCatalog,
@@ -80,4 +81,5 @@ __all__ = [
     "ThreatAssetCategory", "WeaknessAssetCategory", "ControlAssetCategory",
     "ThreatWeaknessLink", "ThreatControlLink", "WeaknessControlLink",
     "AIProviderConfig", "AIAuditLog",
+    "ControlImplementation", "ControlEffectivenessTest",
 ]

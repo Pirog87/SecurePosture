@@ -2,7 +2,7 @@
 Smart Engine — rule-based suggestion engine for Smart Catalog.
 Works ALWAYS, independent of AI configuration.
 """
-from sqlalchemy import select, func
+from sqlalchemy import case, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.smart_catalog import (
@@ -39,7 +39,7 @@ class SuggestionEngine:
             .where(WeaknessCatalog.is_active.is_(True))
             .order_by(
                 # HIGH first, then MEDIUM, then LOW
-                func.case(
+                case(
                     (ThreatWeaknessLink.relevance == "HIGH", 0),
                     (ThreatWeaknessLink.relevance == "MEDIUM", 1),
                     else_=2,
@@ -72,7 +72,7 @@ class SuggestionEngine:
             .where(ThreatControlLink.threat_id == threat_id)
             .where(ControlCatalog.is_active.is_(True))
             .order_by(
-                func.case(
+                case(
                     (ThreatControlLink.effectiveness == "HIGH", 0),
                     (ThreatControlLink.effectiveness == "MEDIUM", 1),
                     else_=2,
@@ -105,7 +105,7 @@ class SuggestionEngine:
             .where(WeaknessControlLink.weakness_id == weakness_id)
             .where(ControlCatalog.is_active.is_(True))
             .order_by(
-                func.case(
+                case(
                     (WeaknessControlLink.effectiveness == "HIGH", 0),
                     (WeaknessControlLink.effectiveness == "MEDIUM", 1),
                     else_=2,
@@ -137,7 +137,7 @@ class SuggestionEngine:
             .where(ThreatControlLink.control_id == control_id)
             .where(ThreatCatalog.is_active.is_(True))
             .order_by(
-                func.case(
+                case(
                     (ThreatControlLink.effectiveness == "HIGH", 0),
                     (ThreatControlLink.effectiveness == "MEDIUM", 1),
                     else_=2,

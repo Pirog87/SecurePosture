@@ -3,8 +3,12 @@ Framework Import Service — parses CISO Assistant Excel/YAML files.
 
 Supports:
   - Excel v2 format (tabs: library_content + framework nodes)
-  - YAML native format
+  - YAML native format (flat list with parent_urn + depth, or nested children)
   - Default dimension creation when framework has no scale defined
+
+Key fix (v2): URN normalization to lowercase + two-pass parent resolution
+to handle CISO Assistant files where parent_urn references are not always
+ordered before their children.
 """
 from __future__ import annotations
 
@@ -21,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.framework import (
     AssessmentDimension, DimensionLevel, Framework, FrameworkNode,
+    FrameworkVersionHistory,
 )
 
 log = logging.getLogger(__name__)
@@ -33,14 +38,21 @@ log = logging.getLogger(__name__)
 DEFAULT_DIMENSION = {
     "dimension_key": "compliance_level",
     "name": "Compliance Level",
-    "name_pl": "Poziom zgodności",
+    "name_pl": "Poziom zgodnosci",
     "levels": [
         {"order": 0, "value": 0.00, "label": "Not implemented", "label_pl": "Niezaimplementowane", "color": "#EF4444"},
-        {"order": 1, "value": 0.33, "label": "Partially implemented", "label_pl": "Częściowo", "color": "#EAB308"},
-        {"order": 2, "value": 0.66, "label": "Largely implemented", "label_pl": "W dużej mierze", "color": "#22C55E"},
-        {"order": 3, "value": 1.00, "label": "Fully implemented", "label_pl": "W pełni", "color": "#16A34A"},
+        {"order": 1, "value": 0.33, "label": "Partially implemented", "label_pl": "Czesciowo", "color": "#EAB308"},
+        {"order": 2, "value": 0.66, "label": "Largely implemented", "label_pl": "W duzej mierze", "color": "#22C55E"},
+        {"order": 3, "value": 1.00, "label": "Fully implemented", "label_pl": "W pelni", "color": "#16A34A"},
     ],
 }
+
+
+def _normalize_urn(urn: str | None) -> str | None:
+    """Normalize URN to lowercase and strip whitespace for consistent lookups."""
+    if not urn:
+        return None
+    return urn.strip().lower()
 
 
 async def _create_default_dimensions(s: AsyncSession, fw: Framework) -> int:
@@ -100,9 +112,49 @@ async def _create_dimensions_from_score_def(
     return count
 
 
-# ═══════════════════════════════════════════════
+async def _create_dimensions_from_scores_definition(
+    s: AsyncSession, fw: Framework, scores_def: list[dict]
+) -> int:
+    """Create dimensions from CISO Assistant scores_definition format.
+
+    CISO Assistant uses 'scores_definition' with score/name/description fields
+    to define maturity levels as a single dimension.
+    """
+    dim = AssessmentDimension(
+        framework_id=fw.id,
+        dimension_key="maturity",
+        name="Maturity Level",
+        name_pl="Poziom dojrzalosci",
+        order_id=1,
+        weight=Decimal("1.00"),
+    )
+    s.add(dim)
+    await s.flush()
+
+    for idx, score_item in enumerate(scores_def):
+        score_val = score_item.get("score", idx)
+        max_score = max((s_item.get("score", 0) for s_item in scores_def), default=1) or 1
+        normalized = float(score_val) / float(max_score)
+
+        colors = ["#EF4444", "#F97316", "#EAB308", "#22C55E", "#16A34A", "#059669"]
+        color = colors[min(idx, len(colors) - 1)]
+
+        s.add(DimensionLevel(
+            dimension_id=dim.id,
+            level_order=idx,
+            value=Decimal(str(round(normalized, 2))),
+            label=score_item.get("name", f"Level {score_val}"),
+            label_pl=None,
+            description=score_item.get("description"),
+            color=color,
+        ))
+
+    return 1
+
+
+# ===================================================
 # EXCEL PARSER (CISO Assistant v2 format)
-# ═══════════════════════════════════════════════
+# ===================================================
 
 async def import_from_excel(
     s: AsyncSession, file: BinaryIO, imported_by: str = "admin"
@@ -114,7 +166,7 @@ async def import_from_excel(
     meta = _read_excel_metadata(wb)
 
     # 2. Check for duplicate URN
-    fw_urn = meta.get("framework_urn")
+    fw_urn = _normalize_urn(meta.get("framework_urn"))
     if fw_urn:
         existing = (await s.execute(
             select(Framework).where(Framework.urn == fw_urn)
@@ -137,6 +189,9 @@ async def import_from_excel(
         implementation_groups_definition=meta.get("implementation_groups_definition"),
         imported_at=datetime.utcnow(),
         imported_by=imported_by,
+        lifecycle_status="published",
+        edit_version=1,
+        published_version=meta.get("library_version"),
     )
     s.add(fw)
     await s.flush()
@@ -156,6 +211,17 @@ async def import_from_excel(
         dims_count = await _create_dimensions_from_score_def(s, fw, score_def)
     else:
         dims_count = await _create_default_dimensions(s, fw)
+
+    # 7. Create initial version record
+    s.add(FrameworkVersionHistory(
+        framework_id=fw.id,
+        edit_version=1,
+        lifecycle_status="published",
+        change_summary=f"Import z Excel: {fw.name}",
+        changed_by=imported_by,
+        snapshot_nodes_count=total,
+        snapshot_assessable_count=assessable,
+    ))
 
     wb.close()
     return fw
@@ -224,15 +290,15 @@ def _read_excel_nodes(wb, tab_name: str | None) -> list[dict]:
     return nodes
 
 
-# ═══════════════════════════════════════════════
+# ===================================================
 # YAML PARSER (CISO Assistant native format)
-# ═══════════════════════════════════════════════
+# ===================================================
 
 def _extract_framework_from_yaml(data: dict) -> tuple[dict, dict]:
     """Extract the framework dict and the top-level library metadata from YAML.
 
     Handles multiple CISO Assistant YAML layouts:
-      1. objects.framework  (dict — current format)
+      1. objects.framework  (dict -- current format)
       2. objects.frameworks (list)
       3. objects as list of typed objects (legacy)
       4. Direct framework at top level (no objects wrapper)
@@ -292,7 +358,7 @@ async def import_from_yaml(
     fw_data, lib_meta = _extract_framework_from_yaml(data)
 
     # Check for duplicate URN
-    fw_urn = fw_data.get("urn")
+    fw_urn = _normalize_urn(fw_data.get("urn") or lib_meta.get("urn"))
     if fw_urn:
         existing = (await s.execute(
             select(Framework).where(Framework.urn == fw_urn)
@@ -300,7 +366,7 @@ async def import_from_yaml(
         if existing:
             raise ValueError(f"Framework with URN '{fw_urn}' already exists (id={existing.id})")
 
-    # version can be int in YAML — convert to str
+    # version can be int in YAML -- convert to str
     version_raw = fw_data.get("version") or lib_meta.get("version")
     version_str = str(version_raw) if version_raw is not None else None
 
@@ -319,24 +385,50 @@ async def import_from_yaml(
         implementation_groups_definition=fw_data.get("implementation_groups_definition"),
         imported_at=datetime.utcnow(),
         imported_by=imported_by,
+        lifecycle_status="published",
+        edit_version=1,
+        published_version=version_str,
     )
     s.add(fw)
     await s.flush()
 
-    # Parse nodes — CISO Assistant uses flat list with parent_urn + depth
+    # Parse nodes -- CISO Assistant uses flat list with parent_urn + depth
     req_nodes = fw_data.get("requirement_nodes", [])
+    if not req_nodes:
+        log.warning("No requirement_nodes found in YAML for framework %s", fw.name)
+
     nodes_data = _flatten_yaml_nodes(req_nodes)
 
     total, assessable = await _insert_nodes(s, fw, nodes_data)
     fw.total_nodes = total
     fw.total_assessable = assessable
 
-    # Create dimensions
-    score_def = fw_data.get("scores") or fw_data.get("score_definition")
-    if score_def and isinstance(score_def, list):
-        await _create_dimensions_from_score_def(s, fw, score_def)
+    log.info(
+        "Imported framework %s: %d nodes (%d assessable), URN=%s",
+        fw.name, total, assessable, fw_urn,
+    )
+
+    # Create dimensions from scores_definition or score_definition
+    scores_def = fw_data.get("scores_definition")
+    if scores_def and isinstance(scores_def, list):
+        await _create_dimensions_from_scores_definition(s, fw, scores_def)
     else:
-        await _create_default_dimensions(s, fw)
+        score_def = fw_data.get("scores") or fw_data.get("score_definition")
+        if score_def and isinstance(score_def, list):
+            await _create_dimensions_from_score_def(s, fw, score_def)
+        else:
+            await _create_default_dimensions(s, fw)
+
+    # Create initial version record
+    s.add(FrameworkVersionHistory(
+        framework_id=fw.id,
+        edit_version=1,
+        lifecycle_status="published",
+        change_summary=f"Import z YAML: {fw.name}",
+        changed_by=imported_by,
+        snapshot_nodes_count=total,
+        snapshot_assessable_count=assessable,
+    ))
 
     return fw
 
@@ -369,23 +461,30 @@ def _flatten_yaml_nodes(nodes: list[dict], depth: int = 1) -> list[dict]:
         # Support nested children format
         children = node.get("children", [])
         if children:
+            # Set parent_urn for children if they don't have one
+            parent_urn = node.get("urn")
+            for child in children:
+                if not child.get("parent_urn") and parent_urn:
+                    child["parent_urn"] = parent_urn
             result.extend(_flatten_yaml_nodes(children, depth + 1))
 
     return result
 
 
-# ═══════════════════════════════════════════════
+# ===================================================
 # SHARED: Insert nodes from flat list
-# ═══════════════════════════════════════════════
+# ===================================================
 
 async def _insert_nodes(
     s: AsyncSession, fw: Framework, nodes_data: list[dict]
 ) -> tuple[int, int]:
     """Insert framework nodes. Returns (total, assessable) counts.
 
-    Supports parent resolution via:
-      1. parent_urn (CISO Assistant current format)
-      2. Depth-based auto-parenting (fallback)
+    Uses TWO-PASS approach for robust parent resolution:
+      Pass 1: Insert all nodes (without parent_id) and build URN->ID map
+      Pass 2: Update parent_id using parent_urn or depth-based fallback
+
+    This handles CISO Assistant YAML files regardless of node ordering.
     """
     if not nodes_data:
         return (0, 0)
@@ -393,45 +492,49 @@ async def _insert_nodes(
     total = 0
     assessable = 0
 
-    # Track parent resolution
-    parent_stack: dict[int, int] = {}  # depth → node_id
-    urn_to_id: dict[str, int] = {}  # urn → node_id (for parent_urn lookup)
-
-    # Two-pass if parent_urn is used: first insert all, then update parents
-    # But we can do single-pass since CISO Assistant YAML lists parents before children
+    # Determine if we have parent_urn references
     has_parent_urns = any(nd.get("parent_urn") for nd in nodes_data)
+
+    # Track nodes for parent resolution
+    urn_to_id: dict[str, int] = {}  # normalized_urn -> node_id
+    inserted_nodes: list[tuple[int, dict]] = []  # (node_id, original_data)
+    depth_stack: dict[int, int] = {}  # depth -> most_recent_node_id_at_that_depth
 
     for idx, nd in enumerate(nodes_data):
         depth = int(nd.get("depth", 1))
         is_assessable = bool(nd.get("assessable", False))
 
-        # Determine parent
-        parent_id = None
-        parent_urn = nd.get("parent_urn")
-        if parent_urn and has_parent_urns:
-            parent_id = urn_to_id.get(parent_urn)
-        elif depth > 1:
-            parent_id = parent_stack.get(depth - 1)
-
         ig = nd.get("implementation_groups")
         if ig and isinstance(ig, list):
             ig = ",".join(str(x) for x in ig)
+        elif ig and not isinstance(ig, str):
+            ig = str(ig)
 
         threats = nd.get("threats")
         if threats and isinstance(threats, str):
             threats = None  # Only store if dict/list
+        if isinstance(threats, list):
+            threats = threats  # Keep as list (stored as JSON)
 
         ref_controls = nd.get("reference_controls")
         if ref_controls and isinstance(ref_controls, str):
             ref_controls = None
+        if isinstance(ref_controls, list):
+            ref_controls = ref_controls
 
-        # Ensure name is not empty — use ref_id or description as fallback
-        name = str(nd.get("name", "")) or str(nd.get("ref_id", "")) or str(nd.get("description", ""))[:200] or f"Node {idx + 1}"
+        # Ensure name is not empty -- use ref_id or description as fallback
+        name = (
+            str(nd.get("name") or "").strip()
+            or str(nd.get("ref_id") or "").strip()
+            or str(nd.get("description") or "")[:200].strip()
+            or f"Node {idx + 1}"
+        )
 
+        # PASS 1: Insert node without parent (we'll set it in pass 2)
         node = FrameworkNode(
             framework_id=fw.id,
-            parent_id=parent_id,
-            urn=nd.get("urn"),
+            parent_id=None,  # Will be resolved in pass 2
+            urn=_normalize_urn(nd.get("urn")),
             ref_id=str(nd["ref_id"]) if nd.get("ref_id") else None,
             name=name,
             name_pl=nd.get("name_pl"),
@@ -449,14 +552,49 @@ async def _insert_nodes(
         s.add(node)
         await s.flush()  # Get the ID
 
-        # Track for parent resolution
-        parent_stack[depth] = node.id
-        node_urn = nd.get("urn")
+        # Build lookup maps
+        node_urn = _normalize_urn(nd.get("urn"))
         if node_urn:
             urn_to_id[node_urn] = node.id
+
+        inserted_nodes.append((node.id, nd))
+        depth_stack[depth] = node.id
 
         total += 1
         if is_assessable:
             assessable += 1
+
+    # PASS 2: Resolve parent_id for all nodes
+    depth_stack_pass2: dict[int, int] = {}
+
+    for node_id, nd in inserted_nodes:
+        depth = int(nd.get("depth", 1))
+        parent_id = None
+
+        if has_parent_urns:
+            parent_urn = _normalize_urn(nd.get("parent_urn"))
+            if parent_urn:
+                parent_id = urn_to_id.get(parent_urn)
+                if parent_id is None:
+                    log.warning(
+                        "Parent URN '%s' not found for node '%s' (urn=%s)",
+                        parent_urn, nd.get("ref_id") or nd.get("name"), nd.get("urn"),
+                    )
+            # Fallback to depth-based if parent_urn lookup failed
+            if parent_id is None and depth > 1:
+                parent_id = depth_stack_pass2.get(depth - 1)
+        else:
+            # Pure depth-based parenting
+            if depth > 1:
+                parent_id = depth_stack_pass2.get(depth - 1)
+
+        if parent_id is not None:
+            node_obj = await s.get(FrameworkNode, node_id)
+            if node_obj:
+                node_obj.parent_id = parent_id
+
+        depth_stack_pass2[depth] = node_id
+
+    await s.flush()
 
     return (total, assessable)

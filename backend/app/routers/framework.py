@@ -1,43 +1,48 @@
 """
-Framework Engine — /api/v1/frameworks
+Framework Engine -- /api/v1/frameworks
 
 CRUD for frameworks, nodes, area mappings, dimensions.
 Import from Excel/YAML/GitHub.
+Manual creation, editing with versioning, lifecycle statuses.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_session
 from app.models.framework import (
     AssessmentDimension, DimensionLevel, Framework, FrameworkNode,
-    FrameworkNodeSecurityArea,
+    FrameworkNodeSecurityArea, FrameworkVersionHistory, LIFECYCLE_STATUSES,
 )
 from app.models.security_area import SecurityDomain
 from app.schemas.framework import (
     AreaMappingBulkCreate, AreaMappingOut, AutoMapResult,
     DimensionOut, DimensionsUpdate,
-    FrameworkBrief, FrameworkImportResult, FrameworkMetrics, FrameworkMetricUnit,
-    FrameworkNodeBrief, FrameworkNodeOut, FrameworkNodeTreeOut, FrameworkOut,
+    FrameworkBrief, FrameworkCreate, FrameworkImportResult, FrameworkMetrics,
+    FrameworkMetricUnit, FrameworkNodeBrief, FrameworkNodeCreate,
+    FrameworkNodeOut, FrameworkNodeTreeOut, FrameworkNodeUpdate, FrameworkOut,
+    FrameworkUpdate, FrameworkVersionOut, LifecycleChangeRequest,
 )
 from app.services.framework_import import import_from_excel, import_from_yaml
 
 router = APIRouter(prefix="/api/v1/frameworks", tags=["Frameworks"])
 
 
-# ═══════════════════════════════════════════════
-# METRICS — must be before /{fw_id} to avoid path collision
-# ═══════════════════════════════════════════════
+# ===================================================
+# METRICS -- must be before /{fw_id} to avoid path collision
+# ===================================================
 
 @router.get("/metrics", response_model=FrameworkMetrics, summary="Metryki Control Maturity")
 async def get_metrics(
-    framework_id: int | None = Query(None, description="ID frameworka (domyślnie: najnowszy aktywny)"),
+    framework_id: int | None = Query(None, description="ID frameworka (domyslnie: najnowszy aktywny)"),
     s: AsyncSession = Depends(get_session),
 ):
-    """Latest approved assessment scores per org unit — for Security Score pillar."""
+    """Latest approved assessment scores per org unit -- for Security Score pillar."""
     from app.models.framework import Assessment
     from app.models.org_unit import OrgUnit
     from sqlalchemy import and_
@@ -51,7 +56,7 @@ async def get_metrics(
         )).scalar_one_or_none()
 
     if not fw:
-        raise HTTPException(404, "Brak aktywnych frameworków")
+        raise HTTPException(404, "Brak aktywnych frameworkow")
 
     sub = (
         select(
@@ -101,23 +106,75 @@ async def get_metrics(
     )
 
 
-# ═══════════════════════════════════════════════
-# FRAMEWORKS — CRUD
-# ═══════════════════════════════════════════════
+# ===================================================
+# FRAMEWORKS -- CRUD
+# ===================================================
 
-@router.get("", response_model=list[FrameworkBrief], summary="Lista frameworków")
+@router.get("", response_model=list[FrameworkBrief], summary="Lista frameworkow")
 async def list_frameworks(
     is_active: bool | None = Query(None),
+    lifecycle_status: str | None = Query(None),
     s: AsyncSession = Depends(get_session),
 ):
     q = select(Framework).order_by(Framework.name)
     if is_active is not None:
         q = q.where(Framework.is_active == is_active)
+    if lifecycle_status:
+        q = q.where(Framework.lifecycle_status == lifecycle_status)
     rows = (await s.execute(q)).scalars().all()
     return [FrameworkBrief.model_validate(fw) for fw in rows]
 
 
-@router.get("/{fw_id}", response_model=FrameworkOut, summary="Szczegóły frameworka")
+@router.post("", response_model=FrameworkOut, summary="Nowy framework (reczny)")
+async def create_framework(
+    body: FrameworkCreate,
+    s: AsyncSession = Depends(get_session),
+):
+    """Create a new empty framework manually from scratch."""
+    from app.services.framework_import import _create_default_dimensions
+
+    fw = Framework(
+        name=body.name,
+        ref_id=body.ref_id,
+        description=body.description,
+        version=body.version,
+        provider=body.provider,
+        locale=body.locale,
+        source_format="manual",
+        lifecycle_status="draft",
+        edit_version=1,
+        imported_at=datetime.utcnow(),
+        imported_by="manual",
+    )
+    s.add(fw)
+    await s.flush()
+
+    # Create default dimension
+    await _create_default_dimensions(s, fw)
+
+    # Create initial version record
+    s.add(FrameworkVersionHistory(
+        framework_id=fw.id,
+        edit_version=1,
+        lifecycle_status="draft",
+        change_summary="Utworzenie frameworka",
+        changed_by="admin",
+        snapshot_nodes_count=0,
+        snapshot_assessable_count=0,
+    ))
+
+    await s.commit()
+    await s.refresh(fw, attribute_names=["dimensions"])
+
+    # Reload with dimensions
+    fw = await s.get(
+        Framework, fw.id,
+        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
+    )
+    return FrameworkOut.model_validate(fw)
+
+
+@router.get("/{fw_id}", response_model=FrameworkOut, summary="Szczegoly frameworka")
 async def get_framework(fw_id: int, s: AsyncSession = Depends(get_session)):
     fw = await s.get(
         Framework, fw_id,
@@ -128,30 +185,162 @@ async def get_framework(fw_id: int, s: AsyncSession = Depends(get_session)):
     return FrameworkOut.model_validate(fw)
 
 
+@router.put("/{fw_id}", response_model=FrameworkOut, summary="Edycja metadanych frameworka")
+async def update_framework(
+    fw_id: int, body: FrameworkUpdate, s: AsyncSession = Depends(get_session),
+):
+    """Update framework metadata and bump edit version."""
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Framework nie istnieje")
+
+    # Update provided fields
+    if body.name is not None:
+        fw.name = body.name
+    if body.ref_id is not None:
+        fw.ref_id = body.ref_id
+    if body.description is not None:
+        fw.description = body.description
+    if body.version is not None:
+        fw.version = body.version
+    if body.provider is not None:
+        fw.provider = body.provider
+    if body.locale is not None:
+        fw.locale = body.locale
+    if body.published_version is not None:
+        fw.published_version = body.published_version
+
+    # Bump version
+    fw.edit_version += 1
+    fw.last_edited_by = "admin"
+    fw.last_edited_at = datetime.utcnow()
+
+    # Record version history
+    s.add(FrameworkVersionHistory(
+        framework_id=fw.id,
+        edit_version=fw.edit_version,
+        lifecycle_status=fw.lifecycle_status,
+        change_summary=body.change_summary or "Edycja metadanych",
+        changed_by="admin",
+        snapshot_nodes_count=fw.total_nodes,
+        snapshot_assessable_count=fw.total_assessable,
+    ))
+
+    await s.commit()
+
+    fw = await s.get(
+        Framework, fw_id,
+        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
+    )
+    return FrameworkOut.model_validate(fw)
+
+
 @router.delete("/{fw_id}", summary="Soft-delete framework")
 async def delete_framework(fw_id: int, s: AsyncSession = Depends(get_session)):
     fw = await s.get(Framework, fw_id)
     if not fw:
         raise HTTPException(404, "Framework nie istnieje")
     fw.is_active = False
+    fw.lifecycle_status = "archived"
     await s.commit()
     return {"status": "archived", "id": fw_id}
 
 
-# ═══════════════════════════════════════════════
-# FRAMEWORK NODES — tree & list
-# ═══════════════════════════════════════════════
+# ===================================================
+# LIFECYCLE STATUS
+# ===================================================
+
+VALID_TRANSITIONS = {
+    "draft": ["review", "published", "archived"],
+    "review": ["draft", "published", "archived"],
+    "published": ["deprecated", "draft", "archived"],
+    "deprecated": ["archived", "draft"],
+    "archived": ["draft"],
+}
+
+
+@router.put("/{fw_id}/lifecycle", response_model=FrameworkOut, summary="Zmiana statusu cyklu zycia")
+async def change_lifecycle(
+    fw_id: int, body: LifecycleChangeRequest, s: AsyncSession = Depends(get_session),
+):
+    """Change framework lifecycle status with transition validation."""
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Framework nie istnieje")
+
+    new_status = body.status
+    if new_status not in LIFECYCLE_STATUSES:
+        raise HTTPException(400, f"Nieprawidlowy status: {new_status}. Dozwolone: {', '.join(LIFECYCLE_STATUSES)}")
+
+    current = fw.lifecycle_status
+    allowed = VALID_TRANSITIONS.get(current, [])
+    if new_status not in allowed:
+        raise HTTPException(
+            400,
+            f"Nie mozna zmienic statusu z '{current}' na '{new_status}'. "
+            f"Dozwolone przejscia: {', '.join(allowed)}",
+        )
+
+    old_status = fw.lifecycle_status
+    fw.lifecycle_status = new_status
+    fw.edit_version += 1
+    fw.last_edited_by = "admin"
+    fw.last_edited_at = datetime.utcnow()
+
+    if new_status == "archived":
+        fw.is_active = False
+    elif old_status == "archived":
+        fw.is_active = True
+
+    # Record version
+    s.add(FrameworkVersionHistory(
+        framework_id=fw.id,
+        edit_version=fw.edit_version,
+        lifecycle_status=new_status,
+        change_summary=body.change_summary or f"Zmiana statusu: {old_status} -> {new_status}",
+        changed_by="admin",
+        snapshot_nodes_count=fw.total_nodes,
+        snapshot_assessable_count=fw.total_assessable,
+    ))
+
+    await s.commit()
+
+    fw = await s.get(
+        Framework, fw_id,
+        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
+    )
+    return FrameworkOut.model_validate(fw)
+
+
+# ===================================================
+# VERSION HISTORY
+# ===================================================
+
+@router.get("/{fw_id}/versions", response_model=list[FrameworkVersionOut], summary="Historia wersji")
+async def get_versions(fw_id: int, s: AsyncSession = Depends(get_session)):
+    q = (
+        select(FrameworkVersionHistory)
+        .where(FrameworkVersionHistory.framework_id == fw_id)
+        .order_by(FrameworkVersionHistory.edit_version.desc())
+    )
+    rows = (await s.execute(q)).scalars().all()
+    return [FrameworkVersionOut.model_validate(v) for v in rows]
+
+
+# ===================================================
+# FRAMEWORK NODES -- tree & list
+# ===================================================
 
 @router.get("/{fw_id}/tree", response_model=list[FrameworkNodeTreeOut], summary="Drzewo nodes")
 async def get_framework_tree(fw_id: int, s: AsyncSession = Depends(get_session)):
     q = (
         select(FrameworkNode)
         .where(FrameworkNode.framework_id == fw_id, FrameworkNode.is_active.is_(True))
-        .order_by(FrameworkNode.depth, FrameworkNode.order_id)
+        .order_by(FrameworkNode.order_id)
     )
     all_nodes = list((await s.execute(q)).scalars().all())
 
-    # Build tree — construct manually to avoid lazy-load of ORM `children` relationship
+    # Build tree -- construct manually to avoid lazy-load of ORM `children` relationship
     node_map: dict[int, FrameworkNodeTreeOut] = {}
     roots: list[FrameworkNodeTreeOut] = []
 
@@ -201,9 +390,180 @@ async def list_nodes(
     return [FrameworkNodeBrief.model_validate(n) for n in rows]
 
 
-# ═══════════════════════════════════════════════
+# ===================================================
+# NODE CRUD
+# ===================================================
+
+@router.post("/{fw_id}/nodes", response_model=FrameworkNodeOut, summary="Dodaj wezel")
+async def create_node(
+    fw_id: int, body: FrameworkNodeCreate, s: AsyncSession = Depends(get_session),
+):
+    """Add a new node to a framework."""
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Framework nie istnieje")
+
+    # Determine depth based on parent
+    depth = 1
+    if body.parent_id:
+        parent = await s.get(FrameworkNode, body.parent_id)
+        if not parent or parent.framework_id != fw_id:
+            raise HTTPException(400, "Nieprawidlowy parent_id")
+        depth = parent.depth + 1
+
+    # Get max order_id for this framework
+    max_order = (await s.execute(
+        select(func.max(FrameworkNode.order_id))
+        .where(FrameworkNode.framework_id == fw_id)
+    )).scalar() or 0
+
+    node = FrameworkNode(
+        framework_id=fw_id,
+        parent_id=body.parent_id,
+        ref_id=body.ref_id,
+        name=body.name,
+        name_pl=body.name_pl,
+        description=body.description,
+        description_pl=body.description_pl,
+        depth=depth,
+        order_id=max_order + 1,
+        assessable=body.assessable,
+        implementation_groups=body.implementation_groups,
+        weight=body.weight,
+        importance=body.importance,
+        annotation=body.annotation,
+        typical_evidence=body.typical_evidence,
+    )
+    s.add(node)
+    await s.flush()
+
+    # Update framework counts
+    fw.total_nodes += 1
+    if body.assessable:
+        fw.total_assessable += 1
+    fw.edit_version += 1
+    fw.last_edited_by = "admin"
+    fw.last_edited_at = datetime.utcnow()
+
+    await s.commit()
+    await s.refresh(node)
+    return FrameworkNodeOut.model_validate(node)
+
+
+@router.put("/{fw_id}/nodes/{node_id}", response_model=FrameworkNodeOut, summary="Edycja wezla")
+async def update_node(
+    fw_id: int, node_id: int, body: FrameworkNodeUpdate,
+    s: AsyncSession = Depends(get_session),
+):
+    """Update an existing framework node."""
+    node = await s.get(FrameworkNode, node_id)
+    if not node or node.framework_id != fw_id:
+        raise HTTPException(404, "Wezel nie istnieje w tym frameworku")
+
+    fw = await s.get(Framework, fw_id)
+    was_assessable = node.assessable
+
+    if body.name is not None:
+        node.name = body.name
+    if body.ref_id is not None:
+        node.ref_id = body.ref_id
+    if body.name_pl is not None:
+        node.name_pl = body.name_pl
+    if body.description is not None:
+        node.description = body.description
+    if body.description_pl is not None:
+        node.description_pl = body.description_pl
+    if body.assessable is not None:
+        node.assessable = body.assessable
+    if body.implementation_groups is not None:
+        node.implementation_groups = body.implementation_groups
+    if body.weight is not None:
+        node.weight = body.weight
+    if body.importance is not None:
+        node.importance = body.importance
+    if body.annotation is not None:
+        node.annotation = body.annotation
+    if body.typical_evidence is not None:
+        node.typical_evidence = body.typical_evidence
+
+    # Handle parent change (move node)
+    if body.parent_id is not None:
+        if body.parent_id == 0:
+            # Move to root
+            node.parent_id = None
+            node.depth = 1
+        else:
+            parent = await s.get(FrameworkNode, body.parent_id)
+            if not parent or parent.framework_id != fw_id:
+                raise HTTPException(400, "Nieprawidlowy parent_id")
+            if parent.id == node.id:
+                raise HTTPException(400, "Wezel nie moze byc swoim wlasnym rodzicem")
+            node.parent_id = body.parent_id
+            node.depth = parent.depth + 1
+
+    # Update assessable count if changed
+    if body.assessable is not None and was_assessable != body.assessable:
+        if body.assessable:
+            fw.total_assessable += 1
+        else:
+            fw.total_assessable = max(0, fw.total_assessable - 1)
+
+    fw.edit_version += 1
+    fw.last_edited_by = "admin"
+    fw.last_edited_at = datetime.utcnow()
+
+    await s.commit()
+    await s.refresh(node)
+    return FrameworkNodeOut.model_validate(node)
+
+
+@router.delete("/{fw_id}/nodes/{node_id}", summary="Usun wezel")
+async def delete_node(
+    fw_id: int, node_id: int, s: AsyncSession = Depends(get_session),
+):
+    """Delete a framework node (soft-delete by setting is_active=false).
+    Children are re-parented to the deleted node's parent.
+    """
+    node = await s.get(FrameworkNode, node_id)
+    if not node or node.framework_id != fw_id:
+        raise HTTPException(404, "Wezel nie istnieje w tym frameworku")
+
+    fw = await s.get(Framework, fw_id)
+
+    # Re-parent children to this node's parent
+    children = (await s.execute(
+        select(FrameworkNode).where(
+            FrameworkNode.parent_id == node_id,
+            FrameworkNode.is_active.is_(True),
+        )
+    )).scalars().all()
+
+    for child in children:
+        child.parent_id = node.parent_id
+        if node.parent_id is None:
+            child.depth = 1
+        else:
+            parent = await s.get(FrameworkNode, node.parent_id)
+            child.depth = (parent.depth + 1) if parent else 1
+
+    # Soft-delete the node
+    node.is_active = False
+
+    # Update counts
+    fw.total_nodes = max(0, fw.total_nodes - 1)
+    if node.assessable:
+        fw.total_assessable = max(0, fw.total_assessable - 1)
+    fw.edit_version += 1
+    fw.last_edited_by = "admin"
+    fw.last_edited_at = datetime.utcnow()
+
+    await s.commit()
+    return {"status": "deleted", "node_id": node_id, "children_reparented": len(children)}
+
+
+# ===================================================
 # DIMENSIONS
-# ═══════════════════════════════════════════════
+# ===================================================
 
 @router.get("/{fw_id}/dimensions", response_model=list[DimensionOut], summary="Wymiary + poziomy")
 async def get_dimensions(fw_id: int, s: AsyncSession = Depends(get_session)):
@@ -217,11 +577,11 @@ async def get_dimensions(fw_id: int, s: AsyncSession = Depends(get_session)):
     return [DimensionOut.model_validate(d) for d in dims]
 
 
-# ═══════════════════════════════════════════════
-# AREA MAPPINGS (nodes ↔ security areas)
-# ═══════════════════════════════════════════════
+# ===================================================
+# AREA MAPPINGS (nodes <-> security areas)
+# ===================================================
 
-@router.get("/{fw_id}/area-mappings", response_model=list[AreaMappingOut], summary="Mapowania nodes→areas")
+@router.get("/{fw_id}/area-mappings", response_model=list[AreaMappingOut], summary="Mapowania nodes->areas")
 async def get_area_mappings(fw_id: int, s: AsyncSession = Depends(get_session)):
     q = (
         select(
@@ -251,7 +611,7 @@ async def get_area_mappings(fw_id: int, s: AsyncSession = Depends(get_session)):
     ]
 
 
-@router.post("/{fw_id}/area-mappings/bulk", summary="Bulk assign nodes→area")
+@router.post("/{fw_id}/area-mappings/bulk", summary="Bulk assign nodes->area")
 async def bulk_create_area_mappings(
     fw_id: int, body: AreaMappingBulkCreate, s: AsyncSession = Depends(get_session),
 ):
@@ -283,7 +643,7 @@ async def bulk_create_area_mappings(
     return {"status": "ok", "created": created}
 
 
-@router.delete("/nodes/{node_id}/areas/{area_id}", summary="Usuń mapowanie node→area")
+@router.delete("/nodes/{node_id}/areas/{area_id}", summary="Usun mapowanie node->area")
 async def delete_area_mapping(node_id: int, area_id: int, s: AsyncSession = Depends(get_session)):
     q = select(FrameworkNodeSecurityArea).where(
         FrameworkNodeSecurityArea.framework_node_id == node_id,
@@ -297,9 +657,9 @@ async def delete_area_mapping(node_id: int, area_id: int, s: AsyncSession = Depe
     return {"status": "deleted"}
 
 
-# ═══════════════════════════════════════════════
+# ===================================================
 # IMPORT
-# ═══════════════════════════════════════════════
+# ===================================================
 
 @router.post("/import/excel", response_model=FrameworkImportResult, summary="Import z Excel CISO Assistant")
 async def import_excel(
@@ -307,7 +667,7 @@ async def import_excel(
     s: AsyncSession = Depends(get_session),
 ):
     if not file.filename or not file.filename.endswith((".xlsx", ".xls")):
-        raise HTTPException(400, "Plik musi mieć rozszerzenie .xlsx")
+        raise HTTPException(400, "Plik musi miec rozszerzenie .xlsx")
 
     try:
         fw = await import_from_excel(s, file.file, imported_by="admin")
@@ -329,7 +689,7 @@ async def import_excel(
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Błąd importu: {e}")
+        raise HTTPException(500, f"Blad importu: {e}")
 
 
 @router.post("/import/yaml", response_model=FrameworkImportResult, summary="Import z YAML CISO Assistant")
@@ -338,7 +698,7 @@ async def import_yaml_endpoint(
     s: AsyncSession = Depends(get_session),
 ):
     if not file.filename or not file.filename.endswith((".yaml", ".yml")):
-        raise HTTPException(400, "Plik musi mieć rozszerzenie .yaml lub .yml")
+        raise HTTPException(400, "Plik musi miec rozszerzenie .yaml lub .yml")
 
     try:
         fw = await import_from_yaml(s, file.file, imported_by="admin")
@@ -360,12 +720,12 @@ async def import_yaml_endpoint(
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Błąd importu: {e}")
+        raise HTTPException(500, f"Blad importu: {e}")
 
 
 @router.post("/import/github", response_model=FrameworkImportResult, summary="Import z GitHub CISO Assistant")
 async def import_from_github(
-    framework_path: str = Query(..., description="Ścieżka pliku, np. 'cis-controls-v8.xlsx'"),
+    framework_path: str = Query(..., description="Sciezka pliku, np. 'cis-controls-v8.xlsx'"),
     s: AsyncSession = Depends(get_session),
 ):
     import httpx
@@ -379,7 +739,7 @@ async def import_from_github(
             resp = await client.get(url)
             resp.raise_for_status()
     except httpx.HTTPError as e:
-        raise HTTPException(400, f"Nie udało się pobrać pliku: {e}")
+        raise HTTPException(400, f"Nie udalo sie pobrac pliku: {e}")
 
     file_bytes = io.BytesIO(resp.content)
 
@@ -389,7 +749,7 @@ async def import_from_github(
         elif framework_path.endswith((".xlsx", ".xls")):
             fw = await import_from_excel(s, file_bytes, imported_by="github-import")
         else:
-            raise HTTPException(400, "Nieobsługiwany format pliku")
+            raise HTTPException(400, "Nieobslugiwany format pliku")
 
         await s.commit()
         await s.refresh(fw)
@@ -409,14 +769,14 @@ async def import_from_github(
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
-        raise HTTPException(500, f"Błąd importu GitHub: {e}")
+        raise HTTPException(500, f"Blad importu GitHub: {e}")
 
 
-# ═══════════════════════════════════════════════
-# AUTO-MAP AREAS (seed mapping CIS → security areas)
-# ═══════════════════════════════════════════════
+# ===================================================
+# AUTO-MAP AREAS (seed mapping CIS -> security areas)
+# ===================================================
 
-# Pre-built CIS v8 → security area mapping (control ref_id → area codes)
+# Pre-built CIS v8 -> security area mapping (control ref_id -> area codes)
 _CIS_AREA_MAP: dict[str, list[str]] = {
     "1":  ["WORKSTATIONS", "SERVER_INFRA", "MOBILE_DEVICES", "NETWORK_INFRA"],
     "2":  ["WORKSTATIONS", "SERVER_INFRA"],
@@ -439,7 +799,7 @@ _CIS_AREA_MAP: dict[str, list[str]] = {
 }
 
 
-@router.post("/{fw_id}/auto-map-areas", response_model=AutoMapResult, summary="Auto-mapowanie nodes→areas (seed)")
+@router.post("/{fw_id}/auto-map-areas", response_model=AutoMapResult, summary="Auto-mapowanie nodes->areas (seed)")
 async def auto_map_areas(fw_id: int, s: AsyncSession = Depends(get_session)):
     """Auto-map framework nodes to security areas using pre-built seed mappings."""
     fw = await s.get(Framework, fw_id)
@@ -501,9 +861,9 @@ async def auto_map_areas(fw_id: int, s: AsyncSession = Depends(get_session)):
     return AutoMapResult(framework_id=fw_id, mappings_created=created)
 
 
-# ═══════════════════════════════════════════════
-# DIMENSIONS — edit scale
-# ═══════════════════════════════════════════════
+# ===================================================
+# DIMENSIONS -- edit scale
+# ===================================================
 
 @router.put("/{fw_id}/dimensions", response_model=list[DimensionOut], summary="Edycja skali ocen")
 async def update_dimensions(
@@ -526,7 +886,7 @@ async def update_dimensions(
         raise HTTPException(
             409,
             f"Framework ma {existing_assessments} aktywnych ocen. "
-            "Zmiana skali wymaga archiwizacji istniejących ocen."
+            "Zmiana skali wymaga archiwizacji istniejacych ocen."
         )
 
     old_dims = (await s.execute(

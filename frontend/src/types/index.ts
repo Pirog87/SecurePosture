@@ -748,7 +748,11 @@ export interface FrameworkBrief {
   provider: string | null;
   total_nodes: number;
   total_assessable: number;
+  lifecycle_status: string;
+  edit_version: number;
+  published_version: string | null;
   is_active: boolean;
+  source_format: string | null;
 }
 
 export interface DimensionLevel {
@@ -788,10 +792,27 @@ export interface FrameworkDetail {
   total_assessable: number;
   imported_at: string | null;
   imported_by: string | null;
+  lifecycle_status: string;
+  edit_version: number;
+  published_version: string | null;
+  last_edited_by: string | null;
+  last_edited_at: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
   dimensions: Dimension[];
+}
+
+export interface FrameworkVersionHistory {
+  id: number;
+  framework_id: number;
+  edit_version: number;
+  lifecycle_status: string;
+  change_summary: string | null;
+  changed_by: string | null;
+  changed_at: string;
+  snapshot_nodes_count: number | null;
+  snapshot_assessable_count: number | null;
 }
 
 export interface FrameworkNodeTree {

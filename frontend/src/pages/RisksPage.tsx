@@ -17,14 +17,17 @@ function riskBg(R: number) { return R >= 221 ? "var(--red-dim)" : R >= 31 ? "var
 function riskLabel(R: number) { return R >= 221 ? "Wysokie" : R >= 31 ? "Srednie" : "Niskie"; }
 
 /* ─── Section header component ─── */
+const TAB_NUMBERS: Record<string, number> = { "\u2460": 1, "\u2461": 2, "\u2462": 3, "\u2463": 4, "\u2464": 5 };
 function SectionHeader({ number, label }: { number: string; label: string }) {
+  const num = TAB_NUMBERS[number] ?? number;
   return (
-    <div style={{
-      fontSize: 12, fontWeight: 600, color: "var(--blue)", textTransform: "uppercase",
-      letterSpacing: "0.05em", marginTop: 16, marginBottom: 8, paddingBottom: 4,
-      borderBottom: "1px solid rgba(59,130,246,0.2)",
-    }}>
-      {number} {label}
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+      <div style={{
+        width: 28, height: 28, borderRadius: "50%", background: "var(--blue)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 14, fontWeight: 700, color: "#fff", flexShrink: 0,
+      }}>{num}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{label}</div>
     </div>
   );
 }
@@ -984,13 +987,15 @@ function ActionSearchWithCreate({ riskId, existingLinks, lookups, orgTree, strat
    TagMultiSelect — reusable multi-select with tags + inline add
    ═══════════════════════════════════════════════════════════════════ */
 
-function TagMultiSelect<T extends { id: number; name: string }>({ label, items, selectedIds, onChange, onAdd, color }: {
+function TagMultiSelect<T extends { id: number; name: string }>({ label, items, selectedIds, onChange, onAdd, color, icon, compact }: {
   label: string;
   items: T[];
   selectedIds: number[];
   onChange: (ids: number[]) => void;
   onAdd: (name: string) => Promise<T>;
   color: string;
+  icon?: string;
+  compact?: boolean;
 }) {
   const [search, setSearch] = useState("");
   const [adding, setAdding] = useState(false);
@@ -1015,21 +1020,34 @@ function TagMultiSelect<T extends { id: number; name: string }>({ label, items, 
   };
 
   return (
-    <div className="form-group" style={{ gridColumn: "span 2" }}>
-      <label>{label}</label>
+    <div style={{
+      borderRadius: 8, padding: compact ? "10px 12px" : "12px 14px",
+      background: `${color}06`, border: `1px solid ${color}20`,
+      borderLeft: `3px solid ${color}`,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+        {icon && <span style={{ fontSize: 14 }}>{icon}</span>}
+        <span style={{ fontSize: 12, fontWeight: 600, color }}>{label}</span>
+        <span style={{
+          fontSize: 10, background: `${color}20`, color, borderRadius: 10,
+          padding: "1px 7px", fontWeight: 600, marginLeft: 4,
+        }}>
+          {selectedIds.length}
+        </span>
+      </div>
       {/* Selected tags */}
       {selectedIds.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
           {selectedIds.map(id => {
             const item = items.find(i => i.id === id);
             return (
               <span key={id} style={{
-                display: "inline-flex", alignItems: "center", gap: 4,
-                background: color + "18", color, border: `1px solid ${color}40`,
-                borderRadius: 14, padding: "3px 10px 3px 10px", fontSize: 12, fontWeight: 500,
+                display: "inline-flex", alignItems: "center", gap: 3,
+                background: color + "18", color, border: `1px solid ${color}35`,
+                borderRadius: 12, padding: "2px 8px 2px 8px", fontSize: 11, fontWeight: 500,
               }}>
                 {item?.name ?? `#${id}`}
-                <span style={{ cursor: "pointer", marginLeft: 2, opacity: 0.7, fontWeight: 700, fontSize: 14 }}
+                <span style={{ cursor: "pointer", marginLeft: 2, opacity: 0.7, fontWeight: 700, fontSize: 13, lineHeight: 1 }}
                   onClick={() => onChange(selectedIds.filter(sid => sid !== id))}>
                   &times;
                 </span>
@@ -1042,8 +1060,8 @@ function TagMultiSelect<T extends { id: number; name: string }>({ label, items, 
       <div style={{ position: "relative" }}>
         <input
           className="form-control"
-          style={{ fontSize: 12 }}
-          placeholder={`Szukaj lub wpisz nowe...`}
+          style={{ fontSize: 12, background: "var(--bg-card)", borderColor: `${color}30` }}
+          placeholder="Szukaj lub wpisz nowe..."
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
@@ -1128,24 +1146,52 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
 
   return (
     <div>
-      <SectionHeader number="\u2462" label="Scenariusz ryzyka" />
-      {assetTypeName && (
-        <div style={{ fontSize: 11, color: "var(--blue)", marginBottom: 10, padding: "4px 8px", background: "rgba(59,130,246,0.06)", borderRadius: 6, display: "inline-block" }}>
-          Filtrowanie wg typu aktywa: <strong>{assetTypeName}</strong>
+      {/* ── Header ── */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <div style={{
+          width: 28, height: 28, borderRadius: "50%", background: "var(--blue)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 14, fontWeight: 700, color: "#fff",
+        }}>3</div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>Scenariusz ryzyka</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Zdefiniuj zagrozenia, podatnosci i zabezpieczenia</div>
         </div>
-      )}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <div className="form-group">
-          <label>Domena bezpieczenstwa</label>
-          <select className="form-control" value={securityAreaId ?? ""} onChange={e => setSecurityAreaId(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">Wybierz...</option>
-            {lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        </div>
-        <div />
+        {assetTypeName && (
+          <div style={{
+            marginLeft: "auto", fontSize: 11, color: "var(--blue)", padding: "3px 10px",
+            background: "rgba(59,130,246,0.08)", borderRadius: 12, fontWeight: 500,
+          }}>
+            Typ: <strong>{assetTypeName}</strong>
+          </div>
+        )}
+      </div>
 
+      {/* ── Domain selector — full width card ── */}
+      <div style={{
+        borderRadius: 8, padding: "10px 14px", marginBottom: 14,
+        background: "rgba(59,130,246,0.04)", border: "1px solid rgba(59,130,246,0.15)",
+        display: "flex", alignItems: "center", gap: 12,
+      }}>
+        <span style={{ fontSize: 13 }}>{"\uD83C\uDFDB\uFE0F"}</span>
+        <label style={{ fontSize: 12, fontWeight: 600, color: "var(--blue)", margin: 0, whiteSpace: "nowrap" }}>Domena bezpieczenstwa</label>
+        <select
+          className="form-control"
+          style={{ flex: 1, fontSize: 12, maxWidth: 320 }}
+          value={securityAreaId ?? ""}
+          onChange={e => setSecurityAreaId(e.target.value ? Number(e.target.value) : null)}
+        >
+          <option value="">Wybierz domene...</option>
+          {lookups.areas.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      </div>
+
+      {/* ── Threats / Vulnerabilities / Safeguards — 3 column cards ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 14 }}>
         <TagMultiSelect<Threat>
           label="Zagrozenia"
+          icon={"\u26A0\uFE0F"}
+          compact
           items={filteredThreats}
           selectedIds={threatIds}
           onChange={setThreatIds}
@@ -1159,6 +1205,8 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
 
         <TagMultiSelect<Vulnerability>
           label="Podatnosci"
+          icon={"\uD83D\uDD13"}
+          compact
           items={filteredVulns}
           selectedIds={vulnerabilityIds}
           onChange={setVulnerabilityIds}
@@ -1172,6 +1220,8 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
 
         <TagMultiSelect<Safeguard>
           label="Zabezpieczenia"
+          icon={"\uD83D\uDEE1\uFE0F"}
+          compact
           items={filteredSafeguards}
           selectedIds={safeguardIds}
           onChange={setSafeguardIds}
@@ -1182,14 +1232,43 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
             return created;
           }}
         />
+      </div>
 
-        <div className="form-group" style={{ gridColumn: "span 2" }}>
-          <label>Istniejace kontrole</label>
-          <textarea className="form-control" rows={2} value={existingControls} onChange={e => setExistingControls(e.target.value)} placeholder="Opisz istniejace kontrole i zabezpieczenia..." />
+      {/* ── Text fields — 2 column ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+        <div style={{
+          borderRadius: 8, padding: "10px 14px",
+          background: "rgba(107,114,128,0.04)", border: "1px solid var(--border)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <span style={{ fontSize: 13 }}>{"\uD83D\uDCCB"}</span>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", margin: 0 }}>Istniejace kontrole</label>
+          </div>
+          <textarea
+            className="form-control"
+            rows={2}
+            style={{ fontSize: 12 }}
+            value={existingControls}
+            onChange={e => setExistingControls(e.target.value)}
+            placeholder="Opisz istniejace kontrole i zabezpieczenia..."
+          />
         </div>
-        <div className="form-group" style={{ gridColumn: "span 2" }}>
-          <label>Opis konsekwencji</label>
-          <textarea className="form-control" rows={2} value={consequenceDescription} onChange={e => setConsequenceDescription(e.target.value)} placeholder="Opisz potencjalne konsekwencje materializacji ryzyka..." />
+        <div style={{
+          borderRadius: 8, padding: "10px 14px",
+          background: "rgba(107,114,128,0.04)", border: "1px solid var(--border)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <span style={{ fontSize: 13 }}>{"\uD83D\uDCA5"}</span>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", margin: 0 }}>Opis konsekwencji</label>
+          </div>
+          <textarea
+            className="form-control"
+            rows={2}
+            style={{ fontSize: 12 }}
+            value={consequenceDescription}
+            onChange={e => setConsequenceDescription(e.target.value)}
+            placeholder="Opisz potencjalne konsekwencje materializacji ryzyka..."
+          />
         </div>
       </div>
 
@@ -1344,13 +1423,14 @@ function SmartCatalogSuggestionsPanel({
   const LEVEL_COLORS: Record<string, string> = { HIGH: "#dc2626", MEDIUM: "#f59e0b", LOW: "#16a34a" };
 
   return (
-    <div style={{ marginTop: 16 }}>
+    <div style={{ marginTop: 2 }}>
       <div
         style={{
-          display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
-          padding: "10px 14px", borderRadius: 8,
-          background: expanded ? "rgba(139,92,246,0.06)" : "rgba(139,92,246,0.03)",
-          border: `1px solid ${expanded ? "rgba(139,92,246,0.3)" : "rgba(139,92,246,0.1)"}`,
+          display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+          padding: "10px 14px", borderRadius: expanded ? "8px 8px 0 0" : 8,
+          background: expanded ? "rgba(139,92,246,0.08)" : "rgba(139,92,246,0.03)",
+          border: `1px solid ${expanded ? "rgba(139,92,246,0.3)" : "rgba(139,92,246,0.12)"}`,
+          borderBottom: expanded ? "1px solid rgba(139,92,246,0.15)" : undefined,
           transition: "all 0.2s",
         }}
         onClick={() => {
@@ -1358,24 +1438,33 @@ function SmartCatalogSuggestionsPanel({
           if (!expanded && catalogThreats.length === 0) loadCatalogThreats();
         }}
       >
-        <span style={{ fontSize: 16 }}>&#129504;</span>
-        <span style={{ fontWeight: 600, fontSize: 13, color: "#8b5cf6" }}>Smart Catalog — Sugestie zagrozen i zabezpieczen</span>
-        <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--text-muted)" }}>
-          {expanded ? "Zwi\u0144" : "Rozwi\u0144"}
+        <div style={{
+          width: 24, height: 24, borderRadius: 6, background: "rgba(139,92,246,0.15)",
+          display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13,
+        }}>{"\uD83E\uDDE0"}</div>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 12, color: "#8b5cf6" }}>Smart Catalog</div>
+          <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Sugestie zagrozen i zabezpieczen z katalogu ISO</div>
+        </div>
+        <span style={{
+          marginLeft: "auto", fontSize: 18, color: "var(--text-muted)", lineHeight: 1,
+          transform: expanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s",
+        }}>
+          {"\u25BE"}
         </span>
       </div>
 
       {expanded && (
-        <div style={{ border: "1px solid rgba(139,92,246,0.15)", borderTop: "none", borderRadius: "0 0 8px 8px", padding: 16 }}>
+        <div style={{ border: "1px solid rgba(139,92,246,0.2)", borderTop: "none", borderRadius: "0 0 8px 8px", padding: 16 }}>
           {catalogLoading ? (
             <div style={{ textAlign: "center", color: "var(--text-muted)", padding: 16 }}>Ladowanie Smart Catalog...</div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               {/* Left: Threat picker */}
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#8b5cf6", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#8b5cf6", marginBottom: 8 }}>
                   Wybierz zagrozenie z katalogu
-                  {assetCategoryId && <span style={{ fontWeight: 400, textTransform: "none" }}> (filtr wg aktywa)</span>}
+                  {assetCategoryId && <span style={{ fontWeight: 400, color: "var(--text-muted)" }}> (filtr wg aktywa)</span>}
                 </div>
                 <input
                   className="form-control"
@@ -1583,7 +1672,7 @@ function AssetTab({ assetId, assetName, lookups, orgTree, onSelectAsset, onClear
 
   return (
     <div>
-      <SectionHeader number="\u2461" label="Identyfikacja aktywa (ISO 27005 &sect;8.2)" />
+      <SectionHeader number="\u2461" label="Identyfikacja aktywa (ISO 27005 \u00A78.2)" />
 
       {/* ── Selected asset display ── */}
       {selectedAsset ? (
@@ -2029,7 +2118,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, orgTree, saving, onSubmit
       {/* ═══ Tab: Kontekst ═══ */}
       {tab === "context" && (
         <div>
-          <SectionHeader number="\u2460" label="Kontekst (ISO 31000 &sect;5.3)" />
+          <SectionHeader number="\u2460" label="Kontekst (ISO 31000 \u00A75.3)" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div className="form-group">
               <label>Jednostka organizacyjna *</label>
@@ -2122,7 +2211,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, orgTree, saving, onSubmit
       {/* ═══ Tab: Postepowanie ═══ */}
       {tab === "treatment" && (
         <div>
-          <SectionHeader number="\u2463" label="Postepowanie z ryzykiem (ISO 27005 &sect;8.5)" />
+          <SectionHeader number="\u2463" label="Postepowanie z ryzykiem (ISO 27005 \u00A78.5)" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div className="form-group">
               <label>Strategia</label>
@@ -2237,7 +2326,7 @@ function RiskFormTabs({ editRisk, lookups, setLookups, orgTree, saving, onSubmit
       {/* ═══ Tab: Akceptacja ═══ */}
       {tab === "acceptance" && (
         <div>
-          <SectionHeader number="\u2464" label="Akceptacja i monitorowanie (ISO 27005 &sect;8.6/&sect;9)" />
+          <SectionHeader number="\u2464" label="Akceptacja i monitorowanie (ISO 27005 \u00A78.6/\u00A79)" />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div className="form-group">
               <label>Status</label>

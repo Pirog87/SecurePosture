@@ -308,8 +308,6 @@ export default function SmartCatalogPage() {
   const [allLinksLoaded, setAllLinksLoaded] = useState(false);
   const [triSearch, setTriSearch] = useState<{ threats: string; weaknesses: string; controls: string }>({ threats: "", weaknesses: "", controls: "" });
   const [triSelected, setTriSelected] = useState<{ type: "threat" | "weakness" | "control"; id: number } | null>(null);
-  const [showQuickLink, setShowQuickLink] = useState(false);
-  const [quickLinkType, setQuickLinkType] = useState<"tw" | "tc" | "wc">("tw");
   const [showEffectiveness, setShowEffectiveness] = useState(false);
 
   /* Table features per tab */

@@ -1424,26 +1424,26 @@ function SmartCatalogSuggestionsPanel({
   const applyWeakness = async (entry: SuggestionItem) => {
     const existing = lookups.vulns.find(v => v.name.toLowerCase() === entry.name.toLowerCase());
     if (existing) {
-      setVulnerabilityIds(prev => prev.includes(existing.id) ? prev : [...prev, existing.id]);
+      if (!vulnerabilityIds.includes(existing.id)) setVulnerabilityIds([...vulnerabilityIds, existing.id]);
       return;
     }
     try {
       const created = await api.post<Vulnerability>("/api/v1/weakness-catalog", { name: entry.name });
       setLookups(prev => prev ? { ...prev, vulns: [...prev.vulns, created] } : prev);
-      setVulnerabilityIds(prev => [...prev, created.id]);
+      setVulnerabilityIds([...vulnerabilityIds, created.id]);
     } catch { /* ignore */ }
   };
 
   const applyControl = async (entry: SuggestionItem) => {
     const existing = lookups.safeguards.find(s => s.name.toLowerCase() === entry.name.toLowerCase());
     if (existing) {
-      setSafeguardIds(prev => prev.includes(existing.id) ? prev : [...prev, existing.id]);
+      if (!safeguardIds.includes(existing.id)) setSafeguardIds([...safeguardIds, existing.id]);
       return;
     }
     try {
       const created = await api.post<Safeguard>("/api/v1/control-catalog", { name: entry.name });
       setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
-      setSafeguardIds(prev => [...prev, created.id]);
+      setSafeguardIds([...safeguardIds, created.id]);
     } catch { /* ignore */ }
   };
 

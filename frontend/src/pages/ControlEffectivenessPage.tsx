@@ -440,6 +440,7 @@ export default function ControlEffectivenessPage() {
         columns={columns}
         visibleColumns={visible}
         data={table.pageData}
+        rowKey={(row) => String(row.id)}
         sortField={table.sortField}
         sortDir={table.sortDir}
         onSort={table.toggleSort}
@@ -447,6 +448,13 @@ export default function ControlEffectivenessPage() {
         columnFilters={table.columnFilters}
         onColumnFilter={table.setColumnFilter}
         onRowClick={openDetail}
+        page={table.page}
+        totalPages={table.totalPages}
+        pageSize={table.pageSize}
+        totalItems={table.totalCount}
+        filteredItems={table.filteredCount}
+        onPageChange={table.setPage}
+        onPageSizeChange={table.setPageSize}
         renderCell={(row, key) => {
           if (key === "status") {
             return (
@@ -494,21 +502,6 @@ export default function ControlEffectivenessPage() {
           return undefined;
         }}
       />
-
-      {/* Pagination */}
-      {table.totalPages > 1 && (
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12 }}>
-          <button className="btn btn-xs" disabled={table.page <= 1} onClick={() => table.setPage(table.page - 1)}>
-            Poprzednia
-          </button>
-          <span style={{ fontSize: 13, lineHeight: "28px" }}>
-            {table.page} / {table.totalPages}
-          </span>
-          <button className="btn btn-xs" disabled={table.page >= table.totalPages} onClick={() => table.setPage(table.page + 1)}>
-            Następna
-          </button>
-        </div>
-      )}
 
       {/* ═══ Create/Edit Modal ═══ */}
       <Modal

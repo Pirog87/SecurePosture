@@ -35,6 +35,7 @@ from app.routers.control_effectiveness import router as control_effectiveness_ro
 from app.routers.compliance import router as compliance_router
 from app.routers.audit_workflow import programs as audit_programs_router
 from app.routers.audit_workflow import engagements as audit_engagements_router
+from app.routers.audit_workflow import findings_router as audit_findings_router
 from app.routers.framework_mapping import router as framework_mapping_router
 from app.routers.test_template import router as test_template_router
 
@@ -104,6 +105,7 @@ app.include_router(audit_programs_router)
 app.include_router(audit_engagements_router)
 app.include_router(framework_mapping_router)
 app.include_router(test_template_router)
+app.include_router(audit_findings_router)
 
 
 @app.get("/health")

@@ -463,3 +463,28 @@ async def upsert_report(eng_id: int, body: AuditReportUpsert, s: AsyncSession = 
     await s.commit()
     await s.refresh(r)
     return AuditReportOut.model_validate(r)
+
+
+# ═══════════════════════════════════════════════════════════════
+#  GLOBAL FINDINGS LIST — /api/v1/audit-findings
+# ═══════════════════════════════════════════════════════════════
+
+findings_router = APIRouter(prefix="/api/v1/audit-findings", tags=["Audit Findings"])
+
+
+@findings_router.get("/", response_model=list[ComplianceFindingOut])
+async def list_all_findings(
+    severity: str | None = None,
+    status: str | None = None,
+    s: AsyncSession = Depends(get_session),
+):
+    """List all audit findings across all engagements."""
+    q = select(ComplianceAuditFinding).order_by(
+        ComplianceAuditFinding.created_at.desc(),
+    )
+    if severity:
+        q = q.where(ComplianceAuditFinding.severity == severity)
+    if status:
+        q = q.where(ComplianceAuditFinding.status == status)
+    rows = (await s.execute(q)).scalars().all()
+    return [ComplianceFindingOut.model_validate(f) for f in rows]

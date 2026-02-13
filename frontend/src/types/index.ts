@@ -567,6 +567,11 @@ export interface ExecutiveSummary {
   kpis: KpiItem[];
   risk_counts: RiskCounts;
   avg_risk_score: number | null;
+  // Framework Engine maturity
+  maturity_score: number | null;
+  maturity_framework_name: string | null;
+  maturity_completion_pct: number | null;
+  // Legacy CIS fields (populated from Framework Engine for backward compat)
   cis_maturity_rating: number | null;
   cis_risk_addressed_pct: number | null;
   posture_score: number | null;
@@ -697,7 +702,9 @@ export interface PostureScoreResponse {
   org_unit: OrgUnitRef | null;
   score: number;
   grade: "A" | "B" | "C" | "D" | "F";
+  rating: string | null;
   dimensions: PostureDimension[];
+  config_version: number | null;
   benchmark_avg: number | null;
 }
 

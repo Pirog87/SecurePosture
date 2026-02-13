@@ -151,7 +151,15 @@ export default function DashboardPage() {
     text: `${vulns} ${pluralPL(vulns, "otwarta podatność", "otwarte podatności", "otwartych podatności")} do remediacji`,
     color: vulns > 5 ? "var(--orange)" : "var(--yellow)", bg: vulns > 5 ? "var(--orange-dim)" : "var(--yellow-dim)",
   });
-  if (exec?.cis_maturity_rating != null) {
+  if (exec?.maturity_score != null) {
+    const ms = exec.maturity_score;
+    const fwName = exec.maturity_framework_name ?? "Control Maturity";
+    if (ms < 40) findings.push({ text: `${fwName}: ${ms.toFixed(1)}/100 — znacznie poniżej oczekiwań`, color: "var(--red)", bg: "var(--red-dim)" });
+    else if (ms < 60) findings.push({ text: `${fwName}: ${ms.toFixed(1)}/100 — wymaga poprawy`, color: "var(--orange)", bg: "var(--orange-dim)" });
+    else if (ms < 80) findings.push({ text: `${fwName}: ${ms.toFixed(1)}/100 — dobry poziom, dalszy rozwój`, color: "var(--yellow)", bg: "var(--yellow-dim)" });
+    else findings.push({ text: `${fwName}: ${ms.toFixed(1)}/100 — wysoki poziom dojrzałości`, color: "var(--green)", bg: "var(--green-dim)" });
+  } else if (exec?.cis_maturity_rating != null) {
+    // Legacy CIS fallback
     const cis = exec.cis_maturity_rating;
     if (cis < 2) findings.push({ text: `CIS Maturity ${cis.toFixed(2)}/5.0 — znacznie poniżej oczekiwań`, color: "var(--red)", bg: "var(--red-dim)" });
     else if (cis < 3) findings.push({ text: `CIS Maturity ${cis.toFixed(2)}/5.0 — wymaga poprawy`, color: "var(--orange)", bg: "var(--orange-dim)" });
@@ -164,7 +172,8 @@ export default function DashboardPage() {
   const recommendations: { text: string; link: string }[] = [];
   if (rc.high > 0) recommendations.push({ text: "Przegląd ryzyk krytycznych", link: buildLink("/risks", { level: "high", org_unit_id: orgFilter || null }) });
   if ((exec?.overdue_reviews_count ?? 0) > 0) recommendations.push({ text: "Uzupełnienie zaległych przeglądów", link: "/reviews" });
-  if (exec?.cis_maturity_rating != null && exec.cis_maturity_rating < 3) recommendations.push({ text: "Rozwój kontroli CIS", link: "/cis" });
+  if (exec?.maturity_score != null && exec.maturity_score < 60) recommendations.push({ text: "Rozwój dojrzałości kontroli", link: "/frameworks" });
+  else if (exec?.cis_maturity_rating != null && exec.cis_maturity_rating < 3) recommendations.push({ text: "Rozwój kontroli", link: "/frameworks" });
   if (vulns > 3) recommendations.push({ text: "Plan remediacji podatności", link: "/vulnerabilities" });
   const weakDim = posture?.dimensions?.length ? [...posture.dimensions].sort((a, b) => a.score - b.score)[0] : null;
   if (weakDim && weakDim.score < 70) recommendations.push({ text: `Wzmocnienie: ${weakDim.name}`, link: "#" });
@@ -349,25 +358,27 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* CIS Compliance */}
-        <div className="card clickable" onClick={() => navigate("/cis")} style={{ padding: "16px 18px" }}>
+        {/* Control Maturity (Framework Engine) */}
+        <div className="card clickable" onClick={() => navigate("/frameworks")} style={{ padding: "16px 18px" }}>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
-            Zgodność CIS
+            {exec?.maturity_framework_name ?? "Control Maturity"}
           </div>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--yellow)", lineHeight: 1 }}>
-            {exec?.cis_maturity_rating != null ? exec.cis_maturity_rating.toFixed(1) : "—"}
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: pctColor(exec?.maturity_score ?? 0), lineHeight: 1 }}>
+            {exec?.maturity_score != null ? exec.maturity_score.toFixed(1) : exec?.cis_maturity_rating != null ? exec.cis_maturity_rating.toFixed(1) : "—"}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>maturity / 5.0</div>
-          {exec?.cis_risk_addressed_pct != null && (
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
+            {exec?.maturity_score != null ? "maturity / 100" : exec?.cis_maturity_rating != null ? "maturity / 5.0" : "brak oceny"}
+          </div>
+          {exec?.maturity_completion_pct != null && (
             <>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginBottom: 3 }}>
-                <span>Adresowane ryzyka</span>
-                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(exec.cis_risk_addressed_pct) }}>
-                  {Math.round(exec.cis_risk_addressed_pct)}%
+                <span>Kompletność oceny</span>
+                <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(exec.maturity_completion_pct) }}>
+                  {Math.round(exec.maturity_completion_pct)}%
                 </span>
               </div>
               <div style={{ height: 6, borderRadius: 3, overflow: "hidden", background: "var(--bg-subtle)" }}>
-                <div style={{ width: `${exec.cis_risk_addressed_pct}%`, height: "100%", borderRadius: 3, background: pctColor(exec.cis_risk_addressed_pct), transition: "width 1s ease" }} />
+                <div style={{ width: `${exec.maturity_completion_pct}%`, height: "100%", borderRadius: 3, background: pctColor(exec.maturity_completion_pct), transition: "width 1s ease" }} />
               </div>
             </>
           )}
@@ -512,7 +523,7 @@ export default function DashboardPage() {
         <div>
           {/* Score Overview */}
           <div className="card" style={{ textAlign: "center", paddingBottom: 16 }}>
-            <div className="card-title">Security Posture Score</div>
+            <div className="card-title">Security Score</div>
             <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
               <div className="score-ring" style={{ width: 140, height: 140 }}>
                 <svg width="140" height="140" viewBox="0 0 140 140" style={{ transform: "rotate(-90deg)" }}>
@@ -555,7 +566,7 @@ export default function DashboardPage() {
           {/* Posture Dimensions with insights */}
           {posture && posture.dimensions.length > 0 && (
             <div className="card">
-              <div className="card-title">Wymiary Bezpieczeństwa</div>
+              <div className="card-title">Filary Security Score</div>
               {posture.dimensions.map(d => {
                 const isWeak = weakDim?.name === d.name && d.score < 70;
                 return (
@@ -587,26 +598,28 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* CIS Maturity */}
+          {/* Control Maturity (Framework Engine) */}
           <div className="card">
-            <div className="card-title">CIS Maturity</div>
+            <div className="card-title">{exec?.maturity_framework_name ?? "Control Maturity"}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ fontSize: 28, fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: "var(--yellow)" }}>
-                {exec?.cis_maturity_rating?.toFixed(2) ?? "—"}
+              <div style={{ fontSize: 28, fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: pctColor(exec?.maturity_score ?? exec?.cis_maturity_rating ? (exec!.cis_maturity_rating! / 5 * 100) : 0) }}>
+                {exec?.maturity_score != null ? exec.maturity_score.toFixed(1) : exec?.cis_maturity_rating?.toFixed(2) ?? "—"}
               </div>
               <div>
-                <div style={{ fontSize: 12 }}>Maturity Rating</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Skala 0–5</div>
+                <div style={{ fontSize: 12 }}>Maturity Score</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  {exec?.maturity_score != null ? "Skala 0–100" : "Skala 0–5"}
+                </div>
               </div>
             </div>
-            {exec?.cis_risk_addressed_pct != null && (
+            {exec?.maturity_completion_pct != null && (
               <div style={{ marginTop: 10 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
-                  <span style={{ color: "var(--text-secondary)" }}>% Risk Addressed</span>
-                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(exec.cis_risk_addressed_pct) }}>{Math.round(exec.cis_risk_addressed_pct)}%</span>
+                  <span style={{ color: "var(--text-secondary)" }}>Kompletność oceny</span>
+                  <span style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600, color: pctColor(exec.maturity_completion_pct) }}>{Math.round(exec.maturity_completion_pct)}%</span>
                 </div>
                 <div className="bar-track" style={{ height: 8 }}>
-                  <div className="bar-fill" style={{ width: `${exec.cis_risk_addressed_pct}%`, background: pctColor(exec.cis_risk_addressed_pct), height: 8 }} />
+                  <div className="bar-fill" style={{ width: `${exec.maturity_completion_pct}%`, background: pctColor(exec.maturity_completion_pct), height: 8 }} />
                 </div>
               </div>
             )}

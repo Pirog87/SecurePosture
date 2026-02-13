@@ -70,6 +70,7 @@ const sections: { title: string; items: NavItem[] }[] = [
       { to: "/audit-programs", icon: "📋", label: "Program Audytów" },
       { to: "/audit-engagements", icon: "🔍", label: "Zadania Audytowe" },
       { to: "/test-templates", icon: "📖", label: "Katalog Testów" },
+      { to: "/audit-findings", icon: "📌", label: "Ustalenia Audytowe" },
     ],
   },
   {

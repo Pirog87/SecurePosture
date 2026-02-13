@@ -39,6 +39,7 @@ import AuditEngagementsPage from "./pages/AuditEngagementsPage";
 import AuditEngagementDetailPage from "./pages/AuditEngagementDetailPage";
 import FrameworkMappingsPage from "./pages/FrameworkMappingsPage";
 import TestTemplatesPage from "./pages/TestTemplatesPage";
+import AuditFindingsPage from "./pages/AuditFindingsPage";
 
 export default function App() {
   return (
@@ -74,6 +75,7 @@ export default function App() {
           <Route path="audit-engagements" element={<AuditEngagementsPage />} />
           <Route path="audit-engagements/:engId" element={<AuditEngagementDetailPage />} />
           <Route path="test-templates" element={<TestTemplatesPage />} />
+          <Route path="audit-findings" element={<AuditFindingsPage />} />
 
           {/* Legacy CIS routes — redirect to framework library */}
           <Route path="cis" element={<Navigate to="/frameworks" replace />} />

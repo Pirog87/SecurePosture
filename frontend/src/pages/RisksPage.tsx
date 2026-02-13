@@ -165,9 +165,9 @@ export default function RisksPage() {
     const [orgUnits, areas, threats, vulns, safeguards, assets] = await Promise.all([
       api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").catch(() => [] as OrgUnitTreeNode[]),
       api.get<SecurityArea[]>("/api/v1/domains").catch(() => [] as SecurityArea[]),
-      api.get<Threat[]>("/api/v1/threats").catch(() => [] as Threat[]),
-      api.get<Vulnerability[]>("/api/v1/vulnerabilities").catch(() => [] as Vulnerability[]),
-      api.get<Safeguard[]>("/api/v1/safeguards").catch(() => [] as Safeguard[]),
+      api.get<Threat[]>("/api/v1/threat-catalog").catch(() => [] as Threat[]),
+      api.get<Vulnerability[]>("/api/v1/weakness-catalog").catch(() => [] as Vulnerability[]),
+      api.get<Safeguard[]>("/api/v1/control-catalog").catch(() => [] as Safeguard[]),
       api.get<Asset[]>("/api/v1/assets").catch(() => [] as Asset[]),
     ]);
     const dictEntries = async (code: string) => {
@@ -677,7 +677,7 @@ function PlannedSafeguardPicker({ lookups, setLookups, assetId, plannedSafeguard
     if (!search.trim()) return;
     setAdding(true);
     try {
-      const created = await api.post<Safeguard>("/api/v1/safeguards", { name: search.trim(), asset_type_id: assetTypeId });
+      const created = await api.post<Safeguard>("/api/v1/control-catalog", { name: search.trim() });
       setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
       setPlannedSafeguardId(created.id);
       setSearch("");
@@ -1197,7 +1197,7 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
           onChange={setThreatIds}
           color="var(--red)"
           onAdd={async (name) => {
-            const created = await api.post<Threat>("/api/v1/threats", { name, asset_type_id: assetTypeId });
+            const created = await api.post<Threat>("/api/v1/threat-catalog", { name });
             setLookups(prev => prev ? { ...prev, threats: [...prev.threats, created] } : prev);
             return created;
           }}
@@ -1212,7 +1212,7 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
           onChange={setVulnerabilityIds}
           color="var(--orange)"
           onAdd={async (name) => {
-            const created = await api.post<Vulnerability>("/api/v1/vulnerabilities", { name, asset_type_id: assetTypeId });
+            const created = await api.post<Vulnerability>("/api/v1/weakness-catalog", { name });
             setLookups(prev => prev ? { ...prev, vulns: [...prev.vulns, created] } : prev);
             return created;
           }}
@@ -1227,7 +1227,7 @@ function ScenarioTab({ lookups, setLookups, assetId, securityAreaId, setSecurity
           onChange={setSafeguardIds}
           color="var(--green)"
           onAdd={async (name) => {
-            const created = await api.post<Safeguard>("/api/v1/safeguards", { name, asset_type_id: assetTypeId });
+            const created = await api.post<Safeguard>("/api/v1/control-catalog", { name });
             setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
             return created;
           }}
@@ -1376,7 +1376,7 @@ function SmartCatalogSuggestionsPanel({
       return;
     }
     try {
-      const created = await api.post<Threat>("/api/v1/threats", { name: entry.name });
+      const created = await api.post<Threat>("/api/v1/threat-catalog", { name: entry.name });
       setLookups(prev => prev ? { ...prev, threats: [...prev.threats, created] } : prev);
       setThreatIds([...threatIds, created.id]);
     } catch { /* ignore */ }
@@ -1389,7 +1389,7 @@ function SmartCatalogSuggestionsPanel({
       return;
     }
     try {
-      const created = await api.post<Vulnerability>("/api/v1/vulnerabilities", { name: entry.name });
+      const created = await api.post<Vulnerability>("/api/v1/weakness-catalog", { name: entry.name });
       setLookups(prev => prev ? { ...prev, vulns: [...prev.vulns, created] } : prev);
       setVulnerabilityIds([...vulnerabilityIds, created.id]);
     } catch { /* ignore */ }
@@ -1402,7 +1402,7 @@ function SmartCatalogSuggestionsPanel({
       return;
     }
     try {
-      const created = await api.post<Safeguard>("/api/v1/safeguards", { name: entry.name });
+      const created = await api.post<Safeguard>("/api/v1/control-catalog", { name: entry.name });
       setLookups(prev => prev ? { ...prev, safeguards: [...prev.safeguards, created] } : prev);
       setSafeguardIds([...safeguardIds, created.id]);
     } catch { /* ignore */ }

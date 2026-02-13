@@ -17,7 +17,7 @@ from sqlalchemy.orm import aliased
 from app.database import get_session
 from app.models.action import Action, ActionLink
 from app.models.asset import Asset
-from app.models.catalog import Safeguard, Threat, Vulnerability
+from app.models.smart_catalog import ThreatCatalog, WeaknessCatalog, ControlCatalog
 from app.models.dictionary import DictionaryEntry
 from app.models.org_unit import OrgUnit
 from app.models.risk import Risk, RiskThreat, RiskVulnerability, RiskSafeguard
@@ -44,26 +44,26 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
     asset = await s.get(Asset, risk.asset_id) if risk.asset_id else None
     area = await s.get(SecurityArea, risk.security_area_id) if risk.security_area_id else None
 
-    # threats (M2M)
+    # threats (M2M) — from smart catalog
     th_q = (
-        select(RiskThreat.threat_id, Threat.name)
-        .join(Threat, RiskThreat.threat_id == Threat.id)
+        select(RiskThreat.threat_id, ThreatCatalog.name)
+        .join(ThreatCatalog, RiskThreat.threat_id == ThreatCatalog.id)
         .where(RiskThreat.risk_id == risk.id)
     )
     th_rows = (await s.execute(th_q)).all()
 
-    # vulnerabilities (M2M)
+    # vulnerabilities (M2M) — from smart catalog (weakness_catalog)
     vl_q = (
-        select(RiskVulnerability.vulnerability_id, Vulnerability.name)
-        .join(Vulnerability, RiskVulnerability.vulnerability_id == Vulnerability.id)
+        select(RiskVulnerability.vulnerability_id, WeaknessCatalog.name)
+        .join(WeaknessCatalog, RiskVulnerability.vulnerability_id == WeaknessCatalog.id)
         .where(RiskVulnerability.risk_id == risk.id)
     )
     vl_rows = (await s.execute(vl_q)).all()
 
-    # safeguards (M2M)
+    # safeguards (M2M) — from smart catalog (control_catalog)
     sg_q = (
-        select(RiskSafeguard.safeguard_id, Safeguard.name)
-        .join(Safeguard, RiskSafeguard.safeguard_id == Safeguard.id)
+        select(RiskSafeguard.safeguard_id, ControlCatalog.name)
+        .join(ControlCatalog, RiskSafeguard.safeguard_id == ControlCatalog.id)
         .where(RiskSafeguard.risk_id == risk.id)
     )
     sg_rows = (await s.execute(sg_q)).all()
@@ -107,7 +107,7 @@ async def _risk_out(s: AsyncSession, risk: Risk) -> RiskOut:
         planned_actions=risk.planned_actions,
         treatment_plan=risk.treatment_plan,
         planned_safeguard_id=risk.planned_safeguard_id,
-        planned_safeguard_name=(await s.get(Safeguard, risk.planned_safeguard_id)).name if risk.planned_safeguard_id else None,
+        planned_safeguard_name=(await s.get(ControlCatalog, risk.planned_safeguard_id)).name if risk.planned_safeguard_id else None,
         treatment_deadline=risk.treatment_deadline,
         treatment_resources=risk.treatment_resources,
         residual_risk=float(risk.residual_risk) if risk.residual_risk is not None else None,

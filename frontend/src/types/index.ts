@@ -81,38 +81,50 @@ export interface SecurityDomain {
   risk_count: number;
 }
 
-// Catalog
+// Catalog (Smart Catalog — single source of truth)
 export interface Threat {
   id: number;
+  ref_id: string;
   name: string;
-  category_id: number | null;
-  category_name: string | null;
-  asset_type_id: number | null;
-  asset_type_name: string | null;
   description: string | null;
+  category: string;
+  source: string;
+  cia_impact: Record<string, boolean> | null;
+  is_system: boolean;
   is_active: boolean;
+  org_unit_id: number | null;
+  asset_category_ids: number[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Vulnerability {
   id: number;
+  ref_id: string;
   name: string;
-  security_area_id: number | null;
-  security_area_name: string | null;
-  asset_type_id: number | null;
-  asset_type_name: string | null;
   description: string | null;
+  category: string;
+  is_system: boolean;
   is_active: boolean;
+  org_unit_id: number | null;
+  asset_category_ids: number[];
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Safeguard {
   id: number;
+  ref_id: string;
   name: string;
-  type_id: number | null;
-  type_name: string | null;
-  asset_type_id: number | null;
-  asset_type_name: string | null;
   description: string | null;
+  category: string;
+  implementation_type: string;
+  is_system: boolean;
   is_active: boolean;
+  org_unit_id: number | null;
+  asset_category_ids: number[];
+  created_at: string;
+  updated_at: string;
 }
 
 // Asset

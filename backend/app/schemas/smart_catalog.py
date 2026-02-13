@@ -27,10 +27,10 @@ class ThreatCatalogOut(BaseModel):
 
 
 class ThreatCatalogCreate(BaseModel):
-    ref_id: str = Field(..., min_length=1, max_length=20)
+    ref_id: str | None = Field(None, max_length=20)
     name: str = Field(..., min_length=1, max_length=300)
     description: str | None = None
-    category: str = Field(..., min_length=1, max_length=30)
+    category: str = Field(default="ORGANIZATIONAL", max_length=30)
     source: str = Field(default="BOTH", max_length=15)
     cia_impact: dict | None = None
     org_unit_id: int | None = None
@@ -68,10 +68,10 @@ class WeaknessCatalogOut(BaseModel):
 
 
 class WeaknessCatalogCreate(BaseModel):
-    ref_id: str = Field(..., min_length=1, max_length=20)
+    ref_id: str | None = Field(None, max_length=20)
     name: str = Field(..., min_length=1, max_length=300)
     description: str | None = None
-    category: str = Field(..., min_length=1, max_length=20)
+    category: str = Field(default="PROCESS", max_length=20)
     org_unit_id: int | None = None
     asset_category_ids: list[int] = []
 
@@ -106,11 +106,11 @@ class ControlCatalogOut(BaseModel):
 
 
 class ControlCatalogCreate(BaseModel):
-    ref_id: str = Field(..., min_length=1, max_length=20)
+    ref_id: str | None = Field(None, max_length=20)
     name: str = Field(..., min_length=1, max_length=300)
     description: str | None = None
-    category: str = Field(..., min_length=1, max_length=20)
-    implementation_type: str = Field(..., min_length=1, max_length=20)
+    category: str = Field(default="ORGANIZATIONAL", max_length=20)
+    implementation_type: str = Field(default="PREVENTIVE", max_length=20)
     org_unit_id: int | None = None
     asset_category_ids: list[int] = []
 

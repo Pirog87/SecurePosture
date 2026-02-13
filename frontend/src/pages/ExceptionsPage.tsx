@@ -152,8 +152,8 @@ export default function ExceptionsPage() {
       api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").catch(() => [] as OrgUnitTreeNode[]),
       api.get<{ id: number; title: string }[]>("/api/v1/policies").catch(() => []),
       api.get<SecurityArea[]>("/api/v1/domains").catch(() => [] as SecurityArea[]),
-      api.get<Threat[]>("/api/v1/threats").catch(() => [] as Threat[]),
-      api.get<Vulnerability[]>("/api/v1/vulnerabilities").catch(() => [] as Vulnerability[]),
+      api.get<Threat[]>("/api/v1/threat-catalog").catch(() => [] as Threat[]),
+      api.get<Vulnerability[]>("/api/v1/weakness-catalog").catch(() => [] as Vulnerability[]),
       api.get<Asset[]>("/api/v1/assets").catch(() => [] as Asset[]),
     ]);
     const policies = policiesRaw.map((p: any) => ({ id: p.id, title: p.title }));

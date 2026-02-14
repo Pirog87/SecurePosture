@@ -989,6 +989,186 @@ async def import_from_github(
 
 
 # ===================================================
+# AI-POWERED DOCUMENT IMPORT (PDF / DOCX)
+# ===================================================
+
+@router.post("/import/ai", response_model=FrameworkImportResult, summary="AI Import z PDF/DOCX")
+async def import_from_ai(
+    file: UploadFile = File(...),
+    s: AsyncSession = Depends(get_session),
+):
+    """Import a framework from PDF/DOCX using AI to extract structure.
+
+    AI analyzes the document text and builds a hierarchical framework:
+    - Detects metadata (name, version, provider)
+    - Extracts chapters, sections, requirements as tree nodes
+    - Marks assessable nodes (concrete requirements/controls)
+    """
+    from app.services.ai_service import get_ai_service, AINotConfiguredException
+    from app.services.document_extract import prepare_chunked_document
+    from app.services.framework_import import _create_default_dimensions
+
+    if not file.filename:
+        raise HTTPException(400, "Brak nazwy pliku")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in ("pdf", "docx", "doc"):
+        raise HTTPException(400, "Obsługiwane formaty: .pdf, .docx")
+
+    svc = await get_ai_service(s)
+    if not svc.config:
+        raise HTTPException(503, "AI nie jest skonfigurowane. Włącz AI w panelu administracyjnym.")
+
+    try:
+        # Extract text in chunks
+        chunks, meta = prepare_chunked_document(file.filename, file.file)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    try:
+        # Pass 1: analyze first chunk — get framework metadata + initial nodes
+        first_result = await svc.analyze_document_structure(
+            user_id=1,  # system import
+            document_text=chunks[0],
+            filename=file.filename,
+        )
+
+        fw_meta = first_result.get("framework", {})
+        all_nodes = first_result.get("nodes", [])
+
+        # Pass 2+: analyze remaining chunks for more nodes
+        for i, chunk in enumerate(chunks[1:], start=2):
+            # Build summary of last few nodes for context
+            last_nodes = all_nodes[-5:] if all_nodes else []
+            summary = "\n".join(
+                f"- {n.get('ref_id', '?')}: {n.get('name', '?')} (depth={n.get('depth', 1)})"
+                for n in last_nodes
+            )
+
+            continuation = await svc.analyze_document_continuation(
+                user_id=1,
+                document_text=chunk,
+                previous_nodes_summary=summary,
+            )
+            extra_nodes = continuation.get("nodes", [])
+            all_nodes.extend(extra_nodes)
+
+        # Create framework
+        fw_name = fw_meta.get("name") or file.filename.rsplit(".", 1)[0]
+        fw = Framework(
+            name=fw_name,
+            ref_id=fw_meta.get("ref_id"),
+            description=fw_meta.get("description"),
+            version=fw_meta.get("version"),
+            provider=fw_meta.get("provider"),
+            locale=fw_meta.get("locale", "pl"),
+            source_format="custom_import",
+            lifecycle_status="draft",
+            imported_at=datetime.utcnow(),
+            imported_by="ai-import",
+        )
+        s.add(fw)
+        await s.flush()
+
+        # Create default assessment dimensions
+        await _create_default_dimensions(s, fw)
+
+        # Build nodes — two-pass approach like existing importers
+        ref_to_id: dict[str, int] = {}
+        inserted: list[tuple[int, dict]] = []
+        total_nodes = 0
+        total_assessable = 0
+
+        for idx, nd in enumerate(all_nodes):
+            ref_id = str(nd.get("ref_id", "")).strip() or None
+            name = (nd.get("name") or ref_id or f"Węzeł {idx + 1}")[:500]
+            description = nd.get("description")
+            depth = nd.get("depth", 1)
+            assessable = bool(nd.get("assessable", False))
+
+            node = FrameworkNode(
+                framework_id=fw.id,
+                parent_id=None,  # resolved in pass 2
+                ref_id=ref_id,
+                name=name,
+                description=description,
+                depth=depth,
+                order_id=idx + 1,
+                assessable=assessable,
+                is_active=True,
+            )
+            s.add(node)
+            await s.flush()
+
+            if ref_id:
+                ref_to_id[ref_id] = node.id
+            inserted.append((node.id, nd))
+            total_nodes += 1
+            if assessable:
+                total_assessable += 1
+
+        # Pass 2: resolve parent_id
+        depth_stack: dict[int, int] = {}
+        for node_id, nd in inserted:
+            parent_ref = nd.get("parent_ref")
+            depth = nd.get("depth", 1)
+            parent_id = None
+
+            if parent_ref and parent_ref in ref_to_id:
+                parent_id = ref_to_id[parent_ref]
+            elif depth > 1:
+                # Fallback: most recent node at depth-1
+                parent_id = depth_stack.get(depth - 1)
+
+            if parent_id:
+                await s.execute(
+                    update(FrameworkNode)
+                    .where(FrameworkNode.id == node_id)
+                    .values(parent_id=parent_id)
+                )
+
+            depth_stack[depth] = node_id
+
+        # Update framework counts
+        fw.total_nodes = total_nodes
+        fw.total_assessable = total_assessable
+        fw.edit_version = 1
+
+        # Version history
+        s.add(FrameworkVersionHistory(
+            framework_id=fw.id,
+            edit_version=1,
+            change_type="import",
+            change_description=f"AI import z {file.filename} ({meta.get('format', '?')}, "
+                               f"{meta.get('chunks', 1)} fragmentów, {total_nodes} węzłów)",
+            changed_by="ai-import",
+        ))
+
+        await s.commit()
+        await s.refresh(fw)
+
+        dims_count = (await s.execute(
+            select(func.count(AssessmentDimension.id))
+            .where(AssessmentDimension.framework_id == fw.id)
+        )).scalar() or 0
+
+        return FrameworkImportResult(
+            framework_id=fw.id,
+            name=fw.name,
+            total_nodes=fw.total_nodes,
+            total_assessable=fw.total_assessable,
+            dimensions_created=dims_count,
+        )
+
+    except AINotConfiguredException:
+        raise HTTPException(503, "AI nie jest skonfigurowane")
+    except Exception as e:
+        await s.rollback()
+        logger.exception("AI import error")
+        raise HTTPException(500, f"Błąd importu AI: {e}")
+
+
+# ===================================================
 # AUTO-MAP AREAS (seed mapping CIS -> security areas)
 # ===================================================
 

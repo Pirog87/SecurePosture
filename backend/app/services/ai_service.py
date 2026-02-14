@@ -35,6 +35,8 @@ from app.services.ai_prompts import (
     SYSTEM_PROMPT_SEARCH,
     SYSTEM_PROMPT_SECURITY_AREA_MAP,
     SYSTEM_PROMPT_TRANSLATE,
+    SYSTEM_PROMPT_DOCUMENT_IMPORT,
+    SYSTEM_PROMPT_DOCUMENT_IMPORT_CONTINUATION,
 )
 
 
@@ -701,6 +703,58 @@ class AIService:
             max_tokens=2000,
         )
         return result if isinstance(result, dict) else {"executive_summary": str(result)}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 12: AI-powered document import
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def analyze_document_structure(
+        self,
+        user_id: int,
+        document_text: str,
+        filename: str,
+    ) -> dict:
+        """Analyze first chunk of document to extract framework metadata + nodes."""
+        self._require_ai()
+
+        prompt = (
+            f"Plik: {filename}\n\n"
+            f"Tekst dokumentu:\n{document_text}\n\n"
+            f"Przeanalizuj ten dokument i wyodrebnij pelna strukture."
+        )
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_DOCUMENT_IMPORT,
+            user_message=prompt,
+            action_type="DOCUMENT_IMPORT",
+            user_id=user_id,
+            max_tokens=4000,
+        )
+        return result if isinstance(result, dict) else {"framework": {}, "nodes": []}
+
+    async def analyze_document_continuation(
+        self,
+        user_id: int,
+        document_text: str,
+        previous_nodes_summary: str,
+    ) -> dict:
+        """Analyze continuation chunk of document."""
+        self._require_ai()
+
+        prompt = (
+            f"Dotychczas wyodrebnione wezly (ostatnie):\n{previous_nodes_summary}\n\n"
+            f"Kontynuacja tekstu dokumentu:\n{document_text}\n\n"
+            f"Kontynuuj wyodrebnianie struktury."
+        )
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_DOCUMENT_IMPORT_CONTINUATION,
+            user_message=prompt,
+            action_type="DOCUMENT_IMPORT",
+            user_id=user_id,
+            max_tokens=4000,
+        )
+        return result if isinstance(result, dict) else {"nodes": []}
 
 
 async def get_ai_service(session: AsyncSession) -> AIService:

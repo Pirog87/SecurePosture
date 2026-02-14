@@ -32,6 +32,7 @@ function sourceLabel(fmt: string | null) {
   if (fmt === "ciso_assistant_yaml") return "YAML";
   if (fmt === "ciso_assistant_excel") return "Excel";
   if (fmt === "copy") return "Kopia";
+  if (fmt === "custom_import") return "AI Import";
   return fmt;
 }
 
@@ -85,6 +86,8 @@ export default function FrameworksPage() {
   const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(searchParams.get("type"));
   const [activeOriginFilter, setActiveOriginFilter] = useState<string | null>(searchParams.get("origin"));
   const fileRef = useRef<HTMLInputElement>(null);
+  const aiFileRef = useRef<HTMLInputElement>(null);
+  const [aiImporting, setAiImporting] = useState(false);
 
   /* ── Load document types from dictionary ── */
   useEffect(() => {
@@ -136,6 +139,30 @@ export default function FrameworksPage() {
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  /* ── AI Import handler (PDF/DOCX) ── */
+  const handleAiImport = async (file: File) => {
+    setAiImporting(true);
+    setImportResult(null);
+    setImportError(null);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await api.postFormData<FrameworkImportResult>("/api/v1/frameworks/import/ai", formData);
+      setImportResult(res);
+      setAdoptFrameworkId(res.framework_id);
+      setShowAdoptModal(true);
+      load();
+    } catch (e: unknown) {
+      setImportError(e instanceof Error ? e.message : "Błąd importu AI");
+      load();
+    } finally {
+      setAiImporting(false);
+      if (aiFileRef.current) aiFileRef.current.value = "";
     }
   };
 
@@ -295,6 +322,8 @@ export default function FrameworksPage() {
       {/* Toolbar */}
       <input ref={fileRef} type="file" accept=".xlsx,.xls,.yaml,.yml" style={{ display: "none" }}
              onChange={e => e.target.files?.[0] && handleImport(e.target.files[0])} />
+      <input ref={aiFileRef} type="file" accept=".pdf,.docx,.doc" style={{ display: "none" }}
+             onChange={e => e.target.files?.[0] && handleAiImport(e.target.files[0])} />
       <TableToolbar
         filteredCount={table.filteredCount}
         totalCount={table.totalCount}
@@ -316,6 +345,7 @@ export default function FrameworksPage() {
         secondaryActions={[
           { label: "Import z CISO Assistant", onClick: () => setShowCatalog(true) },
           { label: importing ? "Importowanie..." : "Import z pliku", onClick: () => fileRef.current?.click() },
+          { label: aiImporting ? "AI analizuje..." : "AI Import (PDF/DOCX)", onClick: () => aiFileRef.current?.click() },
           { label: showArchived ? "Ukryj archiwalne" : "Pokaż archiwalne", onClick: () => setShowArchived(v => !v) },
         ]}
       />

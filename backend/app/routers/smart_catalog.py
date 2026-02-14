@@ -40,6 +40,7 @@ from app.schemas.smart_catalog import (
     AITranslateOut,
     AITranslateRequest,
     AIUsageStatsOut,
+    NodeAiCacheOut,
     ControlCatalogCreate,
     ControlCatalogOut,
     ControlCatalogUpdate,
@@ -1111,8 +1112,29 @@ async def ai_interpret_node(
     s: AsyncSession = Depends(get_session),
     user_id: int = Depends(_get_user_id),
 ):
-    """AI-powered interpretation of a framework requirement."""
+    """AI-powered interpretation of a framework requirement. Caches results per node."""
     from app.services.ai_service import AIRateLimitException
+    from app.models.framework import FrameworkNodeAiCache
+
+    # Check cache first (if node_id provided and not forced)
+    if body.node_id and not body.force:
+        cached = (await s.execute(
+            select(FrameworkNodeAiCache).where(
+                FrameworkNodeAiCache.node_id == body.node_id,
+                FrameworkNodeAiCache.action_type == "interpret",
+                FrameworkNodeAiCache.language.is_(None),
+            )
+        )).scalar_one_or_none()
+        if cached:
+            r = cached.result_json
+            return AIInterpretOut(
+                interpretation=r.get("interpretation", ""),
+                practical_examples=r.get("practical_examples", []),
+                common_pitfalls=r.get("common_pitfalls", []),
+                related_standards=r.get("related_standards", []),
+                cached=True,
+                cached_at=cached.updated_at,
+            )
 
     svc = await _get_ai_svc(s)
     try:
@@ -1123,6 +1145,27 @@ async def ai_interpret_node(
             node_name=body.node_name,
             node_description=body.node_description,
         )
+
+        # Persist to cache
+        if body.node_id:
+            existing = (await s.execute(
+                select(FrameworkNodeAiCache).where(
+                    FrameworkNodeAiCache.node_id == body.node_id,
+                    FrameworkNodeAiCache.action_type == "interpret",
+                    FrameworkNodeAiCache.language.is_(None),
+                )
+            )).scalar_one_or_none()
+            if existing:
+                existing.result_json = result
+                existing.updated_at = datetime.utcnow()
+            else:
+                s.add(FrameworkNodeAiCache(
+                    node_id=body.node_id,
+                    action_type="interpret",
+                    language=None,
+                    result_json=result,
+                ))
+
         await s.commit()
         return AIInterpretOut(
             interpretation=result.get("interpretation", ""),
@@ -1140,8 +1183,28 @@ async def ai_translate_node(
     s: AsyncSession = Depends(get_session),
     user_id: int = Depends(_get_user_id),
 ):
-    """AI-powered translation of a framework requirement."""
+    """AI-powered translation of a framework requirement. Caches results per node+language."""
     from app.services.ai_service import AIRateLimitException
+    from app.models.framework import FrameworkNodeAiCache
+
+    # Check cache first
+    if body.node_id and not body.force:
+        cached = (await s.execute(
+            select(FrameworkNodeAiCache).where(
+                FrameworkNodeAiCache.node_id == body.node_id,
+                FrameworkNodeAiCache.action_type == "translate",
+                FrameworkNodeAiCache.language == body.target_language,
+            )
+        )).scalar_one_or_none()
+        if cached:
+            r = cached.result_json
+            return AITranslateOut(
+                translated_name=r.get("translated_name", ""),
+                translated_description=r.get("translated_description"),
+                terminology_notes=r.get("terminology_notes", []),
+                cached=True,
+                cached_at=cached.updated_at,
+            )
 
     svc = await _get_ai_svc(s)
     try:
@@ -1153,6 +1216,27 @@ async def ai_translate_node(
             node_description=body.node_description,
             target_language=body.target_language,
         )
+
+        # Persist to cache
+        if body.node_id:
+            existing = (await s.execute(
+                select(FrameworkNodeAiCache).where(
+                    FrameworkNodeAiCache.node_id == body.node_id,
+                    FrameworkNodeAiCache.action_type == "translate",
+                    FrameworkNodeAiCache.language == body.target_language,
+                )
+            )).scalar_one_or_none()
+            if existing:
+                existing.result_json = result
+                existing.updated_at = datetime.utcnow()
+            else:
+                s.add(FrameworkNodeAiCache(
+                    node_id=body.node_id,
+                    action_type="translate",
+                    language=body.target_language,
+                    result_json=result,
+                ))
+
         await s.commit()
         return AITranslateOut(
             translated_name=result.get("translated_name", ""),
@@ -1161,6 +1245,36 @@ async def ai_translate_node(
         )
     except AIRateLimitException as e:
         raise HTTPException(429, str(e))
+
+
+@router.get("/api/v1/ai/node-cache/{framework_id}", response_model=list[NodeAiCacheOut])
+async def get_framework_ai_cache(
+    framework_id: int,
+    action_type: str | None = Query(None, pattern="^(interpret|translate)$"),
+    language: str | None = Query(None),
+    s: AsyncSession = Depends(get_session),
+):
+    """Get all cached AI results for a framework's nodes."""
+    from app.models.framework import FrameworkNode, FrameworkNodeAiCache
+
+    q = (
+        select(FrameworkNodeAiCache)
+        .join(FrameworkNode, FrameworkNodeAiCache.node_id == FrameworkNode.id)
+        .where(FrameworkNode.framework_id == framework_id)
+    )
+    if action_type:
+        q = q.where(FrameworkNodeAiCache.action_type == action_type)
+    if language:
+        q = q.where(FrameworkNodeAiCache.language == language)
+
+    rows = (await s.execute(q)).scalars().all()
+    return [NodeAiCacheOut(
+        node_id=r.node_id,
+        action_type=r.action_type,
+        language=r.language,
+        result_json=r.result_json,
+        updated_at=r.updated_at,
+    ) for r in rows]
 
 
 @router.get("/api/v1/ai/usage-stats", response_model=AIUsageStatsOut)

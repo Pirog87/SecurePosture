@@ -351,6 +351,8 @@ class AIInterpretRequest(BaseModel):
     node_ref_id: str | None = None
     node_name: str = Field(..., min_length=1, max_length=500)
     node_description: str | None = None
+    node_id: int | None = None  # DB node id for cache persistence
+    force: bool = False  # force re-generation even if cached
 
 
 class AIInterpretOut(BaseModel):
@@ -358,6 +360,8 @@ class AIInterpretOut(BaseModel):
     practical_examples: list[str] = []
     common_pitfalls: list[str] = []
     related_standards: list[str] = []
+    cached: bool = False
+    cached_at: datetime | None = None
 
 
 class AITranslateRequest(BaseModel):
@@ -366,12 +370,26 @@ class AITranslateRequest(BaseModel):
     node_name: str = Field(..., min_length=1, max_length=500)
     node_description: str | None = None
     target_language: str = Field(..., min_length=2, max_length=50)
+    node_id: int | None = None  # DB node id for cache persistence
+    force: bool = False  # force re-generation even if cached
 
 
 class AITranslateOut(BaseModel):
     translated_name: str = ""
     translated_description: str | None = None
     terminology_notes: list[str] = []
+    cached: bool = False
+    cached_at: datetime | None = None
+
+
+class NodeAiCacheOut(BaseModel):
+    """Cached AI result for a single node."""
+    node_id: int
+    action_type: str
+    language: str | None = None
+    result_json: dict
+    updated_at: datetime
+    model_config = {"from_attributes": True}
 
 
 class AIUsageStatsOut(BaseModel):

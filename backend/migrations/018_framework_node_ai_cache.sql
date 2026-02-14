@@ -15,5 +15,6 @@ CREATE TABLE IF NOT EXISTS framework_node_ai_cache (
     CONSTRAINT uq_node_ai_cache UNIQUE (node_id, action_type, language)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE INDEX ix_node_ai_cache_node ON framework_node_ai_cache (node_id);
-CREATE INDEX ix_node_ai_cache_action ON framework_node_ai_cache (node_id, action_type);
+-- Indeksy na node_id i (node_id, action_type) sa juz pokryte przez
+-- FOREIGN KEY fk_ai_cache_node oraz UNIQUE uq_node_ai_cache
+-- MariaDB tworzy je automatycznie — dodatkowe CREATE INDEX nie potrzebne.

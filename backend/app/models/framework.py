@@ -62,7 +62,7 @@ class Framework(Base):
     source_url: Mapped[str | None] = mapped_column(String(1000))
     locale: Mapped[str] = mapped_column(String(10), default="en", nullable=False)
 
-    implementation_groups_definition: Mapped[dict | None] = mapped_column(JSON)
+    implementation_groups_definition: Mapped[dict | list | None] = mapped_column(JSON)
 
     total_nodes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     total_assessable: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

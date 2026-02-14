@@ -1,8 +1,13 @@
 """
-Framework Engine models — universal multi-framework assessment system.
+Requirements Repository models — universal document & framework management system.
+
+Formerly "Framework Engine" — now extended to serve as a Requirements Repository
+(Repozytorium Wymagań) supporting frameworks, standards, regulations, policies,
+procedures and other reference documents.
 
 Tables: frameworks, framework_nodes, framework_versions, assessment_dimensions,
-        dimension_levels, framework_node_security_areas, assessments, assessment_answers
+        dimension_levels, framework_node_security_areas, assessments, assessment_answers,
+        framework_org_units, framework_reviews
 """
 from datetime import date, datetime
 from decimal import Decimal
@@ -28,8 +33,16 @@ from .base import Base
 # Lifecycle statuses for framework documents
 LIFECYCLE_STATUSES = ("draft", "review", "published", "deprecated", "archived")
 
+# Document origin types
+DOCUMENT_ORIGINS = ("internal", "external")
+
 
 class Framework(Base):
+    """Reference document in the Requirements Repository.
+
+    Covers: frameworks, ISO standards, legal regulations, internal policies,
+    procedures, regulations, instructions, contracts, etc.
+    """
     __tablename__ = "frameworks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -57,7 +70,37 @@ class Framework(Base):
     imported_at: Mapped[datetime | None] = mapped_column(DateTime)
     imported_by: Mapped[str | None] = mapped_column(String(200))
 
-    # Lifecycle & versioning
+    # ── Document Repository fields (Repozytorium Wymagań) ──
+    document_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dictionary_entries.id", ondelete="SET NULL"),
+        comment="Type: Norma, Standard, Rozporządzenie, Polityka, Procedura, Regulamin, Instrukcja, Umowa",
+    )
+    document_origin: Mapped[str] = mapped_column(
+        String(20), default="external", nullable=False,
+        comment="internal = wewnętrzny, external = zewnętrzny",
+    )
+    owner: Mapped[str | None] = mapped_column(String(200), comment="Document owner / responsible person")
+    approved_by: Mapped[str | None] = mapped_column(String(200))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    # Review management
+    requires_review: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    review_frequency_months: Mapped[int] = mapped_column(Integer, default=12, nullable=False)
+    next_review_date: Mapped[date | None] = mapped_column(Date)
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    reviewed_by: Mapped[str | None] = mapped_column(String(200))
+
+    # Version management (major.minor)
+    major_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    minor_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Update proposal: links to the document this is a draft update for
+    updates_document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("frameworks.id", ondelete="SET NULL"),
+        comment="If set, this is a draft update proposal for the referenced document",
+    )
+
+    # ── Lifecycle & versioning ──
     lifecycle_status: Mapped[str] = mapped_column(String(30), default="draft", nullable=False)
     edit_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     published_version: Mapped[str | None] = mapped_column(String(100))
@@ -82,6 +125,24 @@ class Framework(Base):
         back_populates="framework", cascade="all, delete-orphan",
         order_by="FrameworkVersionHistory.edit_version.desc()",
     )
+    org_unit_links: Mapped[list["FrameworkOrgUnit"]] = relationship(
+        back_populates="framework", cascade="all, delete-orphan",
+    )
+    reviews: Mapped[list["FrameworkReview"]] = relationship(
+        back_populates="framework", cascade="all, delete-orphan",
+        order_by="FrameworkReview.review_date.desc()",
+    )
+    # Self-referencing: document that this is an update proposal for
+    updates_document: Mapped["Framework | None"] = relationship(
+        remote_side="Framework.id", foreign_keys=[updates_document_id],
+    )
+
+    @property
+    def display_version(self) -> str:
+        """Human-readable version: e.g. '2.0' (approved) or '2.03' (draft)."""
+        if self.minor_version == 0:
+            return f"{self.major_version}.0"
+        return f"{self.major_version}.{self.minor_version:02d}"
 
 
 class FrameworkVersionHistory(Base):
@@ -127,6 +188,12 @@ class FrameworkNode(Base):
     depth: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     order_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     assessable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Point type for document structure (Rozdział, Pkt, Ppkt, Art., Rekomendacja)
+    point_type_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dictionary_entries.id", ondelete="SET NULL"),
+        comment="Node type from dictionary: Rozdział, Pkt, Ppkt, Art., Rekomendacja, etc.",
+    )
 
     implementation_groups: Mapped[str | None] = mapped_column(String(100))
     weight: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -297,6 +364,59 @@ class AssessmentAnswer(Base):
     framework_node: Mapped["FrameworkNode"] = relationship()
     dimension: Mapped["AssessmentDimension"] = relationship()
     level: Mapped["DimensionLevel | None"] = relationship()
+
+
+class FrameworkOrgUnit(Base):
+    """M2M: links reference documents to organizational units."""
+    __tablename__ = "framework_org_units"
+    __table_args__ = (
+        UniqueConstraint("framework_id", "org_unit_id", name="uq_fw_orgunit"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[int] = mapped_column(
+        ForeignKey("frameworks.id", ondelete="CASCADE"), nullable=False,
+    )
+    org_unit_id: Mapped[int] = mapped_column(
+        ForeignKey("org_units.id", ondelete="CASCADE"), nullable=False,
+    )
+    compliance_status: Mapped[str] = mapped_column(
+        String(30), default="not_assessed", nullable=False,
+        comment="not_assessed, compliant, partially_compliant, non_compliant, requires_update",
+    )
+    last_assessed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # relationships
+    framework: Mapped["Framework"] = relationship(back_populates="org_unit_links")
+
+
+class FrameworkReview(Base):
+    """Review records for reference documents that require periodic reviews."""
+    __tablename__ = "framework_reviews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[int] = mapped_column(
+        ForeignKey("frameworks.id", ondelete="CASCADE"), nullable=False,
+    )
+    reviewer: Mapped[str | None] = mapped_column(String(200))
+    review_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    review_type: Mapped[str] = mapped_column(
+        String(30), default="periodic", nullable=False,
+        comment="periodic, ad_hoc, update_review",
+    )
+    findings: Mapped[str | None] = mapped_column(Text)
+    recommendations: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(20), default="completed", nullable=False,
+        comment="pending, completed, overdue",
+    )
+    next_review_date: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # relationships
+    framework: Mapped["Framework"] = relationship(back_populates="reviews")
 
 
 # Avoid circular import — SecurityArea is referenced by string above.

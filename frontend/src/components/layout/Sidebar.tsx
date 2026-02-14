@@ -48,7 +48,6 @@ const sections: { title: string; items: NavItem[] }[] = [
   {
     title: "Governance",
     items: [
-      { to: "/policies", icon: "📜", label: "Polityki" },
       { to: "/exceptions", icon: "⚡", label: "Wyjątki" },
       { to: "/audits", icon: "🔍", label: "Audyty" },
     ],
@@ -64,7 +63,7 @@ const sections: { title: string; items: NavItem[] }[] = [
     title: "Compliance & Audit",
     items: [
       { to: "/compliance", icon: "📊", label: "Dashboard Zgodności" },
-      { to: "/frameworks", icon: "📚", label: "Biblioteka Frameworków" },
+      { to: "/frameworks", icon: "📚", label: "Repozytorium Wymagań" },
       { to: "/compliance/assessments", icon: "✅", label: "Oceny Zgodności" },
       { to: "/framework-mappings", icon: "🔗", label: "Mapowanie Frameworków" },
       { to: "/audit-programs", icon: "📋", label: "Program Audytów" },

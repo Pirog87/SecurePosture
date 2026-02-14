@@ -2,13 +2,13 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import Modal from "../components/Modal";
-import type { FrameworkDetail, FrameworkNodeTree, Dimension, FrameworkVersionHistory } from "../types";
+import type { FrameworkDetail, FrameworkNodeTree, Dimension, FrameworkVersionHistory, FrameworkOrgUnitLink, FrameworkReviewRecord, DictionaryEntry } from "../types";
 
 /* ─── Lifecycle helpers ─── */
 const LIFECYCLE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
   draft:      { label: "Szkic",          color: "var(--text-muted)", bg: "var(--bg-inset)" },
   review:     { label: "Przegląd",       color: "var(--orange)",     bg: "var(--orange-dim)" },
-  published:  { label: "Opublikowany",   color: "var(--green)",      bg: "var(--green-dim)" },
+  published:  { label: "Zatwierdzony",   color: "var(--green)",      bg: "var(--green-dim)" },
   deprecated: { label: "Wycofany",       color: "var(--red)",        bg: "var(--red-dim)" },
   archived:   { label: "Zarchiwizowany", color: "var(--text-muted)", bg: "var(--bg-inset)" },
 };
@@ -20,6 +20,8 @@ const LIFECYCLE_TRANSITIONS: Record<string, string[]> = {
   deprecated: ["archived", "draft"],
   archived: ["draft"],
 };
+
+const ORIGIN_LABELS: Record<string, string> = { external: "Zewnętrzny", internal: "Wewnętrzny" };
 
 function lcColor(s: string) { return LIFECYCLE_LABELS[s]?.color ?? "var(--text-muted)"; }
 function lcBg(s: string) { return LIFECYCLE_LABELS[s]?.bg ?? "var(--bg-inset)"; }
@@ -48,6 +50,8 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
   );
 }
 
+type TabKey = "tree" | "dimensions" | "versions" | "edit" | "org-units" | "reviews";
+
 /* ═══════════════════════════════════════════════════
    FrameworkDetailPage
    ═══════════════════════════════════════════════════ */
@@ -57,8 +61,11 @@ export default function FrameworkDetailPage() {
   const [fw, setFw] = useState<FrameworkDetail | null>(null);
   const [tree, setTree] = useState<FrameworkNodeTree[]>([]);
   const [versions, setVersions] = useState<FrameworkVersionHistory[]>([]);
+  const [orgUnits, setOrgUnits] = useState<FrameworkOrgUnitLink[]>([]);
+  const [reviews, setReviews] = useState<FrameworkReviewRecord[]>([]);
+  const [pointTypes, setPointTypes] = useState<DictionaryEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"tree" | "dimensions" | "versions" | "edit">("tree");
+  const [tab, setTab] = useState<TabKey>("tree");
   const [expandedNodes, setExpandedNodes] = useState<Set<number>>(new Set());
   const [selectedNode, setSelectedNode] = useState<FrameworkNodeTree | null>(null);
   const [showAddNode, setShowAddNode] = useState<{ parentId: number | null } | null>(null);
@@ -70,11 +77,15 @@ export default function FrameworkDetailPage() {
       api.get<FrameworkDetail>(`/api/v1/frameworks/${fwId}`),
       api.get<FrameworkNodeTree[]>(`/api/v1/frameworks/${fwId}/tree`),
       api.get<FrameworkVersionHistory[]>(`/api/v1/frameworks/${fwId}/versions`),
+      api.get<FrameworkOrgUnitLink[]>(`/api/v1/frameworks/${fwId}/org-units`).catch(() => []),
+      api.get<FrameworkReviewRecord[]>(`/api/v1/frameworks/${fwId}/reviews`).catch(() => []),
     ])
-      .then(([fwData, treeData, versionsData]) => {
+      .then(([fwData, treeData, versionsData, orgData, reviewsData]) => {
         setFw(fwData);
         setTree(treeData);
         setVersions(versionsData);
+        setOrgUnits(orgData);
+        setReviews(reviewsData);
         // Expand first two levels by default
         const toExpand = new Set<number>();
         for (const n of treeData) {
@@ -86,6 +97,13 @@ export default function FrameworkDetailPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   };
+
+  // Load point_type dictionary
+  useEffect(() => {
+    api.get<{ entries: DictionaryEntry[] }>("/api/v1/dictionaries/by-code/point_type")
+      .then(d => setPointTypes(d.entries?.filter((e: DictionaryEntry) => e.is_active) ?? []))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => { loadData(); }, [fwId]);
 
@@ -129,15 +147,24 @@ export default function FrameworkDetailPage() {
   const handleLifecycleChange = async (newStatus: string) => {
     if (!fw) return;
     const summary = prompt("Opis zmiany statusu (opcjonalnie):");
+    let keepAssessments: boolean | undefined;
+    if (newStatus === "published") {
+      const answer = confirm("Czy zachować istniejące oceny? (OK = zachowaj, Anuluj = wymagaj ponownej oceny)");
+      keepAssessments = answer;
+    }
     try {
-      await api.put(`/api/v1/frameworks/${fw.id}/lifecycle`, { status: newStatus, change_summary: summary || undefined });
+      await api.put(`/api/v1/frameworks/${fw.id}/lifecycle`, {
+        status: newStatus,
+        change_summary: summary || undefined,
+        keep_existing_assessments: keepAssessments,
+      });
       loadData();
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "Błąd zmiany statusu");
     }
   };
 
-  const handleAddNode = async (data: { name: string; ref_id: string; description: string; assessable: boolean; parent_id: number | null }) => {
+  const handleAddNode = async (data: { name: string; ref_id: string; description: string; assessable: boolean; parent_id: number | null; point_type_id: number | null }) => {
     if (!fw) return;
     try {
       await api.post(`/api/v1/frameworks/${fw.id}/nodes`, data);
@@ -172,8 +199,11 @@ export default function FrameworkDetailPage() {
 
   const handleDelete = async () => {
     if (!fw) return;
-    const action = fw.lifecycle_status === "published" ? "zarchiwizować" : "trwale usunąć";
-    if (!confirm(`Czy na pewno chcesz ${action} framework "${fw.name}"?`)) return;
+    const isDraft = fw.lifecycle_status === "draft";
+    const msg = isDraft
+      ? `Czy na pewno chcesz trwale usunąć dokument „${fw.name}"? Operacja jest nieodwracalna.`
+      : `Czy na pewno chcesz zarchiwizować dokument „${fw.name}"? Dokument zostanie przeniesiony do archiwum i nie będzie widoczny na liście aktywnych dokumentów.`;
+    if (!confirm(msg)) return;
     try {
       await api.delete(`/api/v1/frameworks/${fw.id}`);
       navigate("/frameworks");
@@ -182,11 +212,26 @@ export default function FrameworkDetailPage() {
     }
   };
 
+  const handleCopy = async () => {
+    if (!fw) return;
+    const newName = prompt("Nazwa kopii:", `${fw.name} — kopia`);
+    if (!newName) return;
+    try {
+      const result = await api.post<{ id: number }>(`/api/v1/frameworks/${fw.id}/copy`, { new_name: newName });
+      navigate(`/frameworks/${result.id}`);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Błąd kopiowania");
+    }
+  };
+
+  /* ── Review overdue helper ── */
+  const isReviewOverdue = fw?.next_review_date && new Date(fw.next_review_date) < new Date();
+
   if (loading) {
-    return <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Ładowanie frameworka...</div>;
+    return <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Ładowanie dokumentu...</div>;
   }
   if (!fw) {
-    return <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Framework nie znaleziony</div>;
+    return <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Dokument nie znaleziony</div>;
   }
 
   const transitions = LIFECYCLE_TRANSITIONS[fw.lifecycle_status] || [];
@@ -205,17 +250,27 @@ export default function FrameworkDetailPage() {
               <span className="score-badge" style={{ background: lcBg(fw.lifecycle_status), color: lcColor(fw.lifecycle_status), fontSize: 11 }}>
                 {lcLabel(fw.lifecycle_status)}
               </span>
+              {isReviewOverdue && (
+                <span className="score-badge" style={{ background: "var(--red-dim)", color: "var(--red)", fontSize: 10 }}>
+                  Przegląd przeterminowany
+                </span>
+              )}
             </div>
             <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
-              {fw.provider && <span>{fw.provider}</span>}
-              {(fw.published_version || fw.version) && <span>| v{fw.published_version || fw.version}</span>}
+              {fw.document_type_name && <span>{fw.document_type_name}</span>}
+              <span>| {ORIGIN_LABELS[fw.document_origin] ?? fw.document_origin}</span>
+              {fw.provider && <span>| {fw.provider}</span>}
+              {fw.display_version && <span>| v{fw.display_version}</span>}
               <span>| {fw.total_nodes} węzłów</span>
               <span>| {fw.total_assessable} ocenialnych</span>
-              <span>| Edycja v{fw.edit_version}</span>
+              {fw.owner && <span>| Właściciel: {fw.owner}</span>}
             </div>
           </div>
         </div>
         <div className="toolbar-right" style={{ alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn btn-sm" onClick={handleCopy} title="Utwórz kopię dokumentu">
+            Kopiuj
+          </button>
           {transitions.map(status => (
             <button key={status} className="btn btn-sm" onClick={() => handleLifecycleChange(status)}
                     title={`Zmień na: ${lcLabel(status)}`}>
@@ -223,11 +278,36 @@ export default function FrameworkDetailPage() {
             </button>
           ))}
           <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={handleDelete}>
-            {fw.lifecycle_status === "published" ? "Archiwizuj" : "Usuń"}
+            {fw.lifecycle_status === "draft" ? "Usuń" : "Archiwizuj"}
           </button>
-          <button className="btn btn-primary btn-sm" onClick={() => navigate(`/assessments/new?framework_id=${fw.id}`)}>
+          <button className="btn btn-primary btn-sm" onClick={() => navigate(`/compliance/assessments?framework_id=${fw.id}`)}>
             Nowa ocena
           </button>
+        </div>
+      </div>
+
+      {/* ── Document attributes card ── */}
+      <div className="card" style={{ padding: "12px 16px", marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "8px 24px", fontSize: 12 }}>
+          <DetailRow label="Typ dokumentu" value={fw.document_type_name ?? "—"} />
+          <DetailRow label="Pochodzenie" value={ORIGIN_LABELS[fw.document_origin] ?? fw.document_origin} />
+          <DetailRow label="Właściciel" value={fw.owner} />
+          <DetailRow label="Wersja" value={fw.display_version} />
+          <DetailRow label="Zatwierdzony przez" value={fw.approved_by} />
+          <DetailRow label="Data zatwierdzenia" value={fw.approved_at ? new Date(fw.approved_at).toLocaleDateString("pl-PL") : null} />
+          <DetailRow label="Wymaga przeglądu" value={fw.requires_review ? "Tak" : "Nie"} />
+          {fw.requires_review && (
+            <>
+              <DetailRow label="Częstotliwość przeglądu" value={`co ${fw.review_frequency_months} mies.`} />
+              <DetailRow label="Następny przegląd" value={fw.next_review_date ? new Date(fw.next_review_date).toLocaleDateString("pl-PL") : null}
+                         color={isReviewOverdue ? "var(--red)" : undefined} />
+              <DetailRow label="Ostatni przegląd" value={fw.last_reviewed_at ? new Date(fw.last_reviewed_at).toLocaleDateString("pl-PL") : null} />
+              <DetailRow label="Przeglądający" value={fw.reviewed_by} />
+            </>
+          )}
+          {fw.updates_document_name && (
+            <DetailRow label="Aktualizuje dokument" value={fw.updates_document_name} color="var(--blue)" />
+          )}
         </div>
       </div>
 
@@ -239,13 +319,15 @@ export default function FrameworkDetailPage() {
       )}
 
       {/* ── Tabs ── */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, flexWrap: "wrap" }}>
         {([
-          { key: "tree", label: `Drzewo (${treeStats.total})` },
-          { key: "dimensions", label: `Wymiary (${fw.dimensions.length})` },
-          { key: "versions", label: `Historia wersji (${versions.length})` },
-          { key: "edit", label: "Edycja metadanych" },
-        ] as { key: typeof tab; label: string }[]).map(t => (
+          { key: "tree" as TabKey, label: `Struktura (${treeStats.total})` },
+          { key: "dimensions" as TabKey, label: `Wymiary (${fw.dimensions.length})` },
+          { key: "org-units" as TabKey, label: `Jedn. organizacyjne (${orgUnits.length})` },
+          { key: "reviews" as TabKey, label: `Przeglądy (${reviews.length})` },
+          { key: "versions" as TabKey, label: `Historia wersji (${versions.length})` },
+          { key: "edit" as TabKey, label: "Edycja metadanych" },
+        ]).map(t => (
           <button key={t.key}
             style={{
               padding: "8px 16px", fontSize: 12, fontWeight: tab === t.key ? 600 : 400,
@@ -281,15 +363,16 @@ export default function FrameworkDetailPage() {
 
             {tree.length === 0 ? (
               <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-                Brak węzłów. Dodaj pierwszy węzeł lub zaimportuj framework.
+                Brak węzłów. Dodaj pierwszy węzeł lub zaimportuj dokument.
               </div>
             ) : (
-              <div style={{ padding: "4px 0", maxHeight: "calc(100vh - 260px)", overflowY: "auto" }}>
+              <div style={{ padding: "4px 0", maxHeight: "calc(100vh - 320px)", overflowY: "auto" }}>
                 {tree.map(node => (
                   <TreeNode key={node.id} node={node} expanded={expandedNodes} onToggle={toggleNode}
                             selectedId={selectedNode?.id ?? null}
                             onSelect={setSelectedNode}
-                            onAddChild={(parentId) => setShowAddNode({ parentId })} />
+                            onAddChild={(parentId) => setShowAddNode({ parentId })}
+                            pointTypes={pointTypes} />
                 ))}
               </div>
             )}
@@ -300,6 +383,7 @@ export default function FrameworkDetailPage() {
             <div className="card" style={{ position: "sticky", top: 0, alignSelf: "start", maxHeight: "calc(100vh - 100px)", overflowY: "auto" }}>
               <NodeDetailPanel
                 node={selectedNode}
+                pointTypes={pointTypes}
                 onClose={() => setSelectedNode(null)}
                 onDelete={() => handleDeleteNode(selectedNode.id)}
                 onSave={(data) => handleUpdateNode(selectedNode.id, data)}
@@ -313,6 +397,12 @@ export default function FrameworkDetailPage() {
       {/* ═══ Dimensions Tab ═══ */}
       {tab === "dimensions" && <DimensionsPanel dimensions={fw.dimensions} />}
 
+      {/* ═══ Org Units Tab ═══ */}
+      {tab === "org-units" && <OrgUnitsPanel fwId={fw.id} orgUnits={orgUnits} onReload={loadData} />}
+
+      {/* ═══ Reviews Tab ═══ */}
+      {tab === "reviews" && <ReviewsPanel fwId={fw.id} reviews={reviews} onReload={loadData} />}
+
       {/* ═══ Version History Tab ═══ */}
       {tab === "versions" && <VersionHistoryPanel versions={versions} />}
 
@@ -325,6 +415,7 @@ export default function FrameworkDetailPage() {
         {showAddNode && (
           <AddNodeForm
             parentId={showAddNode.parentId}
+            pointTypes={pointTypes}
             onClose={() => setShowAddNode(null)}
             onCreate={handleAddNode}
           />
@@ -337,18 +428,20 @@ export default function FrameworkDetailPage() {
 /* ═══════════════════════════════════════════════════
    TreeNode Component
    ═══════════════════════════════════════════════════ */
-function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }: {
+function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, pointTypes }: {
   node: FrameworkNodeTree;
   expanded: Set<number>;
   onToggle: (id: number) => void;
   selectedId: number | null;
   onSelect: (node: FrameworkNodeTree) => void;
   onAddChild: (parentId: number) => void;
+  pointTypes: DictionaryEntry[];
 }) {
   const hasChildren = node.children.length > 0;
   const isExpanded = expanded.has(node.id);
   const isSelected = selectedId === node.id;
   const indent = (node.depth - 1) * 24;
+  const ptLabel = node.point_type_id ? pointTypes.find(p => p.id === node.point_type_id)?.label : null;
 
   return (
     <>
@@ -375,6 +468,11 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }
         {/* Content */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {ptLabel && (
+              <span className="score-badge" style={{ background: "var(--bg-inset)", color: "var(--text-muted)", fontSize: 8, padding: "1px 5px" }}>
+                {ptLabel}
+              </span>
+            )}
             {node.ref_id && (
               <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--blue)", fontWeight: 600, flexShrink: 0 }}>
                 {node.ref_id}
@@ -409,7 +507,7 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }
 
       {isExpanded && node.children.map(child => (
         <TreeNode key={child.id} node={child} expanded={expanded} onToggle={onToggle}
-                  selectedId={selectedId} onSelect={onSelect} onAddChild={onAddChild} />
+                  selectedId={selectedId} onSelect={onSelect} onAddChild={onAddChild} pointTypes={pointTypes} />
       ))}
     </>
   );
@@ -418,8 +516,9 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }
 /* ═══════════════════════════════════════════════════
    NodeDetailPanel (right sidebar)
    ═══════════════════════════════════════════════════ */
-function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
+function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChild }: {
   node: FrameworkNodeTree;
+  pointTypes: DictionaryEntry[];
   onClose: () => void;
   onDelete: () => void;
   onSave: (data: Record<string, unknown>) => void;
@@ -431,6 +530,9 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
   const [description, setDescription] = useState(node.description || "");
   const [assessable, setAssessable] = useState(node.assessable);
   const [annotation, setAnnotation] = useState(node.annotation || "");
+  const [pointTypeId, setPointTypeId] = useState<number | null>(node.point_type_id ?? null);
+
+  const ptLabel = node.point_type_id ? pointTypes.find(p => p.id === node.point_type_id)?.label : null;
 
   useEffect(() => {
     setName(node.name);
@@ -438,6 +540,7 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
     setDescription(node.description || "");
     setAssessable(node.assessable);
     setAnnotation(node.annotation || "");
+    setPointTypeId(node.point_type_id ?? null);
     setEditing(false);
   }, [node.id]);
 
@@ -453,6 +556,11 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
 
       {!editing ? (
         <>
+          {ptLabel && (
+            <div style={{ marginBottom: 4 }}>
+              <span className="score-badge" style={{ background: "var(--bg-inset)", color: "var(--text-muted)", fontSize: 10 }}>{ptLabel}</span>
+            </div>
+          )}
           {node.ref_id && (
             <div style={{ fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)", fontWeight: 600, marginBottom: 4 }}>
               {node.ref_id}
@@ -480,6 +588,7 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
 
           <div style={{ lineHeight: 2 }}>
             <DetailRow label="Głębokość" value={node.depth} />
+            <DetailRow label="Typ punktu" value={ptLabel ?? "—"} />
             <DetailRow label="Ocenialny" value={
               node.assessable
                 ? <span style={{ color: "var(--green)", fontWeight: 500 }}>Tak</span>
@@ -507,6 +616,15 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
             <input className="form-control" value={refId} onChange={e => setRefId(e.target.value)} />
           </div>
           <div className="form-group">
+            <label>Typ punktu</label>
+            <select className="form-control" value={pointTypeId ?? ""} onChange={e => setPointTypeId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">— brak —</option>
+              {pointTypes.map(pt => (
+                <option key={pt.id} value={pt.id}>{pt.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
             <label>Opis</label>
             <textarea className="form-control" value={description} onChange={e => setDescription(e.target.value)} rows={4} />
           </div>
@@ -520,7 +638,7 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
           </label>
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button className="btn btn-sm btn-primary" onClick={() => {
-              onSave({ name, ref_id: refId || null, description: description || null, assessable, annotation: annotation || null });
+              onSave({ name, ref_id: refId || null, description: description || null, assessable, annotation: annotation || null, point_type_id: pointTypeId });
             }}>Zapisz</button>
             <button className="btn btn-sm" onClick={() => setEditing(false)}>Anuluj</button>
           </div>
@@ -533,15 +651,17 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
 /* ═══════════════════════════════════════════════════
    AddNodeForm
    ═══════════════════════════════════════════════════ */
-function AddNodeForm({ parentId, onClose, onCreate }: {
+function AddNodeForm({ parentId, pointTypes, onClose, onCreate }: {
   parentId: number | null;
+  pointTypes: DictionaryEntry[];
   onClose: () => void;
-  onCreate: (data: { name: string; ref_id: string; description: string; assessable: boolean; parent_id: number | null }) => void;
+  onCreate: (data: { name: string; ref_id: string; description: string; assessable: boolean; parent_id: number | null; point_type_id: number | null }) => void;
 }) {
   const [name, setName] = useState("");
   const [refId, setRefId] = useState("");
   const [description, setDescription] = useState("");
   const [assessable, setAssessable] = useState(false);
+  const [pointTypeId, setPointTypeId] = useState<number | null>(null);
 
   return (
     <div>
@@ -557,6 +677,15 @@ function AddNodeForm({ parentId, onClose, onCreate }: {
                  placeholder="np. A.5.1" />
         </div>
         <div className="form-group">
+          <label>Typ punktu</label>
+          <select className="form-control" value={pointTypeId ?? ""} onChange={e => setPointTypeId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">— brak —</option>
+            {pointTypes.map(pt => (
+              <option key={pt.id} value={pt.id}>{pt.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
           <label>Opis</label>
           <textarea className="form-control" value={description} onChange={e => setDescription(e.target.value)} rows={3} />
         </div>
@@ -568,7 +697,7 @@ function AddNodeForm({ parentId, onClose, onCreate }: {
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
         <button className="btn" onClick={onClose}>Anuluj</button>
         <button className="btn btn-primary" disabled={!name.trim()}
-                onClick={() => onCreate({ name, ref_id: refId, description, assessable, parent_id: parentId })}>
+                onClick={() => onCreate({ name, ref_id: refId, description, assessable, parent_id: parentId, point_type_id: pointTypeId })}>
           Dodaj
         </button>
       </div>
@@ -583,7 +712,7 @@ function DimensionsPanel({ dimensions }: { dimensions: Dimension[] }) {
   if (dimensions.length === 0) {
     return (
       <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-        Ten framework nie ma zdefiniowanych wymiarów oceny.
+        Ten dokument nie ma zdefiniowanych wymiarów oceny.
       </div>
     );
   }
@@ -617,6 +746,268 @@ function DimensionsPanel({ dimensions }: { dimensions: Dimension[] }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════
+   OrgUnitsPanel
+   ═══════════════════════════════════════════════════ */
+function OrgUnitsPanel({ fwId, orgUnits, onReload }: { fwId: number; orgUnits: FrameworkOrgUnitLink[]; onReload: () => void }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [orgUnitId, setOrgUnitId] = useState("");
+  const [complianceStatus, setComplianceStatus] = useState("not_assessed");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleAdd = async () => {
+    if (!orgUnitId) return;
+    setSaving(true);
+    try {
+      await api.post(`/api/v1/frameworks/${fwId}/org-units`, {
+        org_unit_id: Number(orgUnitId),
+        compliance_status: complianceStatus,
+        notes: notes || null,
+      });
+      setShowAdd(false);
+      setOrgUnitId("");
+      setNotes("");
+      onReload();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Błąd dodawania");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemove = async (linkId: number) => {
+    if (!confirm("Usunąć powiązanie z jednostką organizacyjną?")) return;
+    try {
+      await api.delete(`/api/v1/frameworks/${fwId}/org-units/${linkId}`);
+      onReload();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Błąd usuwania");
+    }
+  };
+
+  const COMPLIANCE_LABELS: Record<string, { label: string; color: string }> = {
+    not_assessed: { label: "Nieoceniony", color: "var(--text-muted)" },
+    compliant: { label: "Zgodny", color: "var(--green)" },
+    partially_compliant: { label: "Częściowo zgodny", color: "var(--orange)" },
+    non_compliant: { label: "Niezgodny", color: "var(--red)" },
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+          Powiązane jednostki organizacyjne ({orgUnits.length})
+        </div>
+        <button className="btn btn-sm btn-primary" onClick={() => setShowAdd(true)}>+ Dodaj powiązanie</button>
+      </div>
+
+      {orgUnits.length === 0 ? (
+        <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+          Brak powiązań z jednostkami organizacyjnymi. Dodaj powiązanie, aby śledzić zgodność.
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Jednostka organizacyjna</th>
+                <th>Status zgodności</th>
+                <th>Ostatnia ocena</th>
+                <th>Notatki</th>
+                <th style={{ width: 60 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {orgUnits.map(ou => {
+                const cs = COMPLIANCE_LABELS[ou.compliance_status] ?? { label: ou.compliance_status, color: "var(--text-muted)" };
+                return (
+                  <tr key={ou.id}>
+                    <td style={{ fontWeight: 500 }}>{ou.org_unit_name ?? `ID: ${ou.org_unit_id}`}</td>
+                    <td>
+                      <span style={{ color: cs.color, fontWeight: 500, fontSize: 11 }}>{cs.label}</span>
+                    </td>
+                    <td style={{ fontSize: 11 }}>{ou.last_assessed_at ? new Date(ou.last_assessed_at).toLocaleDateString("pl-PL") : "—"}</td>
+                    <td style={{ fontSize: 11, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{ou.notes || "—"}</td>
+                    <td>
+                      <button className="btn btn-sm" style={{ color: "var(--red)", fontSize: 10 }} onClick={() => handleRemove(ou.id)}>Usuń</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Dodaj powiązanie z jednostką organizacyjną">
+        <div style={{ display: "grid", gap: 12 }}>
+          <div className="form-group">
+            <label>ID jednostki organizacyjnej *</label>
+            <input className="form-control" type="number" value={orgUnitId} onChange={e => setOrgUnitId(e.target.value)}
+                   placeholder="ID jednostki" autoFocus />
+          </div>
+          <div className="form-group">
+            <label>Status zgodności</label>
+            <select className="form-control" value={complianceStatus} onChange={e => setComplianceStatus(e.target.value)}>
+              <option value="not_assessed">Nieoceniony</option>
+              <option value="compliant">Zgodny</option>
+              <option value="partially_compliant">Częściowo zgodny</option>
+              <option value="non_compliant">Niezgodny</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Notatki</label>
+            <textarea className="form-control" value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <button className="btn" onClick={() => setShowAdd(false)}>Anuluj</button>
+            <button className="btn btn-primary" disabled={!orgUnitId || saving} onClick={handleAdd}>
+              {saving ? "Zapisywanie..." : "Dodaj"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════
+   ReviewsPanel
+   ═══════════════════════════════════════════════════ */
+function ReviewsPanel({ fwId, reviews, onReload }: { fwId: number; reviews: FrameworkReviewRecord[]; onReload: () => void }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [reviewer, setReviewer] = useState("");
+  const [reviewType, setReviewType] = useState("periodic");
+  const [findings, setFindings] = useState("");
+  const [recommendations, setRecommendations] = useState("");
+  const [status, setStatus] = useState("completed");
+  const [saving, setSaving] = useState(false);
+
+  const handleAdd = async () => {
+    setSaving(true);
+    try {
+      await api.post(`/api/v1/frameworks/${fwId}/reviews`, {
+        reviewer: reviewer || null,
+        review_type: reviewType,
+        findings: findings || null,
+        recommendations: recommendations || null,
+        status,
+      });
+      setShowAdd(false);
+      setReviewer("");
+      setFindings("");
+      setRecommendations("");
+      onReload();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Błąd dodawania przeglądu");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const STATUS_LABELS: Record<string, { label: string; color: string }> = {
+    completed: { label: "Zakończony", color: "var(--green)" },
+    in_progress: { label: "W trakcie", color: "var(--orange)" },
+    planned: { label: "Zaplanowany", color: "var(--blue)" },
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+          Historia przeglądów ({reviews.length})
+        </div>
+        <button className="btn btn-sm btn-primary" onClick={() => setShowAdd(true)}>+ Nowy przegląd</button>
+      </div>
+
+      {reviews.length === 0 ? (
+        <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+          Brak zarejestrowanych przeglądów dla tego dokumentu.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {reviews.map(r => {
+            const st = STATUS_LABELS[r.status] ?? { label: r.status, color: "var(--text-muted)" };
+            return (
+              <div key={r.id} className="card" style={{ padding: "12px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>
+                      {r.review_date ? new Date(r.review_date).toLocaleDateString("pl-PL") : "—"}
+                    </span>
+                    <span style={{ color: st.color, fontSize: 11, fontWeight: 500 }}>{st.label}</span>
+                    <span className="score-badge" style={{ background: "var(--bg-inset)", fontSize: 9 }}>
+                      {r.review_type === "periodic" ? "Okresowy" : r.review_type === "ad_hoc" ? "Ad hoc" : r.review_type}
+                    </span>
+                  </div>
+                  {r.reviewer && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.reviewer}</span>}
+                </div>
+                {r.findings && (
+                  <div style={{ fontSize: 11, marginBottom: 4 }}>
+                    <strong>Ustalenia:</strong> {r.findings}
+                  </div>
+                )}
+                {r.recommendations && (
+                  <div style={{ fontSize: 11 }}>
+                    <strong>Rekomendacje:</strong> {r.recommendations}
+                  </div>
+                )}
+                {r.next_review_date && (
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
+                    Następny przegląd: {new Date(r.next_review_date).toLocaleDateString("pl-PL")}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Rejestruj przegląd dokumentu">
+        <div style={{ display: "grid", gap: 12 }}>
+          <div className="form-group">
+            <label>Przeglądający</label>
+            <input className="form-control" value={reviewer} onChange={e => setReviewer(e.target.value)} placeholder="Imię i nazwisko" autoFocus />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="form-group">
+              <label>Typ przeglądu</label>
+              <select className="form-control" value={reviewType} onChange={e => setReviewType(e.target.value)}>
+                <option value="periodic">Okresowy</option>
+                <option value="ad_hoc">Ad hoc</option>
+                <option value="initial">Wstępny</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Status</label>
+              <select className="form-control" value={status} onChange={e => setStatus(e.target.value)}>
+                <option value="completed">Zakończony</option>
+                <option value="in_progress">W trakcie</option>
+                <option value="planned">Zaplanowany</option>
+              </select>
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Ustalenia</label>
+            <textarea className="form-control" value={findings} onChange={e => setFindings(e.target.value)} rows={3} placeholder="Wyniki przeglądu..." />
+          </div>
+          <div className="form-group">
+            <label>Rekomendacje</label>
+            <textarea className="form-control" value={recommendations} onChange={e => setRecommendations(e.target.value)} rows={3} placeholder="Zalecenia..." />
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <button className="btn" onClick={() => setShowAdd(false)}>Anuluj</button>
+            <button className="btn btn-primary" disabled={saving} onClick={handleAdd}>
+              {saving ? "Zapisywanie..." : "Zarejestruj przegląd"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -687,6 +1078,9 @@ function EditMetadataPanel({ fw, onSaved }: { fw: FrameworkDetail; onSaved: () =
   const [version, setVersion] = useState(fw.version || "");
   const [provider, setProvider] = useState(fw.provider || "");
   const [publishedVersion, setPublishedVersion] = useState(fw.published_version || "");
+  const [owner, setOwner] = useState(fw.owner || "");
+  const [requiresReview, setRequiresReview] = useState(fw.requires_review);
+  const [reviewFrequency, setReviewFrequency] = useState(fw.review_frequency_months);
   const [changeSummary, setChangeSummary] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -700,6 +1094,9 @@ function EditMetadataPanel({ fw, onSaved }: { fw: FrameworkDetail; onSaved: () =
         version: version || undefined,
         provider: provider || undefined,
         published_version: publishedVersion || undefined,
+        owner: owner || undefined,
+        requires_review: requiresReview,
+        review_frequency_months: reviewFrequency,
         change_summary: changeSummary || undefined,
       });
       setChangeSummary("");
@@ -738,9 +1135,29 @@ function EditMetadataPanel({ fw, onSaved }: { fw: FrameworkDetail; onSaved: () =
             </div>
           </div>
           <div className="form-group">
+            <label>Właściciel dokumentu</label>
+            <input className="form-control" value={owner} onChange={e => setOwner(e.target.value)} placeholder="Imię i nazwisko lub rola" />
+          </div>
+          <div className="form-group">
             <label>Opis</label>
             <textarea className="form-control" value={description} onChange={e => setDescription(e.target.value)} rows={4} />
           </div>
+
+          {/* Review settings */}
+          <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: 12 }}>
+            <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+              <input type="checkbox" checked={requiresReview} onChange={e => setRequiresReview(e.target.checked)} />
+              Wymaga okresowego przeglądu
+            </label>
+            {requiresReview && (
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Częstotliwość przeglądu (miesiące)</label>
+                <input className="form-control" type="number" min={1} max={120} value={reviewFrequency}
+                       onChange={e => setReviewFrequency(Number(e.target.value))} />
+              </div>
+            )}
+          </div>
+
           <div className="form-group">
             <label>Opis zmian (do historii wersji)</label>
             <input className="form-control" value={changeSummary} onChange={e => setChangeSummary(e.target.value)}
@@ -754,8 +1171,7 @@ function EditMetadataPanel({ fw, onSaved }: { fw: FrameworkDetail; onSaved: () =
           </div>
 
           <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
-            Każda edycja tworzy nową wersję w historii. Wersja publikacji (np. "8.0" benchmarku CIS)
-            jest niezależna od wersji edycji w systemie (v{fw.edit_version}).
+            Każda edycja tworzy nową wersję w historii. Wersja dokumentu: {fw.display_version ?? `${fw.major_version}.${fw.minor_version}`} (edycja v{fw.edit_version}).
           </div>
         </div>
       </div>

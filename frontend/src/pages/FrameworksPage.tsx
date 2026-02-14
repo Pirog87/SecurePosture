@@ -314,7 +314,7 @@ export default function FrameworksPage() {
         primaryLabel="Nowy dokument"
         onPrimaryAction={() => setShowCreateModal(true)}
         secondaryActions={[
-          { label: "Katalog CISO Assistant", onClick: () => setShowCatalog(true) },
+          { label: "Import z CISO Assistant", onClick: () => setShowCatalog(true) },
           { label: importing ? "Importowanie..." : "Import z pliku", onClick: () => fileRef.current?.click() },
           { label: showArchived ? "Ukryj archiwalne" : "Pokaż archiwalne", onClick: () => setShowArchived(v => !v) },
         ]}

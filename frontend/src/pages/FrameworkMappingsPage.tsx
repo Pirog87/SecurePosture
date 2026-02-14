@@ -279,11 +279,9 @@ interface ImportResult {
   errors: string[];
 }
 
-/* ─── Searchable Mapping File Selector ─── */
+/* ─── Searchable Mapping File Selector (inline list) ─── */
 function MappingFileSelector({ value, onChange }: { value: string; onChange: (filename: string) => void }) {
   const [search, setSearch] = useState("");
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return CISO_MAPPING_FILES;
@@ -295,100 +293,61 @@ function MappingFileSelector({ value, onChange }: { value: string; onChange: (fi
     );
   }, [search]);
 
-  const selected = CISO_MAPPING_FILES.find(f => f.filename === value);
-
-  // Close on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      {/* Selected value / trigger */}
-      <div
-        onClick={() => setOpen(!open)}
-        style={{
-          padding: "8px 12px", borderRadius: 6, border: "1px solid var(--border)",
-          background: "var(--bg-primary)", cursor: "pointer", fontSize: 13,
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-        }}
-      >
-        {selected ? (
-          <span>
-            <span style={{ fontWeight: 600 }}>{selected.source}</span>
-            <span style={{ margin: "0 6px", color: "var(--text-muted)" }}>{selected.direction === "and" ? "\u2194" : "\u2192"}</span>
-            <span style={{ fontWeight: 600 }}>{selected.target}</span>
-          </span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Search input */}
+      <input
+        type="text"
+        className="form-control"
+        placeholder="Szukaj frameworka..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        style={{ fontSize: 12 }}
+      />
+      {/* Scrollable list */}
+      <div style={{
+        border: "1px solid var(--border)", borderRadius: 8, overflowY: "auto",
+        maxHeight: "min(50vh, 340px)", minHeight: 120,
+      }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
+            Brak wyników dla "{search}"
+          </div>
         ) : (
-          <span style={{ color: "var(--text-muted)" }}>Wybierz plik mapowania...</span>
-        )}
-        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{open ? "\u25B2" : "\u25BC"}</span>
-      </div>
-
-      {/* Dropdown */}
-      {open && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 100,
-          background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8,
-          boxShadow: "0 8px 24px rgba(0,0,0,0.15)", maxHeight: 320, display: "flex", flexDirection: "column",
-        }}>
-          {/* Search input */}
-          <div style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>
-            <input
-              autoFocus
-              type="text"
-              className="form-control"
-              placeholder="Szukaj framework..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ fontSize: 12 }}
-            />
-          </div>
-          {/* Results */}
-          <div style={{ overflowY: "auto", maxHeight: 260 }}>
-            {filtered.length === 0 ? (
-              <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
-                Brak wyników dla "{search}"
+          filtered.map(f => (
+            <div
+              key={f.filename}
+              onClick={() => onChange(f.filename)}
+              style={{
+                padding: "8px 12px", cursor: "pointer", fontSize: 12,
+                borderBottom: "1px solid var(--border)",
+                background: f.filename === value ? "var(--blue-dim, rgba(99,102,241,0.08))" : "transparent",
+                borderLeft: f.filename === value ? "3px solid var(--blue)" : "3px solid transparent",
+                transition: "background 0.1s",
+              }}
+              onMouseEnter={e => { if (f.filename !== value) (e.currentTarget.style.background = "var(--bg-secondary)"); }}
+              onMouseLeave={e => { if (f.filename !== value) (e.currentTarget.style.background = f.filename === value ? "var(--blue-dim, rgba(99,102,241,0.08))" : "transparent"); }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{f.source}</span>
+                <span style={{
+                  padding: "1px 6px", borderRadius: 4, fontSize: 10,
+                  background: f.direction === "and" ? "#6366f118" : "#10b98118",
+                  color: f.direction === "and" ? "#6366f1" : "#10b981",
+                  fontWeight: 600,
+                }}>
+                  {f.direction === "and" ? "\u2194" : "\u2192"}
+                </span>
+                <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{f.target}</span>
               </div>
-            ) : (
-              filtered.map(f => (
-                <div
-                  key={f.filename}
-                  onClick={() => { onChange(f.filename); setOpen(false); setSearch(""); }}
-                  style={{
-                    padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--border)",
-                    background: f.filename === value ? "var(--blue-dim, rgba(99,102,241,0.08))" : "transparent",
-                    transition: "background 0.1s",
-                  }}
-                  onMouseEnter={e => { if (f.filename !== value) (e.currentTarget.style.background = "var(--bg-secondary)"); }}
-                  onMouseLeave={e => { if (f.filename !== value) (e.currentTarget.style.background = "transparent"); }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{f.source}</span>
-                    <span style={{
-                      padding: "1px 6px", borderRadius: 4, fontSize: 10,
-                      background: f.direction === "and" ? "#6366f118" : "#10b98118",
-                      color: f.direction === "and" ? "#6366f1" : "#10b981",
-                      fontWeight: 600,
-                    }}>
-                      {f.direction === "and" ? "\u2194" : "\u2192"}
-                    </span>
-                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{f.target}</span>
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{f.filename}</div>
-                </div>
-              ))
-            )}
-          </div>
-          <div style={{ padding: "6px 12px", borderTop: "1px solid var(--border)", fontSize: 10, color: "var(--text-muted)", textAlign: "center" }}>
-            {filtered.length} / {CISO_MAPPING_FILES.length} plik{filtered.length === 1 ? "" : "ów"}
-          </div>
-        </div>
-      )}
+              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{f.filename}</div>
+            </div>
+          ))
+        )}
+      </div>
+      <div style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "right" }}>
+        {filtered.length} / {CISO_MAPPING_FILES.length} plików
+      </div>
     </div>
   );
 }
@@ -497,7 +456,7 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
           />
           <button className="btn" onClick={() => { resetImport(); setShowImport(true); }}
             style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            Import YAML
+            Import mapowań
           </button>
           <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Nowy zestaw</button>
         </div>
@@ -593,7 +552,7 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
                 fontWeight: importMode === "file" ? 600 : 400, fontSize: 12,
               }}
             >
-              Plik YAML
+              Import z pliku
             </button>
             <button
               onClick={() => setImportMode("github")}
@@ -604,7 +563,7 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
                 fontWeight: importMode === "github" ? 600 : 400, fontSize: 12,
               }}
             >
-              GitHub CISO Assistant
+              Import z CISO Assistant
             </button>
           </div>
 

@@ -27,8 +27,10 @@ from app.services.ai_prompts import (
     SYSTEM_PROMPT_ASSIST,
     SYSTEM_PROMPT_ENRICHMENT,
     SYSTEM_PROMPT_GAP_ANALYSIS,
+    SYSTEM_PROMPT_INTERPRET,
     SYSTEM_PROMPT_SCENARIO_GEN,
     SYSTEM_PROMPT_SEARCH,
+    SYSTEM_PROMPT_TRANSLATE,
 )
 
 
@@ -469,6 +471,73 @@ class AIService:
             max_tokens=2000,
         )
         return result if isinstance(result, dict) else {"suggestions": result}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 6: Framework node interpretation
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def interpret_node(
+        self,
+        user_id: int,
+        framework_name: str,
+        node_ref_id: str | None,
+        node_name: str,
+        node_description: str | None,
+    ) -> dict:
+        """Generate expert interpretation of a framework requirement."""
+        self._require_ai()
+
+        prompt = (
+            f"Framework: {framework_name}\n"
+            f"Ref ID: {node_ref_id or 'brak'}\n"
+            f"Nazwa wymagania: {node_name}\n"
+        )
+        if node_description:
+            prompt += f"Opis: {node_description}\n"
+        prompt += "\nWygeneruj interpretacje tego wymagania."
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_INTERPRET,
+            user_message=prompt,
+            action_type="INTERPRET",
+            user_id=user_id,
+            max_tokens=2000,
+        )
+        return result if isinstance(result, dict) else {"interpretation": str(result)}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 7: Framework node translation
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def translate_node(
+        self,
+        user_id: int,
+        framework_name: str,
+        node_ref_id: str | None,
+        node_name: str,
+        node_description: str | None,
+        target_language: str,
+    ) -> dict:
+        """Translate a framework requirement to the specified language."""
+        self._require_ai()
+
+        prompt = (
+            f"Framework: {framework_name}\n"
+            f"Ref ID: {node_ref_id or 'brak'}\n"
+            f"Nazwa wymagania: {node_name}\n"
+        )
+        if node_description:
+            prompt += f"Opis: {node_description}\n"
+        prompt += f"\nPrzetlumacz na jezyk: {target_language}"
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_TRANSLATE,
+            user_message=prompt,
+            action_type="TRANSLATE",
+            user_id=user_id,
+            max_tokens=2000,
+        )
+        return result if isinstance(result, dict) else {"translated_name": str(result)}
 
 
 async def get_ai_service(session: AsyncSession) -> AIService:

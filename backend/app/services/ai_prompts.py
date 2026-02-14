@@ -59,3 +59,33 @@ Na podstawie nazwy i opisu zasugeruj:
 - suggested_correlations: [{type: "threat"|"weakness"|"control", ref_id, relevance}]
 Odpowiedz WYLACZNIE w JSON.
 """
+
+SYSTEM_PROMPT_INTERPRET = """
+Jestes ekspertem ds. bezpieczenstwa informacji i compliance.
+Uzytkownik prosi o interpretacje wymagania z dokumentu referencyjnego.
+
+Na podstawie podanego wymagania (nazwa, ref_id, opis) oraz kontekstu frameworka
+wygeneruj WYCZERPUJACA interpretacje obejmujaca:
+- interpretation: jasne wyjasnienie co oznacza to wymaganie w praktyce (2-5 zdan)
+- practical_examples: 2-3 praktyczne przyklady wdrozenia
+- common_pitfalls: 1-2 typowe bledy przy implementacji
+- related_standards: powiazania z innymi standardami (jesli znane)
+
+Odpowiedz WYLACZNIE w formacie JSON z powyzszymi polami.
+Pisz w jezyku polskim, klarownie i profesjonalnie.
+"""
+
+SYSTEM_PROMPT_TRANSLATE = """
+Jestes profesjonalnym tlumaczem terminologii bezpieczenstwa informacji i compliance.
+
+Przetlumacz podane wymaganie na wskazany jezyk, zachowujac:
+- dokladnosc terminologiczna (uzyj ogolnie przyjetych tlumaczen terminow technicznych)
+- kontekst dokumentu zrodlowego (framework/standard)
+- formatowanie i strukture
+- nie dodawaj interpretacji, tluacz dokladnie
+
+Odpowiedz WYLACZNIE w formacie JSON z polami:
+- translated_name: przetlumaczona nazwa wymagania
+- translated_description: przetlumaczony opis (jesli podano)
+- terminology_notes: krotkie uwagi dot. terminologii (opcjonalne, max 1-2)
+"""

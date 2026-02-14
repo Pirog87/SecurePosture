@@ -158,7 +158,12 @@ export default function FrameworksPage() {
       setShowAdoptModal(true);
       load();
     } catch (e: unknown) {
-      setImportError(e instanceof Error ? e.message : "Błąd importu AI");
+      const msg = e instanceof Error ? e.message : "Błąd importu AI";
+      if (msg.includes("Failed to fetch")) {
+        setImportError("Nie można połączyć się z backendem. Sprawdź czy serwer działa i czy zainstalowane są: pdfplumber, python-docx (pip install pdfplumber python-docx).");
+      } else {
+        setImportError(msg);
+      }
       load();
     } finally {
       setAiImporting(false);

@@ -6,6 +6,7 @@ import { useColumnVisibility } from "../hooks/useColumnVisibility";
 import { useTableFeatures } from "../hooks/useTableFeatures";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
+import { useFeatureFlags } from "../hooks/useFeatureFlags";
 import { CISO_MAPPING_FILES } from "../data/cisoCatalog";
 
 /* ─── Types ─── */
@@ -234,7 +235,7 @@ function RelationshipChart({ data }: { data: Record<string, number> }) {
 /* ═══════════════════════════════════════════════════════════
    Tabs
    ═══════════════════════════════════════════════════════════ */
-type TabId = "mappings" | "sets" | "ai_suggest" | "coverage" | "matrix";
+type TabId = "mappings" | "sets" | "ai_suggest" | "coverage" | "matrix" | "transitive";
 
 function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => void }) {
   const tabs: { id: TabId; label: string; icon: string }[] = [
@@ -243,6 +244,7 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
     { id: "ai_suggest", label: "AI Suggest", icon: "🤖" },
     { id: "coverage", label: "Pokrycie", icon: "📊" },
     { id: "matrix", label: "Matryca", icon: "🗓" },
+    { id: "transitive", label: "Tranzytywne", icon: "🔀" },
   ];
   return (
     <div style={{ display: "flex", gap: 2, background: "var(--bg-secondary)", borderRadius: 8, padding: 3, marginBottom: 16 }}>
@@ -1024,20 +1026,45 @@ function AISuggestTab({ frameworks, onRefresh }: { frameworks: Framework[]; onRe
 /* ═══════════════════════════════════════════════════════════
    CoverageTab
    ═══════════════════════════════════════════════════════════ */
+interface AiCoverageReport {
+  executive_summary: string;
+  strengths: string[];
+  gaps: string[];
+  recommendations: { action: string; priority: string; effort: string }[];
+  risk_level: string;
+}
+
 function CoverageTab({ frameworks }: { frameworks: Framework[] }) {
   const [srcFw, setSrcFw] = useState(0);
   const [tgtFw, setTgtFw] = useState(0);
   const [coverage, setCoverage] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(false);
+  const { aiEnabled } = useFeatureFlags();
+  const [aiReport, setAiReport] = useState<AiCoverageReport | null>(null);
+  const [aiReportLoading, setAiReportLoading] = useState(false);
 
   const loadCoverage = async () => {
     if (!srcFw || !tgtFw) return;
     setLoading(true);
+    setAiReport(null);
     try {
       const data = await api.get<CoverageData>(`/api/v1/framework-mappings/coverage?source_framework_id=${srcFw}&target_framework_id=${tgtFw}`);
       setCoverage(data);
     } catch { setCoverage(null); }
     setLoading(false);
+  };
+
+  const loadAiReport = async () => {
+    if (!srcFw || !tgtFw) return;
+    setAiReportLoading(true);
+    try {
+      const data = await api.post<AiCoverageReport>("/api/v1/ai/coverage-report", {
+        source_framework_id: srcFw,
+        target_framework_id: tgtFw,
+      });
+      setAiReport(data);
+    } catch { /* ignore */ }
+    setAiReportLoading(false);
   };
 
   return (
@@ -1064,6 +1091,12 @@ function CoverageTab({ frameworks }: { frameworks: Framework[] }) {
           <button className="btn btn-primary" onClick={loadCoverage} disabled={!srcFw || !tgtFw || loading}>
             {loading ? "Analizuję..." : "Analizuj pokrycie"}
           </button>
+          {aiEnabled && coverage && (
+            <button className="btn btn-sm" onClick={loadAiReport} disabled={aiReportLoading}
+              style={{ background: "var(--blue-dim)", color: "var(--blue)", border: "1px solid var(--blue)", fontSize: 11 }}>
+              {aiReportLoading ? "Generuję raport..." : "Raport AI"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1154,6 +1187,64 @@ function CoverageTab({ frameworks }: { frameworks: Framework[] }) {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* AI Coverage Report */}
+          {aiReport && (
+            <div className="card" style={{ padding: 16, gridColumn: "1 / -1", borderLeft: `3px solid ${aiReport.risk_level === "critical" ? "var(--red)" : aiReport.risk_level === "high" ? "var(--orange)" : aiReport.risk_level === "medium" ? "#f59e0b" : "var(--green)"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h4 style={{ margin: 0, fontSize: 14 }}>Raport AI</h4>
+                <span className="score-badge" style={{
+                  background: aiReport.risk_level === "critical" ? "var(--red-dim)" : aiReport.risk_level === "high" ? "var(--orange-dim)" : aiReport.risk_level === "medium" ? "#fef3c7" : "var(--green-dim)",
+                  color: aiReport.risk_level === "critical" ? "var(--red)" : aiReport.risk_level === "high" ? "var(--orange)" : aiReport.risk_level === "medium" ? "#92400e" : "var(--green)",
+                  fontSize: 10,
+                }}>
+                  Ryzyko: {aiReport.risk_level}
+                </span>
+              </div>
+
+              <div style={{ fontSize: 12, lineHeight: 1.6, marginBottom: 12 }}>{aiReport.executive_summary}</div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                {aiReport.strengths.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--green)", marginBottom: 4 }}>Mocne strony</div>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11 }}>
+                      {aiReport.strengths.map((s, i) => <li key={i}>{s}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {aiReport.gaps.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "var(--red)", marginBottom: 4 }}>Luki</div>
+                    <ul style={{ margin: 0, paddingLeft: 16, fontSize: 11 }}>
+                      {aiReport.gaps.map((g, i) => <li key={i}>{g}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {aiReport.recommendations.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--blue)", marginBottom: 4 }}>Rekomendacje</div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {aiReport.recommendations.map((r, i) => (
+                      <div key={i} style={{ padding: "6px 8px", background: "var(--bg-inset)", borderRadius: 6, fontSize: 11, display: "flex", gap: 8, alignItems: "center" }}>
+                        <span className="score-badge" style={{
+                          fontSize: 8, padding: "1px 5px",
+                          background: r.priority === "high" ? "var(--red-dim)" : r.priority === "medium" ? "var(--orange-dim)" : "var(--bg-inset)",
+                          color: r.priority === "high" ? "var(--red)" : r.priority === "medium" ? "var(--orange)" : "var(--text-muted)",
+                        }}>{r.priority}</span>
+                        <span style={{ flex: 1 }}>{r.action}</span>
+                        <span className="score-badge" style={{ fontSize: 8, padding: "1px 5px", background: "var(--bg-inset)", color: "var(--text-muted)" }}>
+                          nakład: {r.effort}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1312,6 +1403,315 @@ function MatrixTab({ frameworks }: { frameworks: Framework[] }) {
             </div>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TransitiveTab — A→B + B→C = A→C inference
+   ═══════════════════════════════════════════════════════════ */
+interface TransitiveSuggestion {
+  source_node_id: number;
+  source_ref_id: string | null;
+  source_name: string | null;
+  target_node_id: number;
+  target_ref_id: string | null;
+  target_name: string | null;
+  via_node_id: number;
+  via_ref_id: string | null;
+  via_name: string | null;
+  relationship_type: string;
+  strength: number;
+  chain: string;
+}
+
+interface TransitiveResult {
+  framework_a: string;
+  framework_b: string;
+  framework_c: string;
+  ab_mappings_count: number;
+  bc_mappings_count: number;
+  existing_ac_count: number;
+  transitive_suggestions: number;
+  created: number;
+  suggestions: TransitiveSuggestion[];
+}
+
+function TransitiveTab({ frameworks, onRefresh }: { frameworks: Framework[]; onRefresh: () => void }) {
+  const [fwA, setFwA] = useState(0);
+  const [fwB, setFwB] = useState(0);
+  const [fwC, setFwC] = useState(0);
+  const [minStrength, setMinStrength] = useState(2);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<TransitiveResult | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState<number | null>(null);
+
+  const handleAnalyze = async () => {
+    if (!fwA || !fwB || !fwC) return;
+    setLoading(true);
+    setResult(null);
+    setSelected(new Set());
+    setCreated(null);
+    try {
+      const params = new URLSearchParams({
+        framework_a_id: String(fwA),
+        framework_b_id: String(fwB),
+        framework_c_id: String(fwC),
+        min_strength: String(minStrength),
+        auto_create: "false",
+      });
+      const data = await api.post<TransitiveResult>(`/api/v1/framework-mappings/transitive?${params}`, {});
+      setResult(data);
+      // Pre-select all
+      setSelected(new Set(data.suggestions.map((_, i) => i)));
+    } catch (e: any) {
+      alert(e?.message || "B\u0142\u0105d analizy tranzytywnej");
+    }
+    setLoading(false);
+  };
+
+  const handleCreate = async () => {
+    if (!fwA || !fwB || !fwC) return;
+    setCreating(true);
+    try {
+      const params = new URLSearchParams({
+        framework_a_id: String(fwA),
+        framework_b_id: String(fwB),
+        framework_c_id: String(fwC),
+        min_strength: String(minStrength),
+        auto_create: "true",
+      });
+      const data = await api.post<TransitiveResult>(`/api/v1/framework-mappings/transitive?${params}`, {});
+      setCreated(data.created);
+      onRefresh();
+    } catch (e: any) {
+      alert(e?.message || "B\u0142\u0105d tworzenia mapowa\u0144");
+    }
+    setCreating(false);
+  };
+
+  const toggleSelect = (idx: number) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (!result) return;
+    if (selected.size === result.suggestions.length) setSelected(new Set());
+    else setSelected(new Set(result.suggestions.map((_, i) => i)));
+  };
+
+  return (
+    <div>
+      <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>Mapowania Tranzytywne</h3>
+      <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--text-muted)" }}>
+        Je{'\u015b'}li A{'\u2192'}B i B{'\u2192'}C istniej{'\u0105'}, wnioskuj A{'\u2192'}C przez framework po{'\u015b'}redni
+      </p>
+
+      {/* Configuration */}
+      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <label style={{ fontSize: 13 }}>Framework A ({"źr\u00f3d\u0142owy"}) *
+            <select className="form-control" value={fwA} onChange={e => setFwA(Number(e.target.value))}>
+              <option value={0}>{"\u2014 wybierz \u2014"}</option>
+              {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: 13 }}>Framework B (po{'\u015b'}redni) *
+            <select className="form-control" value={fwB} onChange={e => setFwB(Number(e.target.value))}>
+              <option value={0}>{"\u2014 wybierz \u2014"}</option>
+              {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: 13 }}>Framework C (docelowy) *
+            <select className="form-control" value={fwC} onChange={e => setFwC(Number(e.target.value))}>
+              <option value={0}>{"\u2014 wybierz \u2014"}</option>
+              {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+            </select>
+          </label>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
+          <label style={{ fontSize: 13, margin: 0 }}>Min. si{'\u0142'}a powi{'\u0105'}zania
+            <select className="form-control" value={minStrength} onChange={e => setMinStrength(Number(e.target.value))}>
+              <option value={1}>1 {'\u2014'} S{'\u0142'}abe</option>
+              <option value={2}>2 {'\u2014'} Umiarkowane</option>
+              <option value={3}>3 {'\u2014'} Silne</option>
+            </select>
+          </label>
+          <button
+            className="btn btn-primary"
+            onClick={handleAnalyze}
+            disabled={loading || !fwA || !fwB || !fwC || fwA === fwB || fwB === fwC || fwA === fwC}
+          >
+            {loading ? "Analizuj\u0119..." : "Analizuj tranzytywno\u015b\u0107"}
+          </button>
+        </div>
+
+        {/* Info */}
+        <div style={{ padding: 10, borderRadius: 6, background: "var(--bg-secondary)", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, marginTop: 12 }}>
+          Algorytm: dla ka{'\u017c'}dego mapowania A{'\u2192'}B i B{'\u2192'}C oblicza potencjalne A{'\u2192'}C.
+          Si{'\u0142'}a = min(si{'\u0142'}a AB, si{'\u0142'}a BC). Relacja = s{'\u0142'}absza z dw{'\u00f3'}ch.
+          Pomija istniej{'\u0105'}ce mapowania A{'\u2192'}C oraz relacje "not_related".
+        </div>
+      </div>
+
+      {/* Results */}
+      {result && (
+        <div>
+          {/* Summary cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--blue)" }}>{result.ab_mappings_count}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>A{'\u2192'}B</div>
+            </div>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#6366f1" }}>{result.bc_mappings_count}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>B{'\u2192'}C</div>
+            </div>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#94a3b8" }}>{result.existing_ac_count}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Istniej{'\u0105'}ce A{'\u2192'}C</div>
+            </div>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#10b981" }}>{result.transitive_suggestions}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Nowe sugestie</div>
+            </div>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#f59e0b" }}>{selected.size}</div>
+              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Zaznaczonych</div>
+            </div>
+          </div>
+
+          {/* Path visualization */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+            padding: "12px 16px", borderRadius: 8, background: "var(--bg-secondary)", marginBottom: 16,
+            fontSize: 13,
+          }}>
+            <span style={{ fontWeight: 600, color: "var(--blue)" }}>{result.framework_a}</span>
+            <span style={{ color: "var(--text-muted)" }}>{'\u2192'}</span>
+            <span style={{ fontWeight: 600, color: "#6366f1", padding: "2px 8px", borderRadius: 4, background: "#6366f118", border: "1px solid #6366f140" }}>
+              {result.framework_b}
+            </span>
+            <span style={{ color: "var(--text-muted)" }}>{'\u2192'}</span>
+            <span style={{ fontWeight: 600, color: "#10b981" }}>{result.framework_c}</span>
+          </div>
+
+          {/* Create button / result */}
+          {created !== null ? (
+            <div style={{
+              padding: 12, borderRadius: 8, marginBottom: 12, fontSize: 13, lineHeight: 1.6,
+              background: "#10b98118", border: "1px solid #10b98140",
+            }}>
+              <div style={{ fontWeight: 600, color: "#10b981" }}>
+                Utworzono <strong>{created}</strong> tranzytywnych mapowa{'\u0144'}
+              </div>
+            </div>
+          ) : result.suggestions.length > 0 ? (
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "10px 14px", borderRadius: 8, background: "var(--bg-secondary)", marginBottom: 12,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                  <input type="checkbox" checked={selected.size === result.suggestions.length} onChange={toggleAll} />
+                  Zaznacz wszystkie
+                </label>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  {selected.size} z {result.suggestions.length}
+                </span>
+              </div>
+              <button
+                className="btn btn-primary"
+                onClick={handleCreate}
+                disabled={creating || selected.size === 0}
+              >
+                {creating ? "Tworzenie..." : `Utw\u00f3rz ${selected.size} mapowa\u0144`}
+              </button>
+            </div>
+          ) : null}
+
+          {/* Suggestions table */}
+          {result.suggestions.length > 0 ? (
+            <div className="card" style={{ overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid var(--border)", textAlign: "left" }}>
+                    <th style={{ padding: "8px 10px", width: 36 }}></th>
+                    <th style={{ padding: "8px 10px" }}>Source (A)</th>
+                    <th style={{ padding: "8px 10px" }}>Via (B)</th>
+                    <th style={{ padding: "8px 10px" }}>Target (C)</th>
+                    <th style={{ padding: "8px 10px", width: 100 }}>Relacja</th>
+                    <th style={{ padding: "8px 10px", width: 60 }}>Si{'\u0142'}a</th>
+                    <th style={{ padding: "8px 10px", width: 160 }}>{'\u0141'}a{'\u0144'}cuch</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.suggestions.map((s, i) => (
+                    <tr
+                      key={i}
+                      onClick={() => toggleSelect(i)}
+                      style={{
+                        borderBottom: "1px solid var(--border)", cursor: "pointer",
+                        background: selected.has(i) ? "var(--bg-secondary)" : "transparent",
+                        opacity: created !== null ? 0.6 : 1,
+                      }}
+                    >
+                      <td style={{ padding: "6px 10px", textAlign: "center" }}>
+                        <input type="checkbox" checked={selected.has(i)} readOnly />
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--text-muted)" }}>
+                          {s.source_ref_id || "\u2014"}
+                        </div>
+                        <div style={{ fontSize: 12, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.source_name}
+                        </div>
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "#6366f1" }}>
+                          {s.via_ref_id || "\u2014"}
+                        </div>
+                        <div style={{ fontSize: 12, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }}>
+                          {s.via_name}
+                        </div>
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--text-muted)" }}>
+                          {s.target_ref_id || "\u2014"}
+                        </div>
+                        <div style={{ fontSize: 12, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.target_name}
+                        </div>
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <RelBadge rel={s.relationship_type} />
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <StrengthDots strength={s.strength} />
+                      </td>
+                      <td style={{ padding: "6px 10px", fontSize: 10, color: "var(--text-muted)", fontFamily: "'JetBrains Mono', monospace" }}>
+                        {s.chain}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="card" style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+              Brak nowych tranzytywnych mapowa{'\u0144'} do zasugerowania.
+              Wszystkie mo{'\u017c'}liwe A{'\u2192'}C ju{'\u017c'} istniej{'\u0105'} lub si{'\u0142'}a jest poni{'\u017c'}ej progu.
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -1637,6 +2037,9 @@ export default function FrameworkMappingsPage() {
 
       {/* ── Matrix Tab ── */}
       {activeTab === "matrix" && <MatrixTab frameworks={frameworks} />}
+
+      {/* ── Transitive Tab ── */}
+      {activeTab === "transitive" && <TransitiveTab frameworks={frameworks} onRefresh={load} />}
 
       {/* ── Create Modal ── */}
       <Modal open={showModal} title="Nowe mapowanie frameworków" onClose={() => setShowModal(false)}>

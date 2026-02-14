@@ -74,7 +74,7 @@ export default function FrameworkDetailPage() {
   const [showAddNode, setShowAddNode] = useState<{ parentId: number | null } | null>(null);
   const { aiEnabled } = useFeatureFlags();
   const [aiCache, setAiCache] = useState<AiCacheMap>(new Map());
-  const [showBulkAi, setShowBulkAi] = useState<"interpret" | "translate" | null>(null);
+  const [showBulkAi, setShowBulkAi] = useState<"interpret" | "translate" | "evidence" | null>(null);
 
   const loadAiCache = useCallback((frameworkId: number) => {
     api.get<NodeAiCacheEntry[]>(`/api/v1/ai/node-cache/${frameworkId}`)
@@ -391,6 +391,10 @@ export default function FrameworkDetailPage() {
                     style={{ fontSize: 10, background: "rgba(139,92,246,0.1)", color: "var(--purple, #8b5cf6)", border: "1px solid var(--purple, #8b5cf6)" }}>
                     Tłumacz dokument
                   </button>
+                  <button className="btn btn-sm" onClick={() => setShowBulkAi("evidence")}
+                    style={{ fontSize: 10, background: "var(--green-dim)", color: "var(--green)", border: "1px solid var(--green)" }}>
+                    Generuj dowody
+                  </button>
                 </>
               )}
               <button className="btn btn-sm btn-primary" onClick={() => setShowAddNode({ parentId: null })}>
@@ -498,7 +502,14 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, 
   const indent = (node.depth - 1) * 24;
   const ptLabel = node.point_type_id ? pointTypes.find(p => p.id === node.point_type_id)?.label : null;
   const hasInterpret = aiCache?.has(cacheKey(node.id, "interpret"));
-  const hasTranslate = aiCache ? Array.from(aiCache.keys()).some(k => k.startsWith(`${node.id}:translate:`)) : false;
+  const hasEvidence = aiCache?.has(cacheKey(node.id, "evidence"));
+  // Find first cached translation
+  const translateEntry = aiCache ? Array.from(aiCache.values()).find(
+    e => e.node_id === node.id && e.action_type === "translate"
+  ) : undefined;
+  const translatedName = translateEntry
+    ? (translateEntry.result_json as Record<string, unknown>).translated_name as string | undefined
+    : undefined;
 
   return (
     <>
@@ -547,10 +558,19 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, 
             {hasInterpret && (
               <span title="Zinterpretowany (AI)" style={{ fontSize: 10, color: "var(--blue)", fontWeight: 700, cursor: "default" }}>i</span>
             )}
-            {hasTranslate && (
+            {translatedName && (
               <span title="Przetłumaczony (AI)" style={{ fontSize: 10, color: "var(--purple, #8b5cf6)", fontWeight: 700, cursor: "default" }}>A</span>
             )}
+            {hasEvidence && (
+              <span title="Dowody audytowe (AI)" style={{ fontSize: 10, color: "var(--green)", fontWeight: 700, cursor: "default" }}>E</span>
+            )}
           </div>
+          {/* Inline cached translation */}
+          {translatedName && translatedName !== node.name && (
+            <div style={{ fontSize: 10, color: "var(--purple, #8b5cf6)", marginTop: 1, fontStyle: "italic", lineHeight: 1.3 }}>
+              {translatedName}
+            </div>
+          )}
           {node.description && (isExpanded || !hasChildren) && (
             <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2, lineHeight: 1.3, maxHeight: 40, overflow: "hidden" }}>
               {node.description}
@@ -611,12 +631,13 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
   const [pointTypeId, setPointTypeId] = useState<number | null>(node.point_type_id ?? null);
 
   /* AI state */
-  const [aiPanel, setAiPanel] = useState<"none" | "interpret" | "translate">("none");
+  const [aiPanel, setAiPanel] = useState<"none" | "interpret" | "translate" | "evidence">("none");
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [interpretResult, setInterpretResult] = useState<{ interpretation: string; practical_examples: string[]; common_pitfalls: string[]; related_standards: string[] } | null>(null);
   const [translateResult, setTranslateResult] = useState<{ translated_name: string; translated_description: string | null; terminology_notes: string[] } | null>(null);
   const [translateLang, setTranslateLang] = useState("pl");
+  const [evidenceResult, setEvidenceResult] = useState<{ evidence_items: { name: string; description: string; type: string; priority: string }[]; audit_tips: string[] } | null>(null);
 
   const ptLabel = node.point_type_id ? pointTypes.find(p => p.id === node.point_type_id)?.label : null;
 
@@ -657,6 +678,18 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
     } else {
       setTranslateResult(null);
     }
+
+    // Load cached evidence
+    const cachedEvidence = aiCache?.get(cacheKey(node.id, "evidence"));
+    if (cachedEvidence) {
+      const r = cachedEvidence.result_json as Record<string, unknown>;
+      setEvidenceResult({
+        evidence_items: (r.evidence_items as { name: string; description: string; type: string; priority: string }[]) || [],
+        audit_tips: (r.audit_tips as string[]) || [],
+      });
+    } else {
+      setEvidenceResult(null);
+    }
   }, [node.id, aiCache]);
 
   const handleInterpret = async (force = false) => {
@@ -695,6 +728,24 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
     }
   };
 
+  const handleEvidence = async (force = false) => {
+    setAiLoading(true);
+    setAiError(null);
+    if (force) setEvidenceResult(null);
+    try {
+      const res = await api.post<{ evidence_items: { name: string; description: string; type: string; priority: string }[]; audit_tips: string[] }>(
+        "/api/v1/ai/generate-evidence",
+        { framework_name: frameworkName, node_ref_id: node.ref_id, node_name: node.name, node_description: node.description, node_id: node.id, force }
+      );
+      setEvidenceResult(res);
+      onCacheUpdate?.();
+    } catch (e: unknown) {
+      setAiError(e instanceof Error ? e.message : "Błąd AI");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   return (
     <div style={{ fontSize: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -717,11 +768,33 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
               {node.ref_id}
             </div>
           )}
-          <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>{node.name_pl || node.name}</div>
+          <div style={{ fontWeight: 600, marginBottom: 4, fontSize: 14 }}>{node.name_pl || node.name}</div>
+
+          {/* Inline cached translation */}
+          {translateResult && translateResult.translated_name !== node.name && (
+            <div style={{ fontSize: 12, color: "var(--purple, #8b5cf6)", fontStyle: "italic", marginBottom: 4, lineHeight: 1.4 }}>
+              {translateResult.translated_name}
+            </div>
+          )}
 
           {node.description && (
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8, marginBottom: 8, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8, marginBottom: 4, lineHeight: 1.5 }}>
               {node.description}
+            </div>
+          )}
+
+          {/* Inline cached translation of description */}
+          {translateResult?.translated_description && translateResult.translated_description !== node.description && (
+            <div style={{ fontSize: 11, color: "var(--purple, #8b5cf6)", fontStyle: "italic", background: "rgba(139,92,246,0.05)", borderRadius: 6, padding: 8, marginBottom: 4, lineHeight: 1.5 }}>
+              {translateResult.translated_description}
+            </div>
+          )}
+
+          {/* Inline cached interpretation summary */}
+          {interpretResult && aiPanel !== "interpret" && (
+            <div style={{ fontSize: 11, color: "var(--blue)", background: "var(--blue-dim)", borderRadius: 6, padding: 8, marginBottom: 4, lineHeight: 1.5, cursor: "pointer" }}
+              onClick={() => setAiPanel("interpret")} title="Kliknij aby rozwinąć">
+              <strong>Interpretacja:</strong> {interpretResult.interpretation.slice(0, 150)}{interpretResult.interpretation.length > 150 ? "..." : ""}
             </div>
           )}
 
@@ -784,6 +857,24 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
                   title="Tłumaczenie AI"
                 >
                   <span style={{ fontSize: 14 }}>A</span> Tłumaczenie
+                </button>
+                <button
+                  className="btn btn-sm"
+                  style={{
+                    flex: 1, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+                    background: aiPanel === "evidence" ? "var(--green)" : undefined,
+                    color: aiPanel === "evidence" ? "#fff" : undefined,
+                    border: aiPanel === "evidence" ? "1px solid var(--green)" : undefined,
+                  }}
+                  onClick={() => {
+                    if (aiPanel === "evidence") { setAiPanel("none"); }
+                    else { setAiPanel("evidence"); if (!evidenceResult) handleEvidence(false); }
+                  }}
+                  disabled={aiLoading}
+                  title="Dowody audytowe"
+                >
+                  <span style={{ fontSize: 14 }}>E</span> Dowody
+                  {evidenceResult && <span style={{ fontSize: 9, marginLeft: 2 }}>&#10003;</span>}
                 </button>
               </div>
 
@@ -874,6 +965,45 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Evidence panel */}
+              {aiPanel === "evidence" && (
+                <div style={{ background: "var(--bg-inset)", borderRadius: 8, padding: 10, fontSize: 11, lineHeight: 1.6 }}>
+                  {evidenceResult && !aiLoading ? (
+                    <>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 600, color: "var(--green)" }}>Dowody audytowe</span>
+                        <button className="btn btn-sm" style={{ fontSize: 9, padding: "1px 6px" }}
+                          onClick={() => handleEvidence(true)} disabled={aiLoading}>Ponów</button>
+                      </div>
+                      {evidenceResult.evidence_items.map((item, i) => (
+                        <div key={i} style={{ marginBottom: 6, padding: "4px 6px", borderLeft: `2px solid ${item.priority === "required" ? "var(--red)" : item.priority === "recommended" ? "var(--orange)" : "var(--text-muted)"}` }}>
+                          <div style={{ fontWeight: 600 }}>
+                            {item.name}
+                            <span className="score-badge" style={{ marginLeft: 6, fontSize: 8, padding: "1px 4px",
+                              background: item.type === "document" ? "var(--blue-dim)" : item.type === "record" ? "var(--green-dim)" : "var(--bg-inset)",
+                              color: item.type === "document" ? "var(--blue)" : item.type === "record" ? "var(--green)" : "var(--text-muted)",
+                            }}>{item.type}</span>
+                            <span className="score-badge" style={{ marginLeft: 4, fontSize: 8, padding: "1px 4px",
+                              background: item.priority === "required" ? "var(--red-dim)" : item.priority === "recommended" ? "var(--orange-dim)" : "var(--bg-inset)",
+                              color: item.priority === "required" ? "var(--red)" : item.priority === "recommended" ? "var(--orange)" : "var(--text-muted)",
+                            }}>{item.priority === "required" ? "wymagane" : item.priority === "recommended" ? "zalecane" : "opcjonalne"}</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{item.description}</div>
+                        </div>
+                      ))}
+                      {evidenceResult.audit_tips.length > 0 && (
+                        <div style={{ marginTop: 8, padding: 6, background: "var(--bg-card-hover)", borderRadius: 4, fontSize: 10 }}>
+                          <strong>Wskazówki:</strong>
+                          <ul style={{ margin: "4px 0 0", paddingLeft: 16 }}>
+                            {evidenceResult.audit_tips.map((tip, i) => <li key={i}>{tip}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                    </>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -1492,7 +1622,7 @@ function getNodesUnderChapters(tree: FrameworkNodeTree[], chapterIds: Set<number
 }
 
 function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: {
-  action: "interpret" | "translate";
+  action: "interpret" | "translate" | "evidence";
   tree: FrameworkNodeTree[];
   frameworkName: string;
   aiCache: AiCacheMap;
@@ -1520,9 +1650,9 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
   const alreadyCached = useMemo(() => {
     let count = 0;
     for (const n of targetNodes) {
-      const key = action === "interpret"
-        ? cacheKey(n.id, "interpret")
-        : cacheKey(n.id, "translate", translateLang);
+      const key = action === "translate"
+        ? cacheKey(n.id, "translate", translateLang)
+        : cacheKey(n.id, action);
       if (aiCache.has(key)) count++;
     }
     return count;
@@ -1550,9 +1680,9 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
 
       // Check if already cached
       if (skipCached) {
-        const key = action === "interpret"
-          ? cacheKey(node.id, "interpret")
-          : cacheKey(node.id, "translate", translateLang);
+        const key = action === "translate"
+          ? cacheKey(node.id, "translate", translateLang)
+          : cacheKey(node.id, action);
         if (aiCache.has(key)) {
           skipped++;
           done++;
@@ -1573,13 +1703,22 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
             node_id: node.id,
             force: !skipCached,
           });
-        } else {
+        } else if (action === "translate") {
           await api.post("/api/v1/ai/translate-node", {
             framework_name: frameworkName,
             node_ref_id: node.ref_id,
             node_name: node.name,
             node_description: node.description,
             target_language: translateLang,
+            node_id: node.id,
+            force: !skipCached,
+          });
+        } else {
+          await api.post("/api/v1/ai/generate-evidence", {
+            framework_name: frameworkName,
+            node_ref_id: node.ref_id,
+            node_name: node.name,
+            node_description: node.description,
             node_id: node.id,
             force: !skipCached,
           });
@@ -1599,7 +1738,8 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
   const handleStop = () => { stopRef.current = true; };
 
   const isInterpret = action === "interpret";
-  const title = isInterpret ? "Interpretacja dokumentu (AI)" : "Tłumaczenie dokumentu (AI)";
+  const isEvidence = action === "evidence";
+  const title = isInterpret ? "Interpretacja dokumentu (AI)" : isEvidence ? "Generowanie dowodów (AI)" : "Tłumaczenie dokumentu (AI)";
   const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
 
   return (
@@ -1637,7 +1777,7 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
             )}
 
             {/* Language (translate only) */}
-            {!isInterpret && (
+            {action === "translate" && (
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Język docelowy</div>
                 <select className="form-control" value={translateLang} onChange={e => setTranslateLang(e.target.value)} style={{ fontSize: 12 }}>
@@ -1656,7 +1796,7 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
 
             {/* Summary */}
             <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12, padding: 8, background: "var(--bg-inset)", borderRadius: 6 }}>
-              {isInterpret ? "Interpretacja" : "Tłumaczenie"} obejmie <strong>{targetNodes.length}</strong> węzłów.
+              {isInterpret ? "Interpretacja" : isEvidence ? "Generowanie dowodów" : "Tłumaczenie"} obejmie <strong>{targetNodes.length}</strong> węzłów.
               {skipCached && alreadyCached > 0 && <> Z tego <strong>{alreadyCached}</strong> zostanie pominiętych (cache).</>}
               {" "}Szacowany czas: ~{Math.max(1, Math.ceil((targetNodes.length - (skipCached ? alreadyCached : 0)) * 3 / 60))} min.
             </div>
@@ -1666,7 +1806,7 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
               <button className="btn btn-primary"
                 disabled={scope === "chapters" && selectedChapters.size === 0}
                 onClick={handleStart}>
-                Rozpocznij {isInterpret ? "interpretację" : "tłumaczenie"}
+                Rozpocznij {isInterpret ? "interpretację" : isEvidence ? "generowanie" : "tłumaczenie"}
               </button>
             </div>
           </>
@@ -1675,7 +1815,7 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
             {/* Progress */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                <span>{isInterpret ? "Interpretacja" : "Tłumaczenie"} w toku...</span>
+                <span>{isInterpret ? "Interpretacja" : isEvidence ? "Generowanie dowodów" : "Tłumaczenie"} w toku...</span>
                 <span style={{ fontWeight: 600 }}>{pct}%</span>
               </div>
               <div style={{ height: 6, background: "var(--bg-inset)", borderRadius: 3, overflow: "hidden" }}>

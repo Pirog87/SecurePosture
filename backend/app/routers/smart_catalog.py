@@ -26,8 +26,14 @@ from app.schemas.smart_catalog import (
     AIAssistRequest,
     AIConfigOut,
     AIConfigUpdate,
+    AICoverageReportOut,
+    AICoverageReportRequest,
+    AICrossMappingOut,
+    AICrossMappingRequest,
     AIEnrichOut,
     AIEnrichRequest,
+    AIEvidenceOut,
+    AIEvidenceRequest,
     AIGapOut,
     AIGapRequest,
     AIInterpretOut,
@@ -36,6 +42,8 @@ from app.schemas.smart_catalog import (
     AIScenarioRequest,
     AISearchOut,
     AISearchRequest,
+    AISecurityAreaMapOut,
+    AISecurityAreaMapRequest,
     AITestResult,
     AITranslateOut,
     AITranslateRequest,
@@ -1275,6 +1283,311 @@ async def get_framework_ai_cache(
         result_json=r.result_json,
         updated_at=r.updated_at,
     ) for r in rows]
+
+
+@router.post("/api/v1/ai/generate-evidence", response_model=AIEvidenceOut)
+async def ai_generate_evidence(
+    body: AIEvidenceRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered evidence checklist generation for a framework node. Caches results."""
+    from app.services.ai_service import AIRateLimitException
+    from app.models.framework import FrameworkNodeAiCache
+
+    # Check cache
+    if body.node_id and not body.force:
+        cached = (await s.execute(
+            select(FrameworkNodeAiCache).where(
+                FrameworkNodeAiCache.node_id == body.node_id,
+                FrameworkNodeAiCache.action_type == "evidence",
+                FrameworkNodeAiCache.language.is_(None),
+            )
+        )).scalar_one_or_none()
+        if cached:
+            r = cached.result_json
+            return AIEvidenceOut(
+                evidence_items=r.get("evidence_items", []),
+                audit_tips=r.get("audit_tips", []),
+                cached=True,
+                cached_at=cached.updated_at,
+            )
+
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.generate_evidence(
+            user_id=user_id,
+            framework_name=body.framework_name,
+            node_ref_id=body.node_ref_id,
+            node_name=body.node_name,
+            node_description=body.node_description,
+        )
+
+        # Persist to cache
+        if body.node_id:
+            existing = (await s.execute(
+                select(FrameworkNodeAiCache).where(
+                    FrameworkNodeAiCache.node_id == body.node_id,
+                    FrameworkNodeAiCache.action_type == "evidence",
+                    FrameworkNodeAiCache.language.is_(None),
+                )
+            )).scalar_one_or_none()
+            if existing:
+                existing.result_json = result
+                existing.updated_at = datetime.utcnow()
+            else:
+                s.add(FrameworkNodeAiCache(
+                    node_id=body.node_id,
+                    action_type="evidence",
+                    language=None,
+                    result_json=result,
+                ))
+
+        await s.commit()
+        return AIEvidenceOut(
+            evidence_items=result.get("evidence_items", []),
+            audit_tips=result.get("audit_tips", []),
+        )
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/suggest-security-areas", response_model=AISecurityAreaMapOut)
+async def ai_suggest_security_areas(
+    body: AISecurityAreaMapRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered security area suggestion for a framework node."""
+    from app.services.ai_service import AIRateLimitException
+    from app.models.security_area import SecurityArea
+    from app.models.framework import FrameworkNodeSecurityArea
+
+    # Get available security areas
+    areas_q = select(SecurityArea).where(SecurityArea.is_active.is_(True))
+    areas = (await s.execute(areas_q)).scalars().all()
+    if not areas:
+        raise HTTPException(400, "Brak zdefiniowanych obszarów bezpieczeństwa")
+
+    areas_list = [{"id": a.id, "name": a.name, "description": a.description} for a in areas]
+
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.suggest_security_areas(
+            user_id=user_id,
+            framework_name=body.framework_name,
+            node_ref_id=body.node_ref_id,
+            node_name=body.node_name,
+            node_description=body.node_description,
+            available_areas=areas_list,
+        )
+
+        suggestions = result.get("suggested_areas", [])
+
+        # Auto-create mappings with source="ai_suggested"
+        for sug in suggestions:
+            area_id = sug.get("area_id")
+            if not area_id:
+                continue
+            # Check if already mapped
+            exists = (await s.execute(
+                select(FrameworkNodeSecurityArea).where(
+                    FrameworkNodeSecurityArea.framework_node_id == body.node_id,
+                    FrameworkNodeSecurityArea.security_area_id == area_id,
+                )
+            )).scalar_one_or_none()
+            if not exists:
+                s.add(FrameworkNodeSecurityArea(
+                    framework_node_id=body.node_id,
+                    security_area_id=area_id,
+                    source="ai_suggested",
+                ))
+
+        await s.commit()
+        return AISecurityAreaMapOut(suggested_areas=suggestions)
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/cross-mapping", response_model=AICrossMappingOut)
+async def ai_cross_mapping(
+    body: AICrossMappingRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered cross-framework mapping suggestion for a single source node."""
+    from app.services.ai_service import AIRateLimitException
+    from app.models.framework import Framework, FrameworkNode
+    from app.models.compliance import FrameworkMapping, MappingSet
+
+    sf = await s.get(Framework, body.source_framework_id)
+    tf = await s.get(Framework, body.target_framework_id)
+    sn = await s.get(FrameworkNode, body.source_node_id)
+    if not sf or not tf or not sn:
+        raise HTTPException(404, "Framework or node not found")
+
+    # Get target nodes
+    target_q = select(FrameworkNode).where(
+        FrameworkNode.framework_id == body.target_framework_id,
+        FrameworkNode.is_active.is_(True),
+    ).order_by(FrameworkNode.sort_order)
+    target_nodes = (await s.execute(target_q)).scalars().all()
+
+    target_list = [
+        {"ref_id": n.ref_id or f"#{n.id}", "name": n.name, "description": n.description}
+        for n in target_nodes
+    ]
+
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.suggest_cross_mapping(
+            user_id=user_id,
+            source_framework_name=sf.name,
+            source_node_ref_id=sn.ref_id,
+            source_node_name=sn.name,
+            source_node_description=sn.description,
+            target_framework_name=tf.name,
+            target_nodes=target_list,
+        )
+
+        suggestions = result.get("mappings", [])
+
+        # Resolve target node IDs from ref_ids
+        ref_to_node = {n.ref_id: n for n in target_nodes if n.ref_id}
+        enriched = []
+        for sug in suggestions:
+            tref = sug.get("target_ref_id", "")
+            tnode = ref_to_node.get(tref)
+            enriched.append({
+                "target_ref_id": tref,
+                "target_node_id": tnode.id if tnode else None,
+                "relationship_type": sug.get("relationship_type", "intersect"),
+                "strength": sug.get("strength", 2),
+                "rationale": sug.get("rationale", ""),
+            })
+
+        # Auto-create if requested
+        if body.auto_create:
+            # Find or create mapping set
+            ms_q = select(MappingSet).where(
+                MappingSet.source_framework_id == body.source_framework_id,
+                MappingSet.target_framework_id == body.target_framework_id,
+            )
+            ms = (await s.execute(ms_q)).scalar_one_or_none()
+            if not ms:
+                ms = MappingSet(
+                    source_framework_id=body.source_framework_id,
+                    target_framework_id=body.target_framework_id,
+                    name=f"{sf.name} <-> {tf.name} (AI)",
+                )
+                s.add(ms)
+                await s.flush()
+
+            for sug in enriched:
+                if not sug["target_node_id"]:
+                    continue
+                # Skip duplicates
+                dup = (await s.execute(
+                    select(FrameworkMapping).where(
+                        FrameworkMapping.source_requirement_id == body.source_node_id,
+                        FrameworkMapping.target_requirement_id == sug["target_node_id"],
+                    )
+                )).scalar_one_or_none()
+                if dup:
+                    continue
+                s.add(FrameworkMapping(
+                    mapping_set_id=ms.id,
+                    source_framework_id=body.source_framework_id,
+                    source_requirement_id=body.source_node_id,
+                    target_framework_id=body.target_framework_id,
+                    target_requirement_id=sug["target_node_id"],
+                    relationship_type=sug["relationship_type"],
+                    strength=sug["strength"],
+                    rationale=sug["rationale"],
+                    mapping_source="ai_assisted",
+                    mapping_status="draft",
+                ))
+
+        await s.commit()
+        return AICrossMappingOut(
+            source_node_ref_id=sn.ref_id,
+            source_node_name=sn.name,
+            suggestions=enriched,
+        )
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/coverage-report", response_model=AICoverageReportOut)
+async def ai_coverage_report(
+    body: AICoverageReportRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered coverage analysis report between two frameworks."""
+    from app.services.ai_service import AIRateLimitException
+    from app.models.framework import Framework, FrameworkNode
+    from app.models.compliance import FrameworkMapping
+
+    sf = await s.get(Framework, body.source_framework_id)
+    tf = await s.get(Framework, body.target_framework_id)
+    if not sf or not tf:
+        raise HTTPException(404, "Framework not found")
+
+    # Calculate coverage data
+    tq = select(FrameworkNode).where(
+        FrameworkNode.framework_id == body.target_framework_id,
+        FrameworkNode.assessable.is_(True),
+        FrameworkNode.is_active.is_(True),
+    )
+    target_reqs = (await s.execute(tq)).scalars().all()
+
+    mq = select(FrameworkMapping).where(
+        FrameworkMapping.source_framework_id == body.source_framework_id,
+        FrameworkMapping.target_framework_id == body.target_framework_id,
+    )
+    mappings = (await s.execute(mq)).scalars().all()
+
+    mapped_ids = {m.target_requirement_id for m in mappings}
+    total = len(target_reqs)
+    covered = sum(1 for r in target_reqs if r.id in mapped_ids)
+
+    by_rel = {}
+    for m in mappings:
+        by_rel[m.relationship_type] = by_rel.get(m.relationship_type, 0) + 1
+
+    uncovered_reqs = [
+        {"ref_id": r.ref_id, "name": r.name}
+        for r in target_reqs if r.id not in mapped_ids
+    ]
+
+    coverage_data = {
+        "total_requirements": total,
+        "covered": covered,
+        "uncovered": total - covered,
+        "coverage_percent": round(covered / total * 100, 1) if total > 0 else 0,
+        "by_relationship": by_rel,
+        "uncovered_requirements": uncovered_reqs,
+    }
+
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.generate_coverage_report(
+            user_id=user_id,
+            source_framework_name=sf.name,
+            target_framework_name=tf.name,
+            coverage_data=coverage_data,
+        )
+        await s.commit()
+        return AICoverageReportOut(
+            executive_summary=result.get("executive_summary", ""),
+            strengths=result.get("strengths", []),
+            gaps=result.get("gaps", []),
+            recommendations=result.get("recommendations", []),
+            risk_level=result.get("risk_level", "medium"),
+        )
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
 
 
 @router.get("/api/v1/ai/usage-stats", response_model=AIUsageStatsOut)

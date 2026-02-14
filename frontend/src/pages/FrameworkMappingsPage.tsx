@@ -1267,6 +1267,7 @@ export default function FrameworkMappingsPage() {
   const [frameworks, setFrameworks] = useState<Framework[]>([]);
   const [stats, setStats] = useState<MappingStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fwError, setFwError] = useState<string | null>(null);
   const [selected, setSelected] = useState<FrameworkMapping | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -1295,21 +1296,29 @@ export default function FrameworkMappingsPage() {
 
   const load = () => {
     setLoading(true);
+    setFwError(null);
+
+    // Load frameworks independently (same pattern as FrameworksPage)
+    api.get<Framework[]>("/api/v1/frameworks")
+      .then(data => {
+        const active = data.filter((f: any) => f.is_active !== false);
+        setFrameworks(active);
+      })
+      .catch(e => {
+        console.error("[Mappings] load frameworks failed:", e);
+        setFwError(String(e));
+      });
+
+    // Load mapping-specific data
     Promise.allSettled([
       api.get<FrameworkMapping[]>("/api/v1/framework-mappings/"),
-      api.get<Framework[]>("/api/v1/frameworks"),
       api.get<MappingSet[]>("/api/v1/framework-mappings/sets"),
       api.get<MappingStats>("/api/v1/framework-mappings/stats"),
     ])
-      .then(([fm, fw, ms, st]) => {
+      .then(([fm, ms, st]) => {
         if (fm.status === "fulfilled") setMappings(fm.value);
-        else console.error("[Mappings] load mappings failed:", fm.reason);
-        if (fw.status === "fulfilled") setFrameworks(fw.value.filter((f: any) => f.is_active !== false));
-        else console.error("[Mappings] load frameworks failed:", fw.reason);
         if (ms.status === "fulfilled") setSets(ms.value);
-        else console.error("[Mappings] load sets failed:", ms.reason);
         if (st.status === "fulfilled") setStats(st.value);
-        else console.error("[Mappings] load stats failed:", st.reason);
       })
       .finally(() => setLoading(false));
   };
@@ -1386,11 +1395,21 @@ export default function FrameworkMappingsPage() {
 
   return (
     <div style={{ padding: "0 0 32px" }}>
+      {fwError && (
+        <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: "#7f1d1d", color: "#fca5a5", fontSize: 12 }}>
+          <strong>Błąd ładowania frameworków:</strong> {fwError}
+        </div>
+      )}
+      {!loading && frameworks.length === 0 && !fwError && (
+        <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: "#78350f", color: "#fde68a", fontSize: 12 }}>
+          Brak frameworków do wyświetlenia. Sprawdź czy endpoint <code>/api/v1/frameworks</code> zwraca dane.
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
           <h2 style={{ margin: 0 }}>Mapowania Frameworków</h2>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
-            Mapowanie teoriomnogościowe wymagań (model CISO Assistant)
+            Mapowanie teoriomnogościowe wymagań (model CISO Assistant) — Frameworków: {frameworks.length}
           </p>
         </div>
         {stats && (

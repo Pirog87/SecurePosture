@@ -6,6 +6,36 @@
 -- IDEMPOTENT: safe to run multiple times
 -- ============================================================
 
+-- ── 0. Ensure prerequisite tables exist ──
+
+CREATE TABLE IF NOT EXISTS dictionary_types (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    code            VARCHAR(50) NOT NULL UNIQUE,
+    name            VARCHAR(200) NOT NULL,
+    description     TEXT,
+    is_system       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS dictionary_entries (
+    id              INT AUTO_INCREMENT PRIMARY KEY,
+    dict_type_id    INT NOT NULL,
+    code            VARCHAR(50),
+    label           VARCHAR(300) NOT NULL,
+    description     TEXT,
+    numeric_value   DECIMAL(10,4),
+    color           VARCHAR(20),
+    sort_order      INT NOT NULL DEFAULT 0,
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (dict_type_id) REFERENCES dictionary_types(id),
+    INDEX idx_dict_entries_type (dict_type_id),
+    INDEX idx_dict_entries_active (dict_type_id, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
 DELIMITER $$
 
 -- ── 1. Add new columns to frameworks table ──

@@ -123,3 +123,15 @@ async def health():
         "version": settings.APP_VERSION,
         "database": db_status,
     }
+
+
+@app.get("/api/v1/debug/routes")
+async def debug_routes():
+    """List all registered API routes — useful for diagnosing 404s."""
+    routes = []
+    for route in app.routes:
+        if hasattr(route, "methods") and hasattr(route, "path"):
+            routes.append({"path": route.path, "methods": sorted(route.methods - {"HEAD", "OPTIONS"})})
+    routes.sort(key=lambda r: r["path"])
+    ai_routes = [r for r in routes if "/ai/" in r["path"] or "import" in r["path"]]
+    return {"total_routes": len(routes), "ai_and_import_routes": ai_routes, "all_routes": routes}

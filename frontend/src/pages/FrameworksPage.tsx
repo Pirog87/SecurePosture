@@ -8,6 +8,10 @@ import { useColumnVisibility } from "../hooks/useColumnVisibility";
 import { useTableFeatures } from "../hooks/useTableFeatures";
 import DataTable from "../components/DataTable";
 import StatsCards, { type StatCard } from "../components/StatsCards";
+import {
+  CISO_FRAMEWORK_CATALOG, CATEGORY_LABELS, CATEGORY_COLORS,
+  type CatalogFramework, type FrameworkCategory,
+} from "../data/cisoCatalog";
 
 /* ─── Lifecycle helpers ─── */
 const LIFECYCLE_LABELS: Record<string, { label: string; cls: string; color: string; bg: string }> = {
@@ -76,6 +80,7 @@ export default function FrameworksPage() {
   const [adoptFrameworkId, setAdoptFrameworkId] = useState<number | null>(null);
   const [selected, setSelected] = useState<FrameworkBrief | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showCatalog, setShowCatalog] = useState(false);
   const [documentTypes, setDocumentTypes] = useState<DictionaryEntry[]>([]);
   const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(searchParams.get("type"));
   const [activeOriginFilter, setActiveOriginFilter] = useState<string | null>(searchParams.get("origin"));
@@ -309,6 +314,7 @@ export default function FrameworksPage() {
         primaryLabel="Nowy dokument"
         onPrimaryAction={() => setShowCreateModal(true)}
         secondaryActions={[
+          { label: "Katalog CISO Assistant", onClick: () => setShowCatalog(true) },
           { label: importing ? "Importowanie..." : "Import z pliku", onClick: () => fileRef.current?.click() },
           { label: showArchived ? "Ukryj archiwalne" : "Pokaż archiwalne", onClick: () => setShowArchived(v => !v) },
         ]}
@@ -477,6 +483,19 @@ export default function FrameworksPage() {
             onAdoptAndOpen={(id) => { setShowAdoptModal(false); navigate(`/frameworks/${id}`); }}
           />
         )}
+      </Modal>
+
+      {/* CISO Assistant Catalog */}
+      <Modal open={showCatalog} onClose={() => setShowCatalog(false)} title="Katalog CISO Assistant Community" wide>
+        <CisoCatalogBrowser
+          existingFrameworks={frameworks}
+          onImportDone={(result) => {
+            setAdoptFrameworkId(result.framework_id);
+            setShowCatalog(false);
+            setShowAdoptModal(true);
+            load();
+          }}
+        />
       </Modal>
     </div>
   );
@@ -687,6 +706,204 @@ function AdoptionForm({ frameworkId, documentTypes, onClose, onAdoptAndOpen }: {
         <button className="btn btn-primary" onClick={handleAdopt}>
           Zapisz i otwórz dokument
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════
+   CisoCatalogBrowser — browse & import from CISO Assistant Community
+   ═══════════════════════════════════════════════════ */
+function CisoCatalogBrowser({ existingFrameworks, onImportDone }: {
+  existingFrameworks: FrameworkBrief[];
+  onImportDone: (result: FrameworkImportResult) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState<FrameworkCategory | null>(null);
+  const [importingFile, setImportingFile] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  /* Check if framework might already be imported (by name similarity) */
+  const isLikelyImported = (cf: CatalogFramework) => {
+    const n = cf.name.toLowerCase();
+    return existingFrameworks.some(ef => {
+      const en = ef.name.toLowerCase();
+      return en.includes(n) || n.includes(en) ||
+        (cf.filename.replace(/\.yaml|\.xlsx/g, "").replace(/-/g, " ").toLowerCase()
+          .split(" ").filter(w => w.length > 2).some(w => en.includes(w)) && en.length > 5);
+    });
+  };
+
+  const filtered = useMemo(() => {
+    let list = CISO_FRAMEWORK_CATALOG;
+    if (activeCategory) list = list.filter(f => f.category === activeCategory);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(f =>
+        f.name.toLowerCase().includes(q) ||
+        f.provider.toLowerCase().includes(q) ||
+        f.filename.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [search, activeCategory]);
+
+  /* Category chips with counts */
+  const categoryChips = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const f of CISO_FRAMEWORK_CATALOG) {
+      counts[f.category] = (counts[f.category] || 0) + 1;
+    }
+    return Object.entries(CATEGORY_LABELS).map(([key, label]) => ({
+      key: key as FrameworkCategory,
+      label,
+      count: counts[key] || 0,
+      color: CATEGORY_COLORS[key as FrameworkCategory],
+    })).filter(c => c.count > 0);
+  }, []);
+
+  const handleImport = async (cf: CatalogFramework) => {
+    setImportingFile(cf.filename);
+    setImportError(null);
+    try {
+      const result = await api.post<FrameworkImportResult>(
+        `/api/v1/frameworks/import/github?framework_path=${encodeURIComponent(cf.filename)}`,
+        {}
+      );
+      onImportDone(result);
+    } catch (e: unknown) {
+      setImportError(e instanceof Error ? e.message : "Błąd importu");
+    } finally {
+      setImportingFile(null);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Info */}
+      <div style={{ padding: 12, borderRadius: 8, background: "var(--bg-secondary)", fontSize: 12 }}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Katalog CISO Assistant Community</div>
+        <div style={{ color: "var(--text-muted)", lineHeight: 1.6 }}>
+          Przeglądaj i importuj frameworki bezpieczeństwa z repozytorium open-source CISO Assistant.
+          Po imporcie uzupełnij atrybuty dokumentu w formularzu adopcji.
+        </div>
+      </div>
+
+      {importError && (
+        <div style={{
+          padding: "10px 14px", borderRadius: 8, fontSize: 12,
+          background: "#7f1d1d", color: "#fca5a5",
+        }}>
+          <strong>Błąd:</strong> {importError}
+          <button className="btn btn-sm" style={{ marginLeft: 8, fontSize: 10 }} onClick={() => setImportError(null)}>×</button>
+        </div>
+      )}
+
+      {/* Search + Category chips */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          type="text"
+          className="form-control"
+          placeholder="Szukaj frameworka..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ flex: "1 1 200px", fontSize: 12, padding: "6px 10px" }}
+          autoFocus
+        />
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          <button
+            className="btn btn-sm"
+            style={{
+              borderRadius: 16, padding: "2px 10px", fontSize: 10,
+              background: !activeCategory ? "var(--blue)" : "var(--bg-inset)",
+              color: !activeCategory ? "#fff" : "var(--text-muted)",
+              border: !activeCategory ? "1px solid var(--blue)" : "1px solid var(--border)",
+            }}
+            onClick={() => setActiveCategory(null)}
+          >
+            Wszystkie ({CISO_FRAMEWORK_CATALOG.length})
+          </button>
+          {categoryChips.map(c => (
+            <button
+              key={c.key}
+              className="btn btn-sm"
+              style={{
+                borderRadius: 16, padding: "2px 10px", fontSize: 10,
+                background: activeCategory === c.key ? c.color : "var(--bg-inset)",
+                color: activeCategory === c.key ? "#fff" : "var(--text-muted)",
+                border: `1px solid ${activeCategory === c.key ? c.color : "var(--border)"}`,
+              }}
+              onClick={() => setActiveCategory(activeCategory === c.key ? null : c.key)}
+            >
+              {c.label} ({c.count})
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Results count */}
+      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+        {filtered.length} z {CISO_FRAMEWORK_CATALOG.length} frameworków
+      </div>
+
+      {/* Framework list */}
+      <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+            Brak frameworków pasujących do wyszukiwania
+          </div>
+        ) : (
+          filtered.map(cf => {
+            const imported = isLikelyImported(cf);
+            const isImporting = importingFile === cf.filename;
+            const catColor = CATEGORY_COLORS[cf.category];
+            return (
+              <div
+                key={cf.filename}
+                style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "10px 14px", borderBottom: "1px solid var(--border)",
+                  opacity: isImporting ? 0.6 : 1,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{
+                      padding: "1px 8px", borderRadius: 10, fontSize: 9, fontWeight: 600,
+                      background: `${catColor}18`, color: catColor, border: `1px solid ${catColor}40`,
+                      flexShrink: 0,
+                    }}>
+                      {CATEGORY_LABELS[cf.category]}
+                    </span>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>{cf.name}</span>
+                    {imported && (
+                      <span style={{
+                        padding: "1px 6px", borderRadius: 10, fontSize: 9,
+                        background: "#10b98118", color: "#10b981", border: "1px solid #10b98140",
+                      }}>
+                        zaimportowany
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                    {cf.provider} &middot; {cf.filename}
+                  </div>
+                </div>
+                <button
+                  className="btn btn-sm"
+                  style={{
+                    fontSize: 11, marginLeft: 12, flexShrink: 0,
+                    ...(imported ? {} : { background: "var(--blue)", color: "#fff", border: "1px solid var(--blue)" }),
+                  }}
+                  onClick={() => handleImport(cf)}
+                  disabled={isImporting}
+                >
+                  {isImporting ? "Importowanie..." : imported ? "Reimportuj" : "Importuj"}
+                </button>
+              </div>
+            );
+          })
+        )}
       </div>
     </div>
   );

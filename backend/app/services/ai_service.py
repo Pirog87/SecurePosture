@@ -22,7 +22,7 @@ from app.models.smart_catalog import (
     WeaknessCatalog,
     WeaknessControlLink,
 )
-from app.services.ai_adapters import get_ai_adapter
+from app.services.ai_adapters import LLMResponse, get_ai_adapter
 from app.services.ai_prompts import (
     SYSTEM_PROMPT_ASSIST,
     SYSTEM_PROMPT_COVERAGE_REPORT,
@@ -128,7 +128,8 @@ class AIService:
 
     async def _call_llm(self, system: str, user_message: str,
                         action_type: str, user_id: int,
-                        max_tokens: int | None = None) -> dict:
+                        max_tokens: int | None = None,
+                        timeout: int = 120) -> dict:
         """Call LLM with JSON parsing and audit logging."""
         self._require_ai()
         await self._check_rate_limit(user_id)
@@ -137,15 +138,16 @@ class AIService:
         start_time = time.time()
 
         try:
-            text = await self.adapter.chat_completion(
+            llm_resp: LLMResponse = await self.adapter.chat_completion(
                 system=system,
                 user_message=user_message,
                 max_tokens=max_tokens,
                 temperature=float(self.config.temperature),
+                timeout=timeout,
             )
 
             # Parse JSON from response
-            result = self._parse_json(text)
+            result = self._parse_json(llm_resp.text)
 
             duration_ms = int((time.time() - start_time) * 1000)
             await self._log_call(
@@ -154,7 +156,10 @@ class AIService:
                 duration_ms=duration_ms,
                 success=True,
                 input_summary=user_message[:500],
-                output_summary=text[:500],
+                output_summary=llm_resp.text[:500],
+                tokens_input=llm_resp.tokens_input,
+                tokens_output=llm_resp.tokens_output,
+                cost_usd=llm_resp.cost_usd,
             )
             return result
 
@@ -173,13 +178,17 @@ class AIService:
             raise
 
     def _parse_json(self, text: str) -> dict | list:
-        """Parse JSON from LLM response, handling markdown code blocks."""
+        """Parse JSON from LLM response, handling markdown code blocks and truncation."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # 1. Direct parse
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
 
-        # Try extracting from ```json ... ``` block
+        # 2. Extract from ```json ... ``` block
         match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
         if match:
             try:
@@ -187,8 +196,8 @@ class AIService:
             except json.JSONDecodeError:
                 pass
 
-        # Try extracting any JSON array or object
-        for pattern in [r"\[.*\]", r"\{.*\}"]:
+        # 3. Extract any JSON object or array
+        for pattern in [r"\{.*\}", r"\[.*\]"]:
             match = re.search(pattern, text, re.DOTALL)
             if match:
                 try:
@@ -196,14 +205,78 @@ class AIService:
                 except json.JSONDecodeError:
                     pass
 
-        raise AIParsingError("AI zwrocilo nieprawidlowy JSON")
+        # 4. Try to fix truncated JSON (response cut off at max_tokens)
+        #    Find the start of JSON and attempt to close open brackets/braces
+        json_start = re.search(r'[\[{]', text)
+        if json_start:
+            partial = text[json_start.start():]
+            repaired = self._try_repair_json(partial)
+            if repaired is not None:
+                logger.warning("AI response was truncated — repaired JSON successfully")
+                return repaired
+
+        logger.error(
+            "AI returned unparseable response (first 500 chars): %s",
+            text[:500],
+        )
+        raise AIParsingError(
+            f"AI zwrocilo nieprawidlowy JSON. "
+            f"Odpowiedz zaczyna sie od: {text[:200]}"
+        )
+
+    @staticmethod
+    def _try_repair_json(text: str) -> dict | list | None:
+        """Try to repair truncated JSON by closing open brackets/braces."""
+        # Remove trailing incomplete string/value
+        # Find last complete element by looking for last comma or colon+value
+        for trim in range(min(200, len(text)), 0, -1):
+            candidate = text[:len(text) - trim]
+            # Count open/close brackets
+            opens = []
+            in_string = False
+            escape = False
+            for ch in candidate:
+                if escape:
+                    escape = False
+                    continue
+                if ch == '\\' and in_string:
+                    escape = True
+                    continue
+                if ch == '"' and not escape:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch in '{[':
+                    opens.append(ch)
+                elif ch == '}':
+                    if opens and opens[-1] == '{':
+                        opens.pop()
+                elif ch == ']':
+                    if opens and opens[-1] == '[':
+                        opens.pop()
+
+            # Close any remaining open brackets
+            if in_string:
+                candidate += '"'
+            closers = ""
+            for o in reversed(opens):
+                closers += ']' if o == '[' else '}'
+            try:
+                return json.loads(candidate + closers)
+            except json.JSONDecodeError:
+                continue
+        return None
 
     async def _log_call(self, user_id: int, action_type: str,
                         duration_ms: int, success: bool,
                         input_summary: str | None = None,
                         output_summary: str | None = None,
-                        error: str | None = None):
-        """Log AI call to audit table."""
+                        error: str | None = None,
+                        tokens_input: int | None = None,
+                        tokens_output: int | None = None,
+                        cost_usd=None):
+        """Log AI call to audit table with token usage and cost."""
         log = AIAuditLog(
             user_id=user_id,
             org_unit_id=self.config.org_unit_id if self.config else None,
@@ -212,6 +285,9 @@ class AIService:
             model_used=self.config.model_name if self.config else "unknown",
             input_summary=input_summary,
             output_summary=output_summary,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            cost_usd=cost_usd,
             duration_ms=duration_ms,
             success=success,
             error=error,
@@ -728,7 +804,8 @@ class AIService:
             user_message=prompt,
             action_type="DOCUMENT_IMPORT",
             user_id=user_id,
-            max_tokens=4000,
+            max_tokens=16000,
+            timeout=180,
         )
         return result if isinstance(result, dict) else {"framework": {}, "nodes": []}
 
@@ -752,7 +829,8 @@ class AIService:
             user_message=prompt,
             action_type="DOCUMENT_IMPORT",
             user_id=user_id,
-            max_tokens=4000,
+            max_tokens=16000,
+            timeout=180,
         )
         return result if isinstance(result, dict) else {"nodes": []}
 

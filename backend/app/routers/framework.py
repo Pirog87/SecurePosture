@@ -1004,7 +1004,7 @@ async def import_from_ai(
     - Extracts chapters, sections, requirements as tree nodes
     - Marks assessable nodes (concrete requirements/controls)
     """
-    from app.services.ai_service import get_ai_service, AINotConfiguredException
+    from app.services.ai_service import get_ai_service, AINotConfiguredException, AIParsingError
     from app.services.document_extract import prepare_chunked_document
     from app.services.framework_import import _create_default_dimensions
 
@@ -1164,6 +1164,14 @@ async def import_from_ai(
 
     except AINotConfiguredException:
         raise HTTPException(503, "AI nie jest skonfigurowane")
+    except AIParsingError as e:
+        await s.rollback()
+        logger.exception("AI import: JSON parsing failed")
+        raise HTTPException(
+            502,
+            f"AI nie zwróciło poprawnego JSON. "
+            f"Spróbuj z mniejszym dokumentem lub innym modelem. Szczegóły: {e}",
+        )
     except Exception as e:
         await s.rollback()
         logger.exception("AI import error")

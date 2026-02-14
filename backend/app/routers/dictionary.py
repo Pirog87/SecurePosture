@@ -454,3 +454,93 @@ async def reassign_entry(
         total_updated=total_updated,
         details=details,
     )
+
+
+# ── DEDUP — one-time cleanup of duplicate dictionary entries ──
+
+# All tables/columns that reference dictionary_entries.id
+_ALL_FK_REFS: list[tuple[str, str]] = [
+    ("frameworks", "document_type_id"),
+    *_FK_REFERENCES,
+]
+
+
+@router.post(
+    "/admin/dedup",
+    summary="Deduplikacja wpisów słownika (zachowuje najniższe ID)",
+)
+async def dedup_entries(
+    s: AsyncSession = Depends(get_session),
+):
+    """Find all (dict_type_id, code) groups with duplicates, reassign FK
+    references to the canonical (lowest-id) entry, then delete duplicates.
+    Also attempts to add a unique index to prevent future duplicates."""
+
+    # Find duplicate groups
+    dupes = (await s.execute(text(
+        "SELECT dict_type_id, code, MIN(id) AS keep_id "
+        "FROM dictionary_entries "
+        "WHERE code IS NOT NULL "
+        "GROUP BY dict_type_id, code "
+        "HAVING COUNT(*) > 1"
+    ))).fetchall()
+
+    if not dupes:
+        return {"status": "no_duplicates", "groups": 0, "deleted": 0}
+
+    total_deleted = 0
+    total_reassigned = 0
+
+    for row in dupes:
+        dt_id, code, keep_id = row[0], row[1], row[2]
+
+        # Get IDs of duplicates to remove
+        dup_rows = (await s.execute(text(
+            "SELECT id FROM dictionary_entries "
+            "WHERE dict_type_id = :dt_id AND code = :code AND id != :keep_id"
+        ), {"dt_id": dt_id, "code": code, "keep_id": keep_id})).fetchall()
+
+        dup_ids = [r[0] for r in dup_rows]
+        if not dup_ids:
+            continue
+
+        # Reassign FK references
+        for table, column in _ALL_FK_REFS:
+            for dup_id in dup_ids:
+                try:
+                    result = await s.execute(text(
+                        f"UPDATE `{table}` SET `{column}` = :keep_id "
+                        f"WHERE `{column}` = :dup_id"
+                    ), {"keep_id": keep_id, "dup_id": dup_id})
+                    total_reassigned += result.rowcount
+                except Exception:
+                    pass
+
+        # Delete duplicates
+        for dup_id in dup_ids:
+            await s.execute(text(
+                "DELETE FROM dictionary_entries WHERE id = :dup_id"
+            ), {"dup_id": dup_id})
+            total_deleted += 1
+
+    # Try to add unique index
+    idx_created = False
+    try:
+        await s.execute(text(
+            "CREATE UNIQUE INDEX uq_dict_entries_type_code "
+            "ON dictionary_entries (dict_type_id, code)"
+        ))
+        idx_created = True
+    except Exception:
+        # Index might already exist
+        pass
+
+    await s.commit()
+
+    return {
+        "status": "deduped",
+        "groups": len(dupes),
+        "deleted": total_deleted,
+        "reassigned": total_reassigned,
+        "unique_index_created": idx_created,
+    }

@@ -13,24 +13,42 @@ branch_labels = None
 depends_on = None
 
 
+def _is_mysql() -> bool:
+    return op.get_bind().dialect.name in ("mysql", "mariadb")
+
+
 def _table_exists(table: str) -> bool:
-    """Check if a table already exists (MariaDB / MySQL)."""
+    """Check if a table already exists (works with both MariaDB and SQLite)."""
     conn = op.get_bind()
-    result = conn.execute(sa.text(
-        "SELECT COUNT(*) FROM information_schema.tables "
-        "WHERE table_schema = DATABASE() AND table_name = :table"
-    ), {"table": table})
-    return result.scalar() > 0
+    if _is_mysql():
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_schema = DATABASE() AND table_name = :table"
+        ), {"table": table})
+        return result.scalar() > 0
+    else:
+        # SQLite
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = :table"
+        ), {"table": table})
+        return result.scalar() > 0
 
 
 def _index_exists(index_name: str) -> bool:
-    """Check if an index already exists (MariaDB / MySQL)."""
+    """Check if an index already exists (works with both MariaDB and SQLite)."""
     conn = op.get_bind()
-    result = conn.execute(sa.text(
-        "SELECT COUNT(*) FROM information_schema.statistics "
-        "WHERE table_schema = DATABASE() AND index_name = :idx"
-    ), {"idx": index_name})
-    return result.scalar() > 0
+    if _is_mysql():
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() AND index_name = :idx"
+        ), {"idx": index_name})
+        return result.scalar() > 0
+    else:
+        # SQLite
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = :idx"
+        ), {"idx": index_name})
+        return result.scalar() > 0
 
 
 def upgrade() -> None:

@@ -13,35 +13,55 @@ branch_labels = None
 depends_on = None
 
 
+def _is_mysql() -> bool:
+    return op.get_bind().dialect.name in ("mysql", "mariadb")
+
+
 def _column_exists(table: str, column: str) -> bool:
-    """Check if a column already exists in a table (MariaDB / MySQL)."""
+    """Check if a column already exists in a table."""
     conn = op.get_bind()
-    result = conn.execute(sa.text(
-        "SELECT COUNT(*) FROM information_schema.columns "
-        "WHERE table_schema = DATABASE() "
-        "AND table_name = :table AND column_name = :column"
-    ), {"table": table, "column": column})
-    return result.scalar() > 0
+    if _is_mysql():
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() "
+            "AND table_name = :table AND column_name = :column"
+        ), {"table": table, "column": column})
+        return result.scalar() > 0
+    else:
+        result = conn.execute(sa.text(f"PRAGMA table_info('{table}')"))
+        return any(row[1] == column for row in result.fetchall())
 
 
 def _table_exists(table: str) -> bool:
-    """Check if a table already exists (MariaDB / MySQL)."""
+    """Check if a table already exists."""
     conn = op.get_bind()
-    result = conn.execute(sa.text(
-        "SELECT COUNT(*) FROM information_schema.tables "
-        "WHERE table_schema = DATABASE() AND table_name = :table"
-    ), {"table": table})
-    return result.scalar() > 0
+    if _is_mysql():
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM information_schema.tables "
+            "WHERE table_schema = DATABASE() AND table_name = :table"
+        ), {"table": table})
+        return result.scalar() > 0
+    else:
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = :table"
+        ), {"table": table})
+        return result.scalar() > 0
 
 
 def _index_exists(index_name: str) -> bool:
-    """Check if an index already exists (MariaDB / MySQL)."""
+    """Check if an index already exists."""
     conn = op.get_bind()
-    result = conn.execute(sa.text(
-        "SELECT COUNT(*) FROM information_schema.statistics "
-        "WHERE table_schema = DATABASE() AND index_name = :idx"
-    ), {"idx": index_name})
-    return result.scalar() > 0
+    if _is_mysql():
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM information_schema.statistics "
+            "WHERE table_schema = DATABASE() AND index_name = :idx"
+        ), {"idx": index_name})
+        return result.scalar() > 0
+    else:
+        result = conn.execute(sa.text(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = :idx"
+        ), {"idx": index_name})
+        return result.scalar() > 0
 
 
 def upgrade() -> None:

@@ -518,25 +518,107 @@ class AuditReport(Base):
 # ─── Framework Mappings ───────────────────────────────────────
 
 
+# ─── Mapping Set ──────────────────────────────────────────────
+# Groups mappings between a pair of frameworks (inspired by CISO Assistant)
+
+# Set-theoretic relationship types (CISO Assistant approach)
+RELATIONSHIP_TYPES = ("equal", "subset", "superset", "intersect", "not_related")
+
+# Rationale types for how the mapping was derived
+RATIONALE_TYPES = ("syntactic", "semantic", "functional")
+
+# Mapping sources
+MAPPING_SOURCES = ("manual", "ai_assisted", "scf_strm", "import")
+
+
+def revert_relationship(relation: str) -> str:
+    """Invert a relationship for bidirectional mapping (CISO Assistant pattern)."""
+    if relation == "subset":
+        return "superset"
+    elif relation == "superset":
+        return "subset"
+    return relation  # equal, intersect, not_related are symmetric
+
+
+class MappingSet(Base):
+    """A group of mappings between two specific frameworks.
+
+    Mirrors CISO Assistant's requirement_mapping_set concept: each set
+    defines a directional mapping from source → target framework, with
+    an optional auto-generated revert set for the inverse direction.
+    """
+
+    __tablename__ = "mapping_sets"
+    __table_args__ = (
+        UniqueConstraint("source_framework_id", "target_framework_id", name="uq_ms_src_tgt"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_framework_id: Mapped[int] = mapped_column(ForeignKey("frameworks.id"), nullable=False)
+    target_framework_id: Mapped[int] = mapped_column(ForeignKey("frameworks.id"), nullable=False)
+
+    name: Mapped[str | None] = mapped_column(String(500))
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
+
+    # Whether a revert (inverse) set has been auto-generated
+    revert_set_id: Mapped[int | None] = mapped_column(ForeignKey("mapping_sets.id"))
+
+    mapping_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    coverage_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+
+    created_by: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False,
+    )
+
+    # relationships
+    source_framework: Mapped["Framework"] = relationship(foreign_keys=[source_framework_id])
+    target_framework: Mapped["Framework"] = relationship(foreign_keys=[target_framework_id])
+    mappings: Mapped[list["FrameworkMapping"]] = relationship(
+        back_populates="mapping_set", cascade="all, delete-orphan",
+    )
+
+
 class FrameworkMapping(Base):
-    """Cross-framework requirement mapping."""
+    """Cross-framework requirement mapping.
+
+    Uses CISO Assistant set-theoretic relationship types (equal, subset,
+    superset, intersect, not_related) with numeric strength and rationale
+    classification for formal compliance mapping.
+    """
 
     __tablename__ = "framework_mappings"
     __table_args__ = (
         UniqueConstraint("source_requirement_id", "target_requirement_id", name="uq_fm"),
+        Index("ix_fm_set", "mapping_set_id"),
+        Index("ix_fm_src_fw", "source_framework_id"),
+        Index("ix_fm_tgt_fw", "target_framework_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mapping_set_id: Mapped[int | None] = mapped_column(ForeignKey("mapping_sets.id", ondelete="SET NULL"))
     source_framework_id: Mapped[int] = mapped_column(ForeignKey("frameworks.id"), nullable=False)
     source_requirement_id: Mapped[int] = mapped_column(ForeignKey("framework_nodes.id"), nullable=False)
     target_framework_id: Mapped[int] = mapped_column(ForeignKey("frameworks.id"), nullable=False)
     target_requirement_id: Mapped[int] = mapped_column(ForeignKey("framework_nodes.id"), nullable=False)
 
-    relationship_type: Mapped[str] = mapped_column(String(20), default="related", nullable=False)
-    strength: Mapped[str] = mapped_column(String(10), default="moderate", nullable=False)
+    # Set-theoretic relationship (CISO Assistant style)
+    relationship_type: Mapped[str] = mapped_column(String(20), default="intersect", nullable=False)
+    # Numeric strength 1-3 (1=weak, 2=moderate, 3=strong)
+    strength: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    # Classification of how the mapping was derived
+    rationale_type: Mapped[str | None] = mapped_column(String(20))
     rationale: Mapped[str | None] = mapped_column(Text)
+
+    # Source & workflow
     mapping_source: Mapped[str] = mapped_column(String(20), default="manual", nullable=False)
-    mapping_status: Mapped[str] = mapped_column(String(20), default="confirmed", nullable=False)
+    mapping_status: Mapped[str] = mapped_column(String(20), default="draft", nullable=False)
+
+    # AI-assisted mapping metadata
+    ai_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 3))
+    ai_model: Mapped[str | None] = mapped_column(String(100))
 
     confirmed_by: Mapped[str | None] = mapped_column(String(200))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -547,6 +629,7 @@ class FrameworkMapping(Base):
     )
 
     # relationships
+    mapping_set: Mapped["MappingSet | None"] = relationship(back_populates="mappings")
     source_framework: Mapped["Framework"] = relationship(foreign_keys=[source_framework_id])
     source_requirement: Mapped["FrameworkNode"] = relationship(foreign_keys=[source_requirement_id])
     target_framework: Mapped["Framework"] = relationship(foreign_keys=[target_framework_id])

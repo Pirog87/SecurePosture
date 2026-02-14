@@ -11,10 +11,13 @@ Inspired by CISO Assistant's set-theoretic mapping model:
 """
 from datetime import datetime
 import io
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import func, select, and_
+from sqlalchemy import func, select, and_, inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from app.database import get_session
 from app.models.compliance import (
@@ -38,6 +41,18 @@ from app.schemas.compliance import (
 )
 
 router = APIRouter(prefix="/api/v1/framework-mappings", tags=["Framework Mapping"])
+
+
+async def _tables_exist(s: AsyncSession) -> bool:
+    """Check if mapping_sets and framework_mappings tables exist."""
+    try:
+        result = await s.execute(
+            select(func.count()).select_from(MappingSet).limit(0)
+        )
+        return True
+    except Exception:
+        await s.rollback()
+        return False
 
 
 # ─── Helper ────────────────────────────────────────────────────
@@ -126,6 +141,8 @@ async def _recalc_set_stats(s: AsyncSession, mapping_set_id: int):
 
 @router.get("/sets", response_model=list[MappingSetOut])
 async def list_mapping_sets(s: AsyncSession = Depends(get_session)):
+    if not await _tables_exist(s):
+        return []
     q = select(MappingSet).order_by(MappingSet.created_at.desc())
     rows = (await s.execute(q)).scalars().all()
     return [await _set_out(s, ms) for ms in rows]
@@ -133,6 +150,8 @@ async def list_mapping_sets(s: AsyncSession = Depends(get_session)):
 
 @router.post("/sets", response_model=MappingSetOut, status_code=201)
 async def create_mapping_set(body: MappingSetCreate, s: AsyncSession = Depends(get_session)):
+    if not await _tables_exist(s):
+        raise HTTPException(503, "Mapping tables not yet created. Run migration 017.")
     sf = await s.get(Framework, body.source_framework_id)
     tf = await s.get(Framework, body.target_framework_id)
     if not sf or not tf:
@@ -183,6 +202,8 @@ async def list_mappings(
     relationship_type: str | None = None,
     s: AsyncSession = Depends(get_session),
 ):
+    if not await _tables_exist(s):
+        return []
     q = select(FrameworkMapping)
     if source_framework_id:
         q = q.where(FrameworkMapping.source_framework_id == source_framework_id)
@@ -201,6 +222,8 @@ async def list_mappings(
 
 @router.post("/", response_model=FrameworkMappingOut, status_code=201)
 async def create_mapping(body: FrameworkMappingCreate, s: AsyncSession = Depends(get_session)):
+    if not await _tables_exist(s):
+        raise HTTPException(503, "Mapping tables not yet created. Run migration 017.")
     # Validate relationship type
     if body.relationship_type not in RELATIONSHIP_TYPES:
         raise HTTPException(400, f"Invalid relationship_type. Must be one of: {', '.join(RELATIONSHIP_TYPES)}")
@@ -273,6 +296,8 @@ async def bulk_confirm(
     s: AsyncSession = Depends(get_session),
 ):
     """Confirm multiple draft mappings at once."""
+    if not await _tables_exist(s):
+        raise HTTPException(503, "Mapping tables not yet created. Run migration 017.")
     now = datetime.utcnow()
     count = 0
     for mid in mapping_ids:
@@ -296,6 +321,8 @@ async def bulk_import_mappings(body: FrameworkMappingBulkCreate, s: AsyncSession
     Each item in `mappings` should have:
       source_ref_id, target_ref_id, relationship_type, strength (optional)
     """
+    if not await _tables_exist(s):
+        raise HTTPException(503, "Mapping tables not yet created. Run migration 017.")
     sf = await s.get(Framework, body.source_framework_id)
     tf = await s.get(Framework, body.target_framework_id)
     if not sf or not tf:
@@ -457,6 +484,9 @@ async def import_mapping_yaml_endpoint(
     Parses the YAML file's requirement_mapping_sets and creates framework mappings.
     Frameworks are resolved by URN from the YAML, or can be overridden with query params.
     """
+    if not await _tables_exist(s):
+        raise HTTPException(503, "Mapping tables not yet created. Run migration 017.")
+
     from app.services.mapping_import import import_mapping_yaml
 
     if not file.filename or not file.filename.endswith((".yaml", ".yml")):
@@ -499,6 +529,8 @@ async def import_mapping_from_github(
     s: AsyncSession = Depends(get_session),
 ):
     """Import mappings directly from the CISO Assistant GitHub repository."""
+    if not await _tables_exist(s):
+        raise HTTPException(503, "Mapping tables not yet created. Run migration 017.")
     import httpx
 
     base_url = "https://raw.githubusercontent.com/intuitem/ciso-assistant-community/main/backend/library/libraries"
@@ -680,6 +712,8 @@ async def ai_suggest_mappings(
     Uses sentence-transformers to encode framework requirement texts and compute
     cosine similarity. Returns ranked suggestions for human review.
     """
+    if not await _tables_exist(s):
+        raise HTTPException(503, "Mapping tables not yet created. Run migration 017.")
     from app.services.sbert_mapper import suggest_mappings
 
     try:
@@ -862,6 +896,12 @@ async def accept_ai_suggestions(
 @router.get("/stats")
 async def mapping_statistics(s: AsyncSession = Depends(get_session)):
     """Global mapping statistics across all frameworks."""
+    if not await _tables_exist(s):
+        return {
+            "total_mappings": 0, "confirmed": 0, "draft": 0,
+            "framework_pairs": 0, "mapping_sets": 0,
+            "by_relationship": {}, "by_source": {},
+        }
     total_q = select(func.count()).select_from(FrameworkMapping)
     total = (await s.execute(total_q)).scalar() or 0
 

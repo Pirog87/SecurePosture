@@ -1295,19 +1295,18 @@ export default function FrameworkMappingsPage() {
 
   const load = () => {
     setLoading(true);
-    Promise.all([
+    Promise.allSettled([
       api.get<FrameworkMapping[]>("/api/v1/framework-mappings/"),
       api.get<Framework[]>("/api/v1/frameworks/"),
       api.get<MappingSet[]>("/api/v1/framework-mappings/sets"),
       api.get<MappingStats>("/api/v1/framework-mappings/stats"),
     ])
       .then(([fm, fw, ms, st]) => {
-        setMappings(fm);
-        setFrameworks(fw.filter((f: any) => f.is_active !== false));
-        setSets(ms);
-        setStats(st);
+        if (fm.status === "fulfilled") setMappings(fm.value);
+        if (fw.status === "fulfilled") setFrameworks(fw.value.filter((f: any) => f.is_active !== false));
+        if (ms.status === "fulfilled") setSets(ms.value);
+        if (st.status === "fulfilled") setStats(st.value);
       })
-      .catch(() => {})
       .finally(() => setLoading(false));
   };
 

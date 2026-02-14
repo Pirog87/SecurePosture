@@ -7,11 +7,13 @@ Covers:
 - FrameworkMapping CRUD with set-theoretic relationship types
 - Confirmation workflow (single + bulk)
 - Bulk import with auto-revert
+- YAML mapping import (CISO Assistant format)
 - Coverage analysis
 - Matrix endpoint
 - Statistics endpoint
 - Validation (invalid relationship_type)
 """
+import io
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -588,3 +590,253 @@ async def test_coverage_confirmed_vs_total(client: AsyncClient, db: AsyncSession
     assert data["confirmed_covered"] == 1
     assert data["coverage_percent"] == pytest.approx(66.7, rel=0.1)
     assert data["confirmed_coverage_percent"] == pytest.approx(33.3, rel=0.1)
+
+
+# ─── YAML Mapping Import Tests ────────────────────────────────
+
+
+SAMPLE_MAPPING_YAML = """
+urn: urn:test:risk:library:mapping-iso27001-to-nist-csf
+locale: en
+ref_id: mapping-iso27001-to-nist-csf
+name: "ISO 27001 to NIST CSF 2.0"
+description: "Test mapping between ISO 27001 and NIST CSF 2.0"
+version: 1
+provider: test
+objects:
+  requirement_mapping_sets:
+    - urn: urn:test:risk:mapping-set:iso27001-to-nist-csf
+      ref_id: iso27001-to-nist-csf
+      name: "ISO 27001:2022 to NIST CSF 2.0"
+      source_framework_urn: urn:iso27001
+      target_framework_urn: urn:nist-csf
+      requirement_mappings:
+        - source_requirement_urn: urn:test:risk:req_node:iso27001:a.5.1
+          target_requirement_urn: urn:test:risk:req_node:nist-csf:gv.po-01
+          relationship: equal
+          strength: 3
+        - source_requirement_urn: urn:test:risk:req_node:iso27001:a.6.1
+          target_requirement_urn: urn:test:risk:req_node:nist-csf:gv.rm-01
+          relationship: subset
+          strength: 2
+        - source_requirement_urn: urn:test:risk:req_node:iso27001:a.8.1
+          target_requirement_urn: urn:test:risk:req_node:nist-csf:id.am-01
+          relationship: intersect
+"""
+
+
+async def _seed_frameworks_with_urns(db: AsyncSession):
+    """Create two frameworks with URN-based nodes for YAML import testing."""
+    fw1 = Framework(name="ISO 27001", urn="urn:iso27001", version="2022")
+    fw2 = Framework(name="NIST CSF 2.0", urn="urn:nist-csf", version="2.0")
+    db.add_all([fw1, fw2])
+    await db.flush()
+
+    # Source framework nodes with URNs
+    n1 = []
+    for i, (ref, name, urn) in enumerate([
+        ("A.5.1", "Information security policies", "urn:test:risk:req_node:iso27001:a.5.1"),
+        ("A.6.1", "Organization of information security", "urn:test:risk:req_node:iso27001:a.6.1"),
+        ("A.8.1", "Asset management", "urn:test:risk:req_node:iso27001:a.8.1"),
+    ]):
+        n = FrameworkNode(
+            framework_id=fw1.id, ref_id=ref, name=name, urn=urn,
+            depth=2, assessable=True, is_active=True, order_id=i,
+        )
+        db.add(n)
+        n1.append(n)
+
+    # Target framework nodes with URNs
+    n2 = []
+    for i, (ref, name, urn) in enumerate([
+        ("GV.PO-01", "Organizational context - policy", "urn:test:risk:req_node:nist-csf:gv.po-01"),
+        ("GV.RM-01", "Risk management strategy", "urn:test:risk:req_node:nist-csf:gv.rm-01"),
+        ("ID.AM-01", "Asset inventories", "urn:test:risk:req_node:nist-csf:id.am-01"),
+    ]):
+        n = FrameworkNode(
+            framework_id=fw2.id, ref_id=ref, name=name, urn=urn,
+            depth=2, assessable=True, is_active=True, order_id=i,
+        )
+        db.add(n)
+        n2.append(n)
+
+    await db.commit()
+    for n in n1 + n2:
+        await db.refresh(n)
+
+    return fw1, fw2, n1, n2
+
+
+@pytest.mark.asyncio
+async def test_parse_mapping_yaml():
+    """parse_mapping_yaml correctly extracts mapping sets from CISO Assistant YAML."""
+    from app.services.mapping_import import parse_mapping_yaml
+
+    result = parse_mapping_yaml(SAMPLE_MAPPING_YAML)
+    assert len(result) == 1
+
+    ms = result[0]
+    assert ms["source_framework_urn"] == "urn:iso27001"
+    assert ms["target_framework_urn"] == "urn:nist-csf"
+    assert ms["name"] == "ISO 27001:2022 to NIST CSF 2.0"
+    assert len(ms["mappings"]) == 3
+
+    # Check first mapping
+    m0 = ms["mappings"][0]
+    assert "a.5.1" in m0["source_urn"]
+    assert "gv.po-01" in m0["target_urn"]
+    assert m0["relationship"] == "equal"
+    assert m0["strength"] == 3
+
+    # Check mapping with default strength
+    m2 = ms["mappings"][2]
+    assert m2["relationship"] == "intersect"
+    assert m2["strength"] == 2  # default
+
+
+@pytest.mark.asyncio
+async def test_parse_mapping_yaml_empty():
+    """parse_mapping_yaml raises ValueError on empty YAML."""
+    from app.services.mapping_import import parse_mapping_yaml
+
+    with pytest.raises(ValueError, match="Empty YAML"):
+        parse_mapping_yaml("")
+
+
+@pytest.mark.asyncio
+async def test_parse_mapping_yaml_no_mappings():
+    """parse_mapping_yaml raises ValueError when no mapping sets found."""
+    from app.services.mapping_import import parse_mapping_yaml
+
+    with pytest.raises(ValueError, match="No requirement_mapping_sets"):
+        parse_mapping_yaml("urn: test\nobjects:\n  framework:\n    name: Test\n")
+
+
+@pytest.mark.asyncio
+async def test_import_mapping_yaml_endpoint(client: AsyncClient, db: AsyncSession):
+    """YAML import endpoint creates mappings from CISO Assistant format."""
+    fw1, fw2, n1, n2 = await _seed_frameworks_with_urns(db)
+
+    # Upload YAML file
+    r = await client.post(
+        "/api/v1/framework-mappings/import/yaml",
+        files={"file": ("mapping.yaml", SAMPLE_MAPPING_YAML.encode(), "application/x-yaml")},
+        params={"auto_revert": "true"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["created"] == 3
+    assert data["revert_created"] == 3
+    assert data["skipped"] == 0
+    assert data["source_framework_name"] == "ISO 27001"
+    assert data["target_framework_name"] == "NIST CSF 2.0"
+    assert data["mapping_set_id"] is not None
+
+    # Verify mappings exist
+    fwd = await client.get(f"/api/v1/framework-mappings/?source_framework_id={fw1.id}")
+    assert len(fwd.json()) == 3
+
+    # Verify revert mappings
+    rev = await client.get(f"/api/v1/framework-mappings/?source_framework_id={fw2.id}")
+    assert len(rev.json()) == 3
+
+    # Verify relationship types preserved
+    mappings = fwd.json()
+    rels = sorted([m["relationship_type"] for m in mappings])
+    assert rels == ["equal", "intersect", "subset"]
+
+
+@pytest.mark.asyncio
+async def test_import_mapping_yaml_with_framework_override(client: AsyncClient, db: AsyncSession):
+    """YAML import with explicit framework IDs overrides URN resolution."""
+    fw1, fw2, n1, n2 = await _seed_frameworks_with_urns(db)
+
+    r = await client.post(
+        "/api/v1/framework-mappings/import/yaml",
+        files={"file": ("mapping.yaml", SAMPLE_MAPPING_YAML.encode(), "application/x-yaml")},
+        params={
+            "source_framework_id": fw1.id,
+            "target_framework_id": fw2.id,
+            "auto_revert": "false",
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["created"] == 3
+    assert data["revert_created"] == 0  # auto_revert disabled
+
+
+@pytest.mark.asyncio
+async def test_import_mapping_yaml_duplicate_skip(client: AsyncClient, db: AsyncSession):
+    """Second import of same YAML skips already existing mappings."""
+    await _seed_frameworks_with_urns(db)
+
+    # First import
+    r1 = await client.post(
+        "/api/v1/framework-mappings/import/yaml",
+        files={"file": ("mapping.yaml", SAMPLE_MAPPING_YAML.encode(), "application/x-yaml")},
+        params={"auto_revert": "false"},
+    )
+    assert r1.json()["created"] == 3
+
+    # Second import — all should be skipped
+    r2 = await client.post(
+        "/api/v1/framework-mappings/import/yaml",
+        files={"file": ("mapping.yaml", SAMPLE_MAPPING_YAML.encode(), "application/x-yaml")},
+        params={"auto_revert": "false"},
+    )
+    assert r2.json()["created"] == 0
+    assert r2.json()["skipped"] == 3
+
+
+@pytest.mark.asyncio
+async def test_import_mapping_yaml_missing_framework(client: AsyncClient, db: AsyncSession):
+    """YAML import fails with 400 when referenced framework is not found."""
+    # No frameworks seeded — URN resolution will fail
+    r = await client.post(
+        "/api/v1/framework-mappings/import/yaml",
+        files={"file": ("mapping.yaml", SAMPLE_MAPPING_YAML.encode(), "application/x-yaml")},
+    )
+    assert r.status_code == 400
+    assert "not found" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_import_mapping_yaml_invalid_file(client: AsyncClient):
+    """YAML import rejects non-YAML files."""
+    r = await client.post(
+        "/api/v1/framework-mappings/import/yaml",
+        files={"file": ("mapping.txt", b"not yaml", "text/plain")},
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_import_mapping_yaml_partial_match(client: AsyncClient, db: AsyncSession):
+    """YAML import handles partial node resolution — creates what it can, reports errors."""
+    fw1, fw2, _, _ = await _seed_frameworks_with_urns(db)
+
+    # YAML with one valid and one invalid mapping
+    partial_yaml = """
+objects:
+  requirement_mapping_sets:
+    - source_framework_urn: urn:iso27001
+      target_framework_urn: urn:nist-csf
+      requirement_mappings:
+        - source_requirement_urn: urn:test:risk:req_node:iso27001:a.5.1
+          target_requirement_urn: urn:test:risk:req_node:nist-csf:gv.po-01
+          relationship: equal
+        - source_requirement_urn: urn:test:risk:req_node:iso27001:nonexistent
+          target_requirement_urn: urn:test:risk:req_node:nist-csf:gv.rm-01
+          relationship: intersect
+"""
+    r = await client.post(
+        "/api/v1/framework-mappings/import/yaml",
+        files={"file": ("mapping.yaml", partial_yaml.encode(), "application/x-yaml")},
+        params={"auto_revert": "false"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["created"] == 1
+    assert data["skipped"] == 1
+    assert len(data["errors"]) >= 1

@@ -47,6 +47,26 @@ router = APIRouter(prefix="/api/v1/frameworks", tags=["Repozytorium Wymagań"])
 # HELPERS -- resolve document_type_name for output
 # ===================================================
 
+async def _reload_framework(s: AsyncSession, fw_id: int) -> Framework | None:
+    """Reload framework with dimensions eagerly loaded, bypassing identity map cache.
+
+    Using select() with populate_existing=True instead of s.get() ensures that
+    selectinload is applied even when the object is already in the identity map
+    (e.g. after commit). Without this, s.get() returns the cached object and
+    Pydantic triggers a lazy load on .dimensions which fails in async context
+    with MissingGreenlet.
+    """
+    result = await s.execute(
+        select(Framework)
+        .where(Framework.id == fw_id)
+        .options(
+            selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)
+        )
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
 async def _enrich_framework_out(fw: Framework, s: AsyncSession) -> dict:
     """Add computed fields for FrameworkOut / FrameworkBrief."""
     extra: dict = {}
@@ -228,11 +248,8 @@ async def create_framework(
 
     await s.commit()
 
-    # Reload with dimensions
-    fw = await s.get(
-        Framework, fw.id,
-        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
-    )
+    # Reload with dimensions (populate_existing to bypass identity map cache)
+    fw = await _reload_framework(s, fw.id)
     extra = await _enrich_framework_out(fw, s)
     out = FrameworkOut.model_validate(fw)
     for k, v in extra.items():
@@ -243,10 +260,7 @@ async def create_framework(
 
 @router.get("/{fw_id}", response_model=FrameworkOut, summary="Szczegóły dokumentu referencyjnego")
 async def get_framework(fw_id: int, s: AsyncSession = Depends(get_session)):
-    fw = await s.get(
-        Framework, fw_id,
-        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
-    )
+    fw = await _reload_framework(s, fw_id)
     if not fw:
         raise HTTPException(404, "Dokument nie istnieje")
     extra = await _enrich_framework_out(fw, s)
@@ -312,10 +326,7 @@ async def update_framework(
 
     await s.commit()
 
-    fw = await s.get(
-        Framework, fw_id,
-        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
-    )
+    fw = await _reload_framework(s, fw_id)
     extra = await _enrich_framework_out(fw, s)
     out = FrameworkOut.model_validate(fw)
     for k, v in extra.items():
@@ -460,10 +471,7 @@ async def change_lifecycle(
 
     await s.commit()
 
-    fw = await s.get(
-        Framework, fw_id,
-        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
-    )
+    fw = await _reload_framework(s, fw_id)
     extra = await _enrich_framework_out(fw, s)
     out = FrameworkOut.model_validate(fw)
     for k, v in extra.items():
@@ -1207,10 +1215,7 @@ async def copy_framework(
     ))
     await s.commit()
 
-    new_fw = await s.get(
-        Framework, new_fw.id,
-        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
-    )
+    new_fw = await _reload_framework(s, new_fw.id)
     extra = await _enrich_framework_out(new_fw, s)
     out = FrameworkOut.model_validate(new_fw)
     for k, v in extra.items():
@@ -1434,10 +1439,7 @@ async def adopt_framework(
     fw.last_edited_at = datetime.utcnow()
     await s.commit()
 
-    fw = await s.get(
-        Framework, fw_id,
-        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
-    )
+    fw = await _reload_framework(s, fw_id)
     extra = await _enrich_framework_out(fw, s)
     out = FrameworkOut.model_validate(fw)
     for k, v in extra.items():

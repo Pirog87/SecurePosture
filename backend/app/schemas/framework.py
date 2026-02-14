@@ -141,7 +141,7 @@ class FrameworkOut(BaseModel):
     packager: str | None = None
     source_format: str | None = None
     locale: str | None = None
-    implementation_groups_definition: dict | None = None
+    implementation_groups_definition: dict | list | None = None
     total_nodes: int = 0
     total_assessable: int = 0
     imported_at: datetime | None = None

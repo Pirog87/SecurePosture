@@ -544,7 +544,7 @@ requirement_nodes:
 
 
 @pytest.mark.asyncio
-async def test_import_yaml_duplicate_urn(client: AsyncClient):
+async def test_import_yaml_duplicate_urn_reimport(client: AsyncClient):
     yaml_content = """
 urn: urn:test:risk:framework:dupe
 ref_id: dupe
@@ -558,12 +558,13 @@ requirement_nodes:
     files = {"file": ("test.yaml", io.BytesIO(yaml_content.encode()), "application/x-yaml")}
     r1 = await client.post("/api/v1/frameworks/import/yaml", files=files)
     assert r1.status_code == 200
+    fw_id = r1.json()["framework_id"]
 
-    # Second import should fail
+    # Second import with same URN re-imports (updates existing framework)
     files2 = {"file": ("test2.yaml", io.BytesIO(yaml_content.encode()), "application/x-yaml")}
     r2 = await client.post("/api/v1/frameworks/import/yaml", files=files2)
-    assert r2.status_code == 400
-    assert "already exists" in r2.json()["detail"]
+    assert r2.status_code == 200
+    assert r2.json()["framework_id"] == fw_id  # Same framework ID (re-imported)
 
 
 @pytest.mark.asyncio
@@ -602,3 +603,366 @@ async def test_copy_assessment(client: AsyncClient, seed_framework):
     answers_data = r3.json()
     assert len(answers_data) == 4
     assert all(a["level_id"] == full_level_id for a in answers_data)
+
+
+# ═══════════════════════════════════════════════
+# ADOPTION FLOW (import → adopt → get detail)
+# ═══════════════════════════════════════════════
+
+@pytest.mark.asyncio
+async def test_adopt_framework_after_import(client: AsyncClient):
+    """Import YAML, adopt with attributes, verify both adopt response and GET detail work."""
+    yaml_content = """
+urn: urn:test:adopt:framework
+ref_id: adopt-test
+name: Adopt Test Framework
+version: "1.0"
+provider: TestProvider
+requirement_nodes:
+  - urn: urn:test:adopt:req:1
+    assessable: false
+    depth: 1
+    ref_id: "1"
+    name: "Section 1"
+    children:
+      - urn: urn:test:adopt:req:1.1
+        assessable: true
+        depth: 2
+        ref_id: "1.1"
+        name: "Requirement 1.1"
+"""
+    # 1. Import
+    files = {"file": ("test.yaml", io.BytesIO(yaml_content.encode()), "application/x-yaml")}
+    r1 = await client.post("/api/v1/frameworks/import/yaml", files=files)
+    assert r1.status_code == 200
+    fw_id = r1.json()["framework_id"]
+
+    # 2. Adopt — this used to fail with 500 (MissingGreenlet on dimensions)
+    adopt_body = {
+        "name": "My Adopted Document",
+        "document_origin": "external",
+        "owner": "John Doe",
+        "requires_review": False,
+        "review_frequency_months": 12,
+    }
+    r2 = await client.put(f"/api/v1/frameworks/{fw_id}/adopt", json=adopt_body)
+    assert r2.status_code == 200
+    data = r2.json()
+    assert data["name"] == "My Adopted Document"
+    assert data["owner"] == "John Doe"
+    assert len(data["dimensions"]) >= 1
+
+    # 3. GET detail — should also work
+    r3 = await client.get(f"/api/v1/frameworks/{fw_id}")
+    assert r3.status_code == 200
+    detail = r3.json()
+    assert detail["name"] == "My Adopted Document"
+    assert detail["owner"] == "John Doe"
+    assert len(detail["dimensions"]) >= 1
+
+
+# ═══════════════════════════════════════════════
+# LIVE CISO ASSISTANT FRAMEWORK IMPORT TESTS
+# (download real YAMLs from GitHub, full flow)
+# ═══════════════════════════════════════════════
+
+import httpx as _httpx
+
+
+GITHUB_RAW_BASE = (
+    "https://raw.githubusercontent.com/intuitem/ciso-assistant-community"
+    "/main/backend/library/libraries"
+)
+
+# Small, well-structured YAML frameworks from the CISO Assistant repo.
+# Each tuple: (filename, min_expected_nodes, has_implementation_groups)
+CISO_YAML_FRAMEWORKS = [
+    ("asf-baseline-v2.yaml", 10, False),
+    ("google-saif.yaml", 5, True),
+    ("nist-ai-rmf-1.0.yaml", 10, False),
+]
+
+
+async def _download_yaml(filename: str) -> bytes | None:
+    """Download a YAML file from CISO Assistant GitHub repo.
+
+    Returns the raw bytes, or None if the download fails (network error, 404, etc.).
+    """
+    url = f"{GITHUB_RAW_BASE}/{filename}"
+    try:
+        async with _httpx.AsyncClient(timeout=30, follow_redirects=True) as http:
+            resp = await http.get(url)
+            resp.raise_for_status()
+            return resp.content
+    except Exception:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_live_ciso_yaml_import_adopt_detail(client: AsyncClient):
+    """Download real CISO Assistant YAML files from GitHub and run the full
+    import -> adopt -> GET detail -> GET tree flow for each.
+
+    Skips gracefully if GitHub is unreachable.
+    """
+    # Pre-flight: check if GitHub is reachable at all
+    probe = await _download_yaml(CISO_YAML_FRAMEWORKS[0][0])
+    if probe is None:
+        pytest.skip("GitHub is unreachable -- skipping live CISO import test")
+
+    imported_fw_ids: list[int] = []
+
+    for filename, min_nodes, has_ig in CISO_YAML_FRAMEWORKS:
+        # ── 1. Download YAML ──
+        raw = await _download_yaml(filename)
+        if raw is None:
+            # Individual file missing -- skip this framework, continue others
+            continue
+
+        assert len(raw) > 100, f"{filename}: downloaded content too small ({len(raw)} bytes)"
+
+        # ── 2. Import via POST /api/v1/frameworks/import/yaml ──
+        files = {"file": (filename, io.BytesIO(raw), "application/x-yaml")}
+        r_import = await client.post("/api/v1/frameworks/import/yaml", files=files)
+        assert r_import.status_code == 200, (
+            f"{filename}: import failed ({r_import.status_code}): {r_import.text}"
+        )
+        import_data = r_import.json()
+
+        fw_id = import_data["framework_id"]
+        imported_fw_ids.append(fw_id)
+
+        assert import_data["name"], f"{filename}: imported framework has no name"
+        assert import_data["total_nodes"] >= min_nodes, (
+            f"{filename}: expected >= {min_nodes} nodes, got {import_data['total_nodes']}"
+        )
+        assert import_data["total_assessable"] >= 1, (
+            f"{filename}: expected >= 1 assessable node, got {import_data['total_assessable']}"
+        )
+        assert import_data["dimensions_created"] >= 1, (
+            f"{filename}: expected >= 1 dimension, got {import_data['dimensions_created']}"
+        )
+
+        # ── 3. Adopt via PUT /api/v1/frameworks/{id}/adopt ──
+        adopt_body = {
+            "name": f"Adopted: {import_data['name']}",
+            "document_origin": "external",
+            "owner": "Security Team",
+            "requires_review": True,
+            "review_frequency_months": 6,
+        }
+        r_adopt = await client.put(f"/api/v1/frameworks/{fw_id}/adopt", json=adopt_body)
+        assert r_adopt.status_code == 200, (
+            f"{filename}: adopt failed ({r_adopt.status_code}): {r_adopt.text}"
+        )
+        adopt_data = r_adopt.json()
+        assert adopt_data["name"] == f"Adopted: {import_data['name']}"
+        assert adopt_data["owner"] == "Security Team"
+        assert adopt_data["requires_review"] is True
+        assert adopt_data["review_frequency_months"] == 6
+        assert len(adopt_data["dimensions"]) >= 1
+
+        # ── 4. GET detail via GET /api/v1/frameworks/{id} ──
+        r_detail = await client.get(f"/api/v1/frameworks/{fw_id}")
+        assert r_detail.status_code == 200, (
+            f"{filename}: GET detail failed ({r_detail.status_code}): {r_detail.text}"
+        )
+        detail = r_detail.json()
+        assert detail["id"] == fw_id
+        assert detail["name"] == adopt_data["name"]
+        assert detail["owner"] == "Security Team"
+        assert detail["total_nodes"] >= min_nodes
+        assert detail["total_assessable"] >= 1
+        assert len(detail["dimensions"]) >= 1
+        # Verify dimensions have levels
+        for dim in detail["dimensions"]:
+            assert len(dim["levels"]) >= 2, (
+                f"{filename}: dimension '{dim['name']}' has fewer than 2 levels"
+            )
+
+        # ── 5. GET tree via GET /api/v1/frameworks/{id}/tree ──
+        r_tree = await client.get(f"/api/v1/frameworks/{fw_id}/tree")
+        assert r_tree.status_code == 200, (
+            f"{filename}: GET tree failed ({r_tree.status_code}): {r_tree.text}"
+        )
+        tree = r_tree.json()
+        assert len(tree) >= 1, f"{filename}: tree is empty"
+
+        # Walk the tree to count total nodes and verify structure
+        def _count_tree_nodes(nodes: list) -> int:
+            total = 0
+            for n in nodes:
+                total += 1
+                assert "id" in n, f"{filename}: tree node missing 'id'"
+                assert "name" in n, f"{filename}: tree node missing 'name'"
+                assert "children" in n, f"{filename}: tree node missing 'children'"
+                total += _count_tree_nodes(n["children"])
+            return total
+
+        tree_count = _count_tree_nodes(tree)
+        assert tree_count == detail["total_nodes"], (
+            f"{filename}: tree node count ({tree_count}) != total_nodes ({detail['total_nodes']})"
+        )
+
+    # At least 2 frameworks should have imported successfully
+    assert len(imported_fw_ids) >= 2, (
+        f"Only {len(imported_fw_ids)} frameworks imported; expected >= 2"
+    )
+
+    # Verify all frameworks appear in the list endpoint
+    r_list = await client.get("/api/v1/frameworks")
+    assert r_list.status_code == 200
+    listed_ids = {fw["id"] for fw in r_list.json()}
+    for fw_id in imported_fw_ids:
+        assert fw_id in listed_ids, f"Framework {fw_id} not found in list endpoint"
+
+
+@pytest.mark.asyncio
+async def test_live_github_import_endpoint(client: AsyncClient):
+    """Test the POST /api/v1/frameworks/import/github endpoint with a real file.
+
+    This endpoint downloads from GitHub internally, so we just pass the filename.
+    Skips if GitHub is unreachable.
+    """
+    # Pre-flight connectivity check
+    probe = await _download_yaml("asf-baseline-v2.yaml")
+    if probe is None:
+        pytest.skip("GitHub is unreachable -- skipping GitHub import endpoint test")
+
+    # Use a small framework file for the GitHub import endpoint
+    filename = "asf-baseline-v2.yaml"
+    r = await client.post(
+        f"/api/v1/frameworks/import/github?framework_path={filename}"
+    )
+    assert r.status_code == 200, (
+        f"GitHub import failed ({r.status_code}): {r.text}"
+    )
+    data = r.json()
+    fw_id = data["framework_id"]
+
+    assert data["name"], "GitHub-imported framework has no name"
+    assert data["total_nodes"] >= 10
+    assert data["total_assessable"] >= 1
+    assert data["dimensions_created"] >= 1
+
+    # Verify detail loads
+    r_detail = await client.get(f"/api/v1/frameworks/{fw_id}")
+    assert r_detail.status_code == 200
+    detail = r_detail.json()
+    assert detail["id"] == fw_id
+    assert len(detail["dimensions"]) >= 1
+
+    # Verify tree loads
+    r_tree = await client.get(f"/api/v1/frameworks/{fw_id}/tree")
+    assert r_tree.status_code == 200
+    tree = r_tree.json()
+    assert len(tree) >= 1
+
+    # Adopt the framework
+    adopt_body = {
+        "name": "GitHub Imported & Adopted",
+        "document_origin": "external",
+        "owner": "CISO",
+        "requires_review": False,
+        "review_frequency_months": 12,
+    }
+    r_adopt = await client.put(f"/api/v1/frameworks/{fw_id}/adopt", json=adopt_body)
+    assert r_adopt.status_code == 200
+    adopt_data = r_adopt.json()
+    assert adopt_data["name"] == "GitHub Imported & Adopted"
+    assert adopt_data["owner"] == "CISO"
+
+    # Re-verify detail after adoption
+    r_detail2 = await client.get(f"/api/v1/frameworks/{fw_id}")
+    assert r_detail2.status_code == 200
+    assert r_detail2.json()["name"] == "GitHub Imported & Adopted"
+
+
+@pytest.mark.asyncio
+async def test_live_ciso_yaml_reimport(client: AsyncClient):
+    """Test that re-importing the same YAML (same URN) updates rather than duplicates.
+
+    Skips if GitHub is unreachable.
+    """
+    filename = "asf-baseline-v2.yaml"
+    raw = await _download_yaml(filename)
+    if raw is None:
+        pytest.skip("GitHub is unreachable -- skipping reimport test")
+
+    # First import
+    files1 = {"file": (filename, io.BytesIO(raw), "application/x-yaml")}
+    r1 = await client.post("/api/v1/frameworks/import/yaml", files=files1)
+    assert r1.status_code == 200
+    fw_id_1 = r1.json()["framework_id"]
+
+    # Second import of the same file (same URN) should re-import, not duplicate
+    files2 = {"file": (filename, io.BytesIO(raw), "application/x-yaml")}
+    r2 = await client.post("/api/v1/frameworks/import/yaml", files=files2)
+    assert r2.status_code == 200
+    fw_id_2 = r2.json()["framework_id"]
+
+    assert fw_id_1 == fw_id_2, (
+        f"Re-import created a new framework (id {fw_id_2}) instead of updating "
+        f"the existing one (id {fw_id_1})"
+    )
+
+    # Verify the framework is still intact after re-import
+    r_detail = await client.get(f"/api/v1/frameworks/{fw_id_1}")
+    assert r_detail.status_code == 200
+    detail = r_detail.json()
+    assert detail["total_nodes"] >= 10
+    assert len(detail["dimensions"]) >= 1
+
+    # Verify tree still works
+    r_tree = await client.get(f"/api/v1/frameworks/{fw_id_1}/tree")
+    assert r_tree.status_code == 200
+    assert len(r_tree.json()) >= 1
+
+
+@pytest.mark.asyncio
+async def test_live_ciso_yaml_dimensions_and_nodes(client: AsyncClient):
+    """Download a real framework and verify its dimensions and node endpoints in detail.
+
+    Skips if GitHub is unreachable.
+    """
+    filename = "google-saif.yaml"
+    raw = await _download_yaml(filename)
+    if raw is None:
+        pytest.skip("GitHub is unreachable -- skipping dimensions/nodes detail test")
+
+    # Import
+    files = {"file": (filename, io.BytesIO(raw), "application/x-yaml")}
+    r_import = await client.post("/api/v1/frameworks/import/yaml", files=files)
+    assert r_import.status_code == 200
+    fw_id = r_import.json()["framework_id"]
+
+    # GET dimensions endpoint
+    r_dims = await client.get(f"/api/v1/frameworks/{fw_id}/dimensions")
+    assert r_dims.status_code == 200
+    dims = r_dims.json()
+    assert len(dims) >= 1
+    for dim in dims:
+        assert dim["dimension_key"], "Dimension missing key"
+        assert dim["name"], "Dimension missing name"
+        assert len(dim["levels"]) >= 2, f"Dimension '{dim['name']}' has fewer than 2 levels"
+        # Verify levels are ordered and have values
+        for level in dim["levels"]:
+            assert "value" in level, f"Level missing 'value' in dimension '{dim['name']}'"
+            assert "label" in level, f"Level missing 'label' in dimension '{dim['name']}'"
+
+    # GET assessable nodes
+    r_nodes = await client.get(f"/api/v1/frameworks/{fw_id}/nodes?assessable=true")
+    assert r_nodes.status_code == 200
+    nodes = r_nodes.json()
+    assert len(nodes) >= 1, "No assessable nodes found"
+    for node in nodes:
+        assert node["assessable"] is True
+        assert node["name"], f"Assessable node {node.get('ref_id', '?')} has no name"
+
+    # GET all nodes (assessable + non-assessable)
+    r_all_nodes = await client.get(f"/api/v1/frameworks/{fw_id}/nodes")
+    assert r_all_nodes.status_code == 200
+    all_nodes = r_all_nodes.json()
+    assert len(all_nodes) >= len(nodes), (
+        "Total nodes should be >= assessable nodes"
+    )

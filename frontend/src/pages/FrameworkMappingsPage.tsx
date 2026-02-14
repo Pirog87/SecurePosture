@@ -1303,9 +1303,13 @@ export default function FrameworkMappingsPage() {
     ])
       .then(([fm, fw, ms, st]) => {
         if (fm.status === "fulfilled") setMappings(fm.value);
+        else console.error("[Mappings] load mappings failed:", fm.reason);
         if (fw.status === "fulfilled") setFrameworks(fw.value.filter((f: any) => f.is_active !== false));
+        else console.error("[Mappings] load frameworks failed:", fw.reason);
         if (ms.status === "fulfilled") setSets(ms.value);
+        else console.error("[Mappings] load sets failed:", ms.reason);
         if (st.status === "fulfilled") setStats(st.value);
+        else console.error("[Mappings] load stats failed:", st.reason);
       })
       .finally(() => setLoading(false));
   };

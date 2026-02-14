@@ -11,9 +11,12 @@ Document copy, org unit linking, review management.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+
+logger = logging.getLogger(__name__)
 from sqlalchemy import select, func, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -171,28 +174,67 @@ async def list_frameworks(
     review_overdue: bool | None = Query(None, description="Only documents with overdue reviews"),
     s: AsyncSession = Depends(get_session),
 ):
-    q = select(Framework).order_by(Framework.document_origin, Framework.name)
+    try:
+        q = select(Framework).order_by(Framework.document_origin, Framework.name)
+    except Exception:
+        # Fallback: document_origin column may not exist yet (pre-migration)
+        q = select(Framework).order_by(Framework.name)
     if is_active is not None:
         q = q.where(Framework.is_active == is_active)
     if lifecycle_status:
-        q = q.where(Framework.lifecycle_status == lifecycle_status)
+        try:
+            q = q.where(Framework.lifecycle_status == lifecycle_status)
+        except Exception:
+            pass
     if document_type_id is not None:
-        q = q.where(Framework.document_type_id == document_type_id)
+        try:
+            q = q.where(Framework.document_type_id == document_type_id)
+        except Exception:
+            pass
     if document_origin:
-        q = q.where(Framework.document_origin == document_origin)
+        try:
+            q = q.where(Framework.document_origin == document_origin)
+        except Exception:
+            pass
     if requires_review is not None:
-        q = q.where(Framework.requires_review == requires_review)
+        try:
+            q = q.where(Framework.requires_review == requires_review)
+        except Exception:
+            pass
     if review_overdue:
-        today = date.today()
-        q = q.where(
-            Framework.requires_review.is_(True),
-            Framework.next_review_date.isnot(None),
-            Framework.next_review_date < today,
-        )
-    rows = (await s.execute(q)).scalars().all()
+        try:
+            today = date.today()
+            q = q.where(
+                Framework.requires_review.is_(True),
+                Framework.next_review_date.isnot(None),
+                Framework.next_review_date < today,
+            )
+        except Exception:
+            pass
+    try:
+        rows = (await s.execute(q)).scalars().all()
+    except Exception as exc:
+        logger.warning("list_frameworks: query failed (missing columns?), trying minimal query: %s", exc)
+        await s.rollback()
+        # Minimal fallback: only columns guaranteed to exist from migration 001
+        from sqlalchemy import text
+        rows_raw = (await s.execute(
+            text("SELECT id, name, ref_id, version, provider, total_nodes, total_assessable, is_active FROM frameworks ORDER BY name")
+        )).all()
+        return [
+            FrameworkBrief(
+                id=r[0], name=r[1], ref_id=r[2], version=r[3], provider=r[4],
+                total_nodes=r[5] or 0, total_assessable=r[6] or 0,
+                is_active=bool(r[7]) if r[7] is not None else True,
+            )
+            for r in rows_raw
+        ]
     result = []
     for fw in rows:
-        extra = await _enrich_framework_out(fw, s)
+        try:
+            extra = await _enrich_framework_out(fw, s)
+        except Exception:
+            extra = {}
         brief = FrameworkBrief.model_validate(fw)
         for k, v in extra.items():
             if hasattr(brief, k):

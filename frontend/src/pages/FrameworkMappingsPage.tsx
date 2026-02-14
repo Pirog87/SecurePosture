@@ -6,6 +6,7 @@ import { useColumnVisibility } from "../hooks/useColumnVisibility";
 import { useTableFeatures } from "../hooks/useTableFeatures";
 import DataTable from "../components/DataTable";
 import Modal from "../components/Modal";
+import { CISO_MAPPING_FILES } from "../data/cisoCatalog";
 
 /* ─── Types ─── */
 interface Framework {
@@ -278,6 +279,120 @@ interface ImportResult {
   errors: string[];
 }
 
+/* ─── Searchable Mapping File Selector ─── */
+function MappingFileSelector({ value, onChange }: { value: string; onChange: (filename: string) => void }) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return CISO_MAPPING_FILES;
+    const q = search.toLowerCase();
+    return CISO_MAPPING_FILES.filter(f =>
+      f.source.toLowerCase().includes(q) ||
+      f.target.toLowerCase().includes(q) ||
+      f.filename.toLowerCase().includes(q)
+    );
+  }, [search]);
+
+  const selected = CISO_MAPPING_FILES.find(f => f.filename === value);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      {/* Selected value / trigger */}
+      <div
+        onClick={() => setOpen(!open)}
+        style={{
+          padding: "8px 12px", borderRadius: 6, border: "1px solid var(--border)",
+          background: "var(--bg-primary)", cursor: "pointer", fontSize: 13,
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}
+      >
+        {selected ? (
+          <span>
+            <span style={{ fontWeight: 600 }}>{selected.source}</span>
+            <span style={{ margin: "0 6px", color: "var(--text-muted)" }}>{selected.direction === "and" ? "\u2194" : "\u2192"}</span>
+            <span style={{ fontWeight: 600 }}>{selected.target}</span>
+          </span>
+        ) : (
+          <span style={{ color: "var(--text-muted)" }}>Wybierz plik mapowania...</span>
+        )}
+        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{open ? "\u25B2" : "\u25BC"}</span>
+      </div>
+
+      {/* Dropdown */}
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 100,
+          background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 8,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.15)", maxHeight: 320, display: "flex", flexDirection: "column",
+        }}>
+          {/* Search input */}
+          <div style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>
+            <input
+              autoFocus
+              type="text"
+              className="form-control"
+              placeholder="Szukaj framework..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              style={{ fontSize: 12 }}
+            />
+          </div>
+          {/* Results */}
+          <div style={{ overflowY: "auto", maxHeight: 260 }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
+                Brak wyników dla "{search}"
+              </div>
+            ) : (
+              filtered.map(f => (
+                <div
+                  key={f.filename}
+                  onClick={() => { onChange(f.filename); setOpen(false); setSearch(""); }}
+                  style={{
+                    padding: "8px 12px", cursor: "pointer", fontSize: 12, borderBottom: "1px solid var(--border)",
+                    background: f.filename === value ? "var(--blue-dim, rgba(99,102,241,0.08))" : "transparent",
+                    transition: "background 0.1s",
+                  }}
+                  onMouseEnter={e => { if (f.filename !== value) (e.currentTarget.style.background = "var(--bg-secondary)"); }}
+                  onMouseLeave={e => { if (f.filename !== value) (e.currentTarget.style.background = "transparent"); }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{f.source}</span>
+                    <span style={{
+                      padding: "1px 6px", borderRadius: 4, fontSize: 10,
+                      background: f.direction === "and" ? "#6366f118" : "#10b98118",
+                      color: f.direction === "and" ? "#6366f1" : "#10b981",
+                      fontWeight: 600,
+                    }}>
+                      {f.direction === "and" ? "\u2194" : "\u2192"}
+                    </span>
+                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{f.target}</span>
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{f.filename}</div>
+                </div>
+              ))
+            )}
+          </div>
+          <div style={{ padding: "6px 12px", borderTop: "1px solid var(--border)", fontSize: 10, color: "var(--text-muted)", textAlign: "center" }}>
+            {filtered.length} / {CISO_MAPPING_FILES.length} plik{filtered.length === 1 ? "" : "ów"}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MappingSetsTab({ sets, frameworks, onRefresh }: {
   sets: MappingSet[];
   frameworks: Framework[];
@@ -295,6 +410,7 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({ source_framework_id: 0, target_framework_id: 0, name: "" });
+  const [setsSearch, setSetsSearch] = useState("");
 
   const handleCreate = async () => {
     if (!form.source_framework_id || !form.target_framework_id) return;
@@ -350,31 +466,35 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
     setImportMode("file");
   };
 
-  const GITHUB_MAPPING_FILES = [
-    "mapping-nist-sp-800-53-rev5-to-iso27001-2022.yaml",
-    "mapping-nist-csf-2.0-to-iso27001-2022.yaml",
-    "mapping-cis-controls-v8-and-iso27001-2022.yaml",
-    "mapping-iso27001-2013-to-iso27001-2022.yaml",
-    "mapping-iso27001-2022-to-secnumcloud-3.2.yaml",
-    "mapping-soc2-2017-rev-2022-to-iso27001-2022.yaml",
-    "mapping-ccb-cff-2023-03-01-to-iso27001-2022.yaml",
-    "mapping-iso27001-2022-and-scf-2025.2.2.yaml",
-    "mapping-nist-csf-2.0-and-scf-2025.2.2.yaml",
-    "mapping-pcidss-4_0-and-scf-2025.2.2.yaml",
-    "mapping-nist-sp-800-66-rev2-to-nist-csf-2.0.yaml",
-    "mapping-nist-sp-800-66-rev2-to-nist-sp-800-53-rev5.yaml",
-  ];
+  /* Filtered mapping sets */
+  const filteredSets = useMemo(() => {
+    if (!setsSearch.trim()) return sets;
+    const q = setsSearch.toLowerCase();
+    return sets.filter(s =>
+      (s.name || "").toLowerCase().includes(q) ||
+      (s.source_framework_name || "").toLowerCase().includes(q) ||
+      (s.target_framework_name || "").toLowerCase().includes(q)
+    );
+  }, [sets, setsSearch]);
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <div>
           <h3 style={{ margin: 0, fontSize: 16 }}>Zestawy Mapowań</h3>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
             Grupuj mapowania między parami frameworków (wzorzec CISO Assistant)
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="text"
+            className="form-control"
+            placeholder="Szukaj zestawów..."
+            value={setsSearch}
+            onChange={e => setSetsSearch(e.target.value)}
+            style={{ width: 200, fontSize: 12, padding: "6px 10px" }}
+          />
           <button className="btn" onClick={() => { resetImport(); setShowImport(true); }}
             style={{ display: "flex", alignItems: "center", gap: 6 }}>
             Import YAML
@@ -383,13 +503,22 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
         </div>
       </div>
 
-      {sets.length === 0 ? (
+      {/* Search result info */}
+      {setsSearch.trim() && (
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
+          Znaleziono: {filteredSets.length} z {sets.length} zestawów
+        </div>
+      )}
+
+      {filteredSets.length === 0 ? (
         <div className="card" style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
-          Brak zestawów mapowań. Utwórz zestaw, aby grupować mapowania między frameworkami.
+          {setsSearch.trim()
+            ? `Brak zestawów pasujących do "${setsSearch}"`
+            : "Brak zestawów mapowań. Utwórz zestaw, aby grupować mapowania między frameworkami."}
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 12 }}>
-          {sets.map(s => (
+          {filteredSets.map(s => (
             <div key={s.id} className="card" style={{ padding: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{s.name || `Set #${s.id}`}</div>
@@ -515,23 +644,13 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
             </div>
           )}
 
-          {/* GitHub path */}
+          {/* GitHub path — searchable selector */}
           {importMode === "github" && (
             <div>
-              <label style={{ fontSize: 13 }}>Plik mapowania z repozytorium CISO Assistant
-                <select
-                  className="form-control"
-                  value={githubPath}
-                  onChange={e => setGithubPath(e.target.value)}
-                  style={{ marginTop: 4 }}
-                >
-                  {GITHUB_MAPPING_FILES.map(f => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
-              </label>
+              <div style={{ fontSize: 13, marginBottom: 6 }}>Plik mapowania z repozytorium CISO Assistant</div>
+              <MappingFileSelector value={githubPath} onChange={setGithubPath} />
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-                intuitem/ciso-assistant-community/backend/library/libraries/
+                {CISO_MAPPING_FILES.length} plików mapowań w katalogu CISO Assistant Community
               </div>
             </div>
           )}
@@ -1267,7 +1386,7 @@ export default function FrameworkMappingsPage() {
   const [frameworks, setFrameworks] = useState<Framework[]>([]);
   const [stats, setStats] = useState<MappingStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [fwError, setFwError] = useState<string | null>(null);
+  const [_fwError, setFwError] = useState<string | null>(null);
   const [selected, setSelected] = useState<FrameworkMapping | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -1395,21 +1514,11 @@ export default function FrameworkMappingsPage() {
 
   return (
     <div style={{ padding: "0 0 32px" }}>
-      {fwError && (
-        <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: "#7f1d1d", color: "#fca5a5", fontSize: 12 }}>
-          <strong>Błąd ładowania frameworków:</strong> {fwError}
-        </div>
-      )}
-      {!loading && frameworks.length === 0 && !fwError && (
-        <div style={{ padding: "10px 14px", marginBottom: 12, borderRadius: 8, background: "#78350f", color: "#fde68a", fontSize: 12 }}>
-          Brak frameworków do wyświetlenia. Sprawdź czy endpoint <code>/api/v1/frameworks</code> zwraca dane.
-        </div>
-      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
           <h2 style={{ margin: 0 }}>Mapowania Frameworków</h2>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
-            Mapowanie teoriomnogościowe wymagań (model CISO Assistant) — Frameworków: {frameworks.length}
+            Mapowanie teoriomnogościowe wymagań (model CISO Assistant)
           </p>
         </div>
         {stats && (

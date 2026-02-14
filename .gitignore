@@ -24,5 +24,8 @@ Thumbs.db
 # SQLite
 *.db
 
+# Logs
+*.log
+
 # Node (frontend)
 node_modules/

@@ -36,6 +36,8 @@ from .framework import (
     DimensionLevel,
     Assessment,
     AssessmentAnswer,
+    FrameworkOrgUnit,
+    FrameworkReview,
 )
 from .control_effectiveness import ControlImplementation, ControlEffectivenessTest
 from .compliance import (
@@ -96,6 +98,7 @@ __all__ = [
     "FrameworkVersionHistory",
     "AssessmentDimension", "DimensionLevel",
     "Assessment", "AssessmentAnswer",
+    "FrameworkOrgUnit", "FrameworkReview",
     "ThreatCatalog", "WeaknessCatalog", "ControlCatalog",
     "ThreatAssetCategory", "WeaknessAssetCategory", "ControlAssetCategory",
     "ThreatWeaknessLink", "ThreatControlLink", "WeaknessControlLink",

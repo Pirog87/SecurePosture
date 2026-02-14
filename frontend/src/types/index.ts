@@ -753,6 +753,16 @@ export interface FrameworkBrief {
   published_version: string | null;
   is_active: boolean;
   source_format: string | null;
+  document_type_id: number | null;
+  document_type_name: string | null;
+  document_origin: string;
+  owner: string | null;
+  requires_review: boolean;
+  next_review_date: string | null;
+  major_version: number;
+  minor_version: number;
+  display_version: string | null;
+  updates_document_id: number | null;
 }
 
 export interface DimensionLevel {
@@ -801,6 +811,22 @@ export interface FrameworkDetail {
   created_at: string;
   updated_at: string;
   dimensions: Dimension[];
+  document_type_id: number | null;
+  document_type_name: string | null;
+  document_origin: string;
+  owner: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  requires_review: boolean;
+  review_frequency_months: number;
+  next_review_date: string | null;
+  last_reviewed_at: string | null;
+  reviewed_by: string | null;
+  major_version: number;
+  minor_version: number;
+  display_version: string | null;
+  updates_document_id: number | null;
+  updates_document_name: string | null;
 }
 
 export interface FrameworkVersionHistory {
@@ -834,7 +860,32 @@ export interface FrameworkNodeTree {
   maturity_level: number | null;
   annotation: string | null;
   typical_evidence: string | null;
+  point_type_id: number | null;
   children: FrameworkNodeTree[];
+}
+
+export interface FrameworkOrgUnitLink {
+  id: number;
+  framework_id: number;
+  org_unit_id: number;
+  org_unit_name: string | null;
+  compliance_status: string;
+  last_assessed_at: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface FrameworkReviewRecord {
+  id: number;
+  framework_id: number;
+  reviewer: string | null;
+  review_date: string;
+  review_type: string;
+  findings: string | null;
+  recommendations: string | null;
+  status: string;
+  next_review_date: string | null;
+  created_at: string;
 }
 
 export interface FrameworkImportResult {

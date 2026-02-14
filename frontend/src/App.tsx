@@ -83,7 +83,7 @@ export default function App() {
 
           <Route path="vulnerabilities" element={<VulnerabilitiesPage />} />
           <Route path="incidents" element={<IncidentsPage />} />
-          <Route path="policies" element={<PoliciesPage />} />
+          <Route path="policies" element={<Navigate to="/frameworks?origin=internal&type=polityka_wewnetrzna" replace />} />
           <Route path="exceptions" element={<ExceptionsPage />} />
           <Route path="audits" element={<AuditsPage />} />
           <Route path="vendors" element={<VendorsPage />} />

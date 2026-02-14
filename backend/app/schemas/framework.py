@@ -1,4 +1,7 @@
-"""Pydantic schemas for the Framework Engine."""
+"""Pydantic schemas for the Requirements Repository (Repozytorium Wymagań).
+
+Formerly Framework Engine schemas — extended to support all reference document types.
+"""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -54,6 +57,7 @@ class FrameworkNodeOut(BaseModel):
     depth: int = 1
     order_id: int = 0
     assessable: bool = False
+    point_type_id: int | None = None
     implementation_groups: str | None = None
     weight: int = 1
     importance: str | None = None
@@ -76,6 +80,7 @@ class FrameworkNodeBrief(BaseModel):
     name_pl: str | None = None
     depth: int
     assessable: bool
+    point_type_id: int | None = None
     implementation_groups: str | None = None
     model_config = {"from_attributes": True}
 
@@ -89,6 +94,7 @@ class FrameworkNodeCreate(BaseModel):
     description: str | None = None
     description_pl: str | None = None
     assessable: bool = False
+    point_type_id: int | None = None
     implementation_groups: str | None = None
     weight: int = 1
     importance: str | None = None
@@ -104,6 +110,7 @@ class FrameworkNodeUpdate(BaseModel):
     description: str | None = None
     description_pl: str | None = None
     assessable: bool | None = None
+    point_type_id: int | None = None
     implementation_groups: str | None = None
     weight: int | None = None
     importance: str | None = None
@@ -116,10 +123,11 @@ class FrameworkNodeMoveRequest(BaseModel):
     """Reorder or move a node."""
     parent_id: int | None = None
     after_node_id: int | None = Field(None, description="Place after this sibling node")
+    new_order_id: int | None = Field(None, description="New order_id value")
 
 
 # ─────────────────────────────────────────────
-# Frameworks
+# Frameworks / Reference Documents
 # ─────────────────────────────────────────────
 
 class FrameworkOut(BaseModel):
@@ -138,6 +146,24 @@ class FrameworkOut(BaseModel):
     total_assessable: int = 0
     imported_at: datetime | None = None
     imported_by: str | None = None
+    # Document Repository fields
+    document_type_id: int | None = None
+    document_type_name: str | None = None
+    document_origin: str = "external"
+    owner: str | None = None
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    requires_review: bool = False
+    review_frequency_months: int = 12
+    next_review_date: date | None = None
+    last_reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+    major_version: int = 1
+    minor_version: int = 0
+    display_version: str | None = None
+    updates_document_id: int | None = None
+    updates_document_name: str | None = None
+    # Lifecycle
     lifecycle_status: str = "draft"
     edit_version: int = 1
     published_version: str | None = None
@@ -164,21 +190,39 @@ class FrameworkBrief(BaseModel):
     published_version: str | None = None
     is_active: bool = True
     source_format: str | None = None
+    # Document Repository fields
+    document_type_id: int | None = None
+    document_type_name: str | None = None
+    document_origin: str = "external"
+    owner: str | None = None
+    requires_review: bool = False
+    next_review_date: date | None = None
+    major_version: int = 1
+    minor_version: int = 0
+    display_version: str | None = None
+    updates_document_id: int | None = None
     model_config = {"from_attributes": True}
 
 
 class FrameworkCreate(BaseModel):
-    """Create a new framework manually from scratch."""
+    """Create a new reference document manually."""
     name: str = Field(..., min_length=1, max_length=500)
     ref_id: str | None = Field(None, max_length=100)
     description: str | None = None
     version: str | None = Field(None, max_length=50)
     provider: str | None = Field(None, max_length=200)
     locale: str = "pl"
+    # Document Repository fields
+    document_type_id: int | None = None
+    document_origin: str = "external"
+    owner: str | None = Field(None, max_length=200)
+    requires_review: bool = False
+    review_frequency_months: int = 12
+    updates_document_id: int | None = None
 
 
 class FrameworkUpdate(BaseModel):
-    """Update framework metadata."""
+    """Update framework/document metadata."""
     name: str | None = Field(None, min_length=1, max_length=500)
     ref_id: str | None = Field(None, max_length=100)
     description: str | None = None
@@ -187,12 +231,22 @@ class FrameworkUpdate(BaseModel):
     locale: str | None = None
     published_version: str | None = Field(None, max_length=100)
     change_summary: str | None = Field(None, description="Opis zmian do historii wersji")
+    # Document Repository fields
+    document_type_id: int | None = None
+    document_origin: str | None = None
+    owner: str | None = Field(None, max_length=200)
+    requires_review: bool | None = None
+    review_frequency_months: int | None = None
 
 
 class LifecycleChangeRequest(BaseModel):
     """Change framework lifecycle status."""
     status: str = Field(..., description="Nowy status: draft, review, published, deprecated, archived")
     change_summary: str | None = None
+    keep_existing_assessments: bool | None = Field(
+        None,
+        description="When approving a new version: True = keep existing assessments, False = require re-assessment",
+    )
 
 
 class FrameworkImportResult(BaseModel):
@@ -202,6 +256,22 @@ class FrameworkImportResult(BaseModel):
     total_nodes: int
     total_assessable: int
     dimensions_created: int
+
+
+class FrameworkImportAdoptionRequest(BaseModel):
+    """Adoption form during import — allows setting attributes before final import."""
+    name: str | None = None
+    ref_id: str | None = None
+    description: str | None = None
+    document_type_id: int | None = None
+    document_origin: str = "external"
+    owner: str | None = None
+    requires_review: bool = False
+    review_frequency_months: int = 12
+    updates_document_id: int | None = Field(
+        None,
+        description="If set, marks this as an update proposal for the specified document",
+    )
 
 
 # ─────────────────────────────────────────────
@@ -241,6 +311,70 @@ class AreaMappingBulkCreate(BaseModel):
     framework_node_ids: list[int]
     security_area_id: int
     source: str = "manual"
+
+
+# ─────────────────────────────────────────────
+# Org Unit linking (document ↔ org unit)
+# ─────────────────────────────────────────────
+
+class FrameworkOrgUnitOut(BaseModel):
+    id: int
+    framework_id: int
+    org_unit_id: int
+    org_unit_name: str | None = None
+    compliance_status: str = "not_assessed"
+    last_assessed_at: datetime | None = None
+    notes: str | None = None
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class FrameworkOrgUnitCreate(BaseModel):
+    org_unit_ids: list[int] = Field(..., min_length=1, description="IDs of org units to link")
+    notes: str | None = None
+
+
+class FrameworkOrgUnitUpdate(BaseModel):
+    compliance_status: str | None = None
+    notes: str | None = None
+
+
+# ─────────────────────────────────────────────
+# Document reviews
+# ─────────────────────────────────────────────
+
+class FrameworkReviewOut(BaseModel):
+    id: int
+    framework_id: int
+    reviewer: str | None = None
+    review_date: datetime
+    review_type: str = "periodic"
+    findings: str | None = None
+    recommendations: str | None = None
+    status: str = "completed"
+    next_review_date: date | None = None
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class FrameworkReviewCreate(BaseModel):
+    reviewer: str | None = Field(None, max_length=200)
+    review_type: str = "periodic"
+    findings: str | None = None
+    recommendations: str | None = None
+    status: str = "completed"
+    next_review_date: date | None = None
+
+
+# ─────────────────────────────────────────────
+# Document copy
+# ─────────────────────────────────────────────
+
+class FrameworkCopyRequest(BaseModel):
+    """Copy a document with all its relations."""
+    name: str | None = Field(None, description="New name (default: 'Copy of {original}')")
+    copy_org_unit_links: bool = True
+    copy_assessments: bool = False
 
 
 # ─────────────────────────────────────────────

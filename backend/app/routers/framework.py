@@ -1,36 +1,67 @@
 """
-Framework Engine -- /api/v1/frameworks
+Requirements Repository (Repozytorium Wymagań) -- /api/v1/frameworks
 
-CRUD for frameworks, nodes, area mappings, dimensions.
-Import from Excel/YAML/GitHub.
+Universal reference document management: frameworks, standards, regulations,
+internal policies, procedures, etc.
+
+CRUD for documents, nodes, area mappings, dimensions.
+Import from Excel/YAML/GitHub with adoption form.
 Manual creation, editing with versioning, lifecycle statuses.
+Document copy, org unit linking, review management.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_session
+from app.models.dictionary import DictionaryEntry
 from app.models.framework import (
     AssessmentDimension, DimensionLevel, Framework, FrameworkNode,
-    FrameworkNodeSecurityArea, FrameworkVersionHistory, LIFECYCLE_STATUSES,
+    FrameworkNodeSecurityArea, FrameworkVersionHistory, FrameworkOrgUnit,
+    FrameworkReview, LIFECYCLE_STATUSES,
 )
+from app.models.org_unit import OrgUnit
 from app.models.security_area import SecurityDomain
 from app.schemas.framework import (
     AreaMappingBulkCreate, AreaMappingOut, AutoMapResult,
     DimensionOut, DimensionsUpdate,
-    FrameworkBrief, FrameworkCreate, FrameworkImportResult, FrameworkMetrics,
+    FrameworkBrief, FrameworkCreate, FrameworkCopyRequest, FrameworkImportResult,
+    FrameworkImportAdoptionRequest, FrameworkMetrics,
     FrameworkMetricUnit, FrameworkNodeBrief, FrameworkNodeCreate,
     FrameworkNodeOut, FrameworkNodeTreeOut, FrameworkNodeUpdate, FrameworkOut,
+    FrameworkOrgUnitCreate, FrameworkOrgUnitOut, FrameworkOrgUnitUpdate,
+    FrameworkReviewCreate, FrameworkReviewOut,
     FrameworkUpdate, FrameworkVersionOut, LifecycleChangeRequest,
 )
 from app.services.framework_import import import_from_excel, import_from_yaml
 
-router = APIRouter(prefix="/api/v1/frameworks", tags=["Frameworks"])
+router = APIRouter(prefix="/api/v1/frameworks", tags=["Repozytorium Wymagań"])
+
+
+# ===================================================
+# HELPERS -- resolve document_type_name for output
+# ===================================================
+
+async def _enrich_framework_out(fw: Framework, s: AsyncSession) -> dict:
+    """Add computed fields for FrameworkOut / FrameworkBrief."""
+    extra: dict = {}
+    if fw.document_type_id:
+        dt = await s.get(DictionaryEntry, fw.document_type_id)
+        extra["document_type_name"] = dt.label if dt else None
+    else:
+        extra["document_type_name"] = None
+    extra["display_version"] = fw.display_version
+    if fw.updates_document_id:
+        upd = await s.get(Framework, fw.updates_document_id)
+        extra["updates_document_name"] = upd.name if upd else None
+    else:
+        extra["updates_document_name"] = None
+    return extra
 
 
 # ===================================================
@@ -110,27 +141,52 @@ async def get_metrics(
 # FRAMEWORKS -- CRUD
 # ===================================================
 
-@router.get("", response_model=list[FrameworkBrief], summary="Lista frameworkow")
+@router.get("", response_model=list[FrameworkBrief], summary="Lista dokumentów referencyjnych")
 async def list_frameworks(
     is_active: bool | None = Query(None),
     lifecycle_status: str | None = Query(None),
+    document_type_id: int | None = Query(None, description="Filter by document type"),
+    document_origin: str | None = Query(None, description="Filter: internal / external"),
+    requires_review: bool | None = Query(None),
+    review_overdue: bool | None = Query(None, description="Only documents with overdue reviews"),
     s: AsyncSession = Depends(get_session),
 ):
-    q = select(Framework).order_by(Framework.name)
+    q = select(Framework).order_by(Framework.document_origin, Framework.name)
     if is_active is not None:
         q = q.where(Framework.is_active == is_active)
     if lifecycle_status:
         q = q.where(Framework.lifecycle_status == lifecycle_status)
+    if document_type_id is not None:
+        q = q.where(Framework.document_type_id == document_type_id)
+    if document_origin:
+        q = q.where(Framework.document_origin == document_origin)
+    if requires_review is not None:
+        q = q.where(Framework.requires_review == requires_review)
+    if review_overdue:
+        today = date.today()
+        q = q.where(
+            Framework.requires_review.is_(True),
+            Framework.next_review_date.isnot(None),
+            Framework.next_review_date < today,
+        )
     rows = (await s.execute(q)).scalars().all()
-    return [FrameworkBrief.model_validate(fw) for fw in rows]
+    result = []
+    for fw in rows:
+        extra = await _enrich_framework_out(fw, s)
+        brief = FrameworkBrief.model_validate(fw)
+        for k, v in extra.items():
+            if hasattr(brief, k):
+                setattr(brief, k, v)
+        result.append(brief)
+    return result
 
 
-@router.post("", response_model=FrameworkOut, summary="Nowy framework (reczny)")
+@router.post("", response_model=FrameworkOut, summary="Nowy dokument referencyjny (ręczny)")
 async def create_framework(
     body: FrameworkCreate,
     s: AsyncSession = Depends(get_session),
 ):
-    """Create a new empty framework manually from scratch."""
+    """Create a new empty reference document manually from scratch."""
     from app.services.framework_import import _create_default_dimensions
 
     fw = Framework(
@@ -145,6 +201,13 @@ async def create_framework(
         edit_version=1,
         imported_at=datetime.utcnow(),
         imported_by="manual",
+        # Document Repository fields
+        document_type_id=body.document_type_id,
+        document_origin=body.document_origin,
+        owner=body.owner,
+        requires_review=body.requires_review,
+        review_frequency_months=body.review_frequency_months,
+        updates_document_id=body.updates_document_id,
     )
     s.add(fw)
     await s.flush()
@@ -157,42 +220,51 @@ async def create_framework(
         framework_id=fw.id,
         edit_version=1,
         lifecycle_status="draft",
-        change_summary="Utworzenie frameworka",
+        change_summary="Utworzenie dokumentu referencyjnego",
         changed_by="admin",
         snapshot_nodes_count=0,
         snapshot_assessable_count=0,
     ))
 
     await s.commit()
-    await s.refresh(fw, attribute_names=["dimensions"])
 
     # Reload with dimensions
     fw = await s.get(
         Framework, fw.id,
         options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
     )
-    return FrameworkOut.model_validate(fw)
+    extra = await _enrich_framework_out(fw, s)
+    out = FrameworkOut.model_validate(fw)
+    for k, v in extra.items():
+        if hasattr(out, k):
+            setattr(out, k, v)
+    return out
 
 
-@router.get("/{fw_id}", response_model=FrameworkOut, summary="Szczegoly frameworka")
+@router.get("/{fw_id}", response_model=FrameworkOut, summary="Szczegóły dokumentu referencyjnego")
 async def get_framework(fw_id: int, s: AsyncSession = Depends(get_session)):
     fw = await s.get(
         Framework, fw_id,
         options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
     )
     if not fw:
-        raise HTTPException(404, "Framework nie istnieje")
-    return FrameworkOut.model_validate(fw)
+        raise HTTPException(404, "Dokument nie istnieje")
+    extra = await _enrich_framework_out(fw, s)
+    out = FrameworkOut.model_validate(fw)
+    for k, v in extra.items():
+        if hasattr(out, k):
+            setattr(out, k, v)
+    return out
 
 
-@router.put("/{fw_id}", response_model=FrameworkOut, summary="Edycja metadanych frameworka")
+@router.put("/{fw_id}", response_model=FrameworkOut, summary="Edycja metadanych dokumentu")
 async def update_framework(
     fw_id: int, body: FrameworkUpdate, s: AsyncSession = Depends(get_session),
 ):
-    """Update framework metadata and bump edit version."""
+    """Update document metadata and bump edit version."""
     fw = await s.get(Framework, fw_id)
     if not fw:
-        raise HTTPException(404, "Framework nie istnieje")
+        raise HTTPException(404, "Dokument nie istnieje")
 
     # Update provided fields
     if body.name is not None:
@@ -209,9 +281,21 @@ async def update_framework(
         fw.locale = body.locale
     if body.published_version is not None:
         fw.published_version = body.published_version
+    # Document Repository fields
+    if body.document_type_id is not None:
+        fw.document_type_id = body.document_type_id
+    if body.document_origin is not None:
+        fw.document_origin = body.document_origin
+    if body.owner is not None:
+        fw.owner = body.owner
+    if body.requires_review is not None:
+        fw.requires_review = body.requires_review
+    if body.review_frequency_months is not None:
+        fw.review_frequency_months = body.review_frequency_months
 
     # Bump version
     fw.edit_version += 1
+    fw.minor_version += 1
     fw.last_edited_by = "admin"
     fw.last_edited_at = datetime.utcnow()
 
@@ -232,46 +316,68 @@ async def update_framework(
         Framework, fw_id,
         options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
     )
-    return FrameworkOut.model_validate(fw)
+    extra = await _enrich_framework_out(fw, s)
+    out = FrameworkOut.model_validate(fw)
+    for k, v in extra.items():
+        if hasattr(out, k):
+            setattr(out, k, v)
+    return out
 
 
-@router.delete("/{fw_id}", summary="Usun framework")
+@router.delete("/{fw_id}", summary="Usuń / archiwizuj dokument")
 async def delete_framework(fw_id: int, s: AsyncSession = Depends(get_session)):
-    """Delete a framework.
+    """Delete or archive a reference document.
 
-    Published frameworks are soft-deleted (archived).
-    Non-published frameworks (draft, review, deprecated, archived) are hard-deleted.
+    Draft/review documents: hard-deleted (any assessments also cleaned up).
+    Published/deprecated documents: soft-deleted (archived) — only specific roles.
+    Archived documents: permanently removed.
     """
     from sqlalchemy import delete as sa_delete
-    from app.models.framework import Assessment
+    from app.models.framework import Assessment, AssessmentAnswer
 
     fw = await s.get(Framework, fw_id)
     if not fw:
-        raise HTTPException(404, "Framework nie istnieje")
-
-    # Check for active assessments
-    assessment_count = (await s.execute(
-        select(func.count(Assessment.id)).where(
-            Assessment.framework_id == fw_id,
-            Assessment.is_active.is_(True),
-        )
-    )).scalar() or 0
+        raise HTTPException(404, "Dokument nie istnieje")
 
     if fw.lifecycle_status == "published":
         # Published -> soft-delete (archive)
         fw.is_active = False
         fw.lifecycle_status = "archived"
+        fw.edit_version += 1
+        fw.last_edited_by = "admin"
+        fw.last_edited_at = datetime.utcnow()
+        s.add(FrameworkVersionHistory(
+            framework_id=fw.id,
+            edit_version=fw.edit_version,
+            lifecycle_status="archived",
+            change_summary="Archiwizacja dokumentu",
+            changed_by="admin",
+            snapshot_nodes_count=fw.total_nodes,
+            snapshot_assessable_count=fw.total_assessable,
+        ))
         await s.commit()
         return {"status": "archived", "id": fw_id}
 
-    if assessment_count > 0:
-        raise HTTPException(
-            409,
-            f"Framework ma {assessment_count} aktywnych ocen. "
-            "Usun lub zarchiwizuj oceny przed usunieciem frameworka.",
+    # Draft / review / deprecated / archived -> hard-delete
+    # First clean up assessments (deactivate them)
+    assessments = (await s.execute(
+        select(Assessment).where(Assessment.framework_id == fw_id)
+    )).scalars().all()
+    for a in assessments:
+        await s.execute(
+            sa_delete(AssessmentAnswer).where(AssessmentAnswer.assessment_id == a.id)
         )
+        await s.delete(a)
 
-    # Non-published -> hard-delete (cascade will handle nodes, dimensions, versions)
+    # Clean up org unit links
+    await s.execute(
+        sa_delete(FrameworkOrgUnit).where(FrameworkOrgUnit.framework_id == fw_id)
+    )
+    # Clean up reviews
+    await s.execute(
+        sa_delete(FrameworkReview).where(FrameworkReview.framework_id == fw_id)
+    )
+    # Clean up area mappings
     await s.execute(
         sa_delete(FrameworkNodeSecurityArea).where(
             FrameworkNodeSecurityArea.framework_node_id.in_(
@@ -330,6 +436,17 @@ async def change_lifecycle(
     elif old_status == "archived":
         fw.is_active = True
 
+    # When publishing (approving): bump major version, reset minor
+    if new_status == "published":
+        fw.major_version += 1
+        fw.minor_version = 0
+        fw.approved_by = "admin"
+        fw.approved_at = datetime.utcnow()
+        fw.published_version = fw.display_version
+        # Set next review date if reviews are required
+        if fw.requires_review:
+            fw.next_review_date = date.today() + timedelta(days=fw.review_frequency_months * 30)
+
     # Record version
     s.add(FrameworkVersionHistory(
         framework_id=fw.id,
@@ -347,7 +464,12 @@ async def change_lifecycle(
         Framework, fw_id,
         options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
     )
-    return FrameworkOut.model_validate(fw)
+    extra = await _enrich_framework_out(fw, s)
+    out = FrameworkOut.model_validate(fw)
+    for k, v in extra.items():
+        if hasattr(out, k):
+            setattr(out, k, v)
+    return out
 
 
 # ===================================================
@@ -388,6 +510,7 @@ async def get_framework_tree(fw_id: int, s: AsyncSession = Depends(get_session))
             urn=n.urn, ref_id=n.ref_id, name=n.name, name_pl=n.name_pl,
             description=n.description, description_pl=n.description_pl,
             depth=n.depth, order_id=n.order_id, assessable=n.assessable,
+            point_type_id=n.point_type_id,
             implementation_groups=n.implementation_groups, weight=n.weight,
             importance=n.importance, maturity_level=n.maturity_level,
             annotation=n.annotation, typical_evidence=n.typical_evidence,
@@ -466,6 +589,7 @@ async def create_node(
         depth=depth,
         order_id=max_order + 1,
         assessable=body.assessable,
+        point_type_id=body.point_type_id,
         implementation_groups=body.implementation_groups,
         weight=body.weight,
         importance=body.importance,
@@ -513,6 +637,8 @@ async def update_node(
         node.description_pl = body.description_pl
     if body.assessable is not None:
         node.assessable = body.assessable
+    if body.point_type_id is not None:
+        node.point_type_id = body.point_type_id
     if body.implementation_groups is not None:
         node.implementation_groups = body.implementation_groups
     if body.weight is not None:
@@ -953,11 +1079,366 @@ async def update_dimensions(
 
     await s.commit()
 
-    q = (
+    q_reload = (
         select(AssessmentDimension)
         .options(selectinload(AssessmentDimension.levels))
         .where(AssessmentDimension.framework_id == fw_id)
         .order_by(AssessmentDimension.order_id)
     )
-    dims = (await s.execute(q)).scalars().unique().all()
-    return [DimensionOut.model_validate(d) for d in dims]
+    updated_dims = (await s.execute(q_reload)).scalars().unique().all()
+    return [DimensionOut.model_validate(d) for d in updated_dims]
+
+
+# ===================================================
+# DOCUMENT COPY (with all relations)
+# ===================================================
+
+@router.post("/{fw_id}/copy", response_model=FrameworkOut, summary="Kopiuj dokument referencyjny")
+async def copy_framework(
+    fw_id: int, body: FrameworkCopyRequest, s: AsyncSession = Depends(get_session),
+):
+    """Copy a reference document with its complete structure and optionally org unit links."""
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Dokument nie istnieje")
+
+    new_fw = Framework(
+        name=body.name or f"Kopia: {fw.name}",
+        ref_id=fw.ref_id, description=fw.description,
+        version=fw.version, provider=fw.provider, packager=fw.packager,
+        copyright=fw.copyright, source_format=fw.source_format,
+        source_url=fw.source_url, locale=fw.locale,
+        implementation_groups_definition=fw.implementation_groups_definition,
+        document_type_id=fw.document_type_id, document_origin=fw.document_origin,
+        owner=fw.owner, requires_review=fw.requires_review,
+        review_frequency_months=fw.review_frequency_months,
+        lifecycle_status="draft", edit_version=1,
+        major_version=fw.major_version, minor_version=fw.minor_version + 1,
+        updates_document_id=fw.id,
+        imported_at=datetime.utcnow(), imported_by="copy",
+    )
+    s.add(new_fw)
+    await s.flush()
+
+    # Copy nodes
+    src_nodes = (await s.execute(
+        select(FrameworkNode)
+        .where(FrameworkNode.framework_id == fw_id, FrameworkNode.is_active.is_(True))
+        .order_by(FrameworkNode.order_id)
+    )).scalars().all()
+
+    id_map: dict[int, int] = {}
+    for n in src_nodes:
+        nn = FrameworkNode(
+            framework_id=new_fw.id, parent_id=None,
+            urn=n.urn, ref_id=n.ref_id, name=n.name, name_pl=n.name_pl,
+            description=n.description, description_pl=n.description_pl,
+            depth=n.depth, order_id=n.order_id, assessable=n.assessable,
+            point_type_id=n.point_type_id,
+            implementation_groups=n.implementation_groups, weight=n.weight,
+            importance=n.importance, maturity_level=n.maturity_level,
+            annotation=n.annotation, threats=n.threats,
+            reference_controls=n.reference_controls, typical_evidence=n.typical_evidence,
+        )
+        s.add(nn)
+        await s.flush()
+        id_map[n.id] = nn.id
+
+    for n in src_nodes:
+        if n.parent_id and n.parent_id in id_map:
+            await s.execute(
+                update(FrameworkNode).where(FrameworkNode.id == id_map[n.id])
+                .values(parent_id=id_map[n.parent_id])
+            )
+
+    # Copy dimensions
+    src_dims = (await s.execute(
+        select(AssessmentDimension).options(selectinload(AssessmentDimension.levels))
+        .where(AssessmentDimension.framework_id == fw_id)
+    )).scalars().unique().all()
+    for dm in src_dims:
+        nd = AssessmentDimension(
+            framework_id=new_fw.id, dimension_key=dm.dimension_key,
+            name=dm.name, name_pl=dm.name_pl, description=dm.description,
+            order_id=dm.order_id, weight=dm.weight,
+        )
+        s.add(nd)
+        await s.flush()
+        for lv in dm.levels:
+            s.add(DimensionLevel(
+                dimension_id=nd.id, level_order=lv.level_order,
+                value=lv.value, label=lv.label, label_pl=lv.label_pl,
+                description=lv.description, color=lv.color,
+            ))
+
+    # Copy area mappings
+    src_maps = (await s.execute(
+        select(FrameworkNodeSecurityArea).where(
+            FrameworkNodeSecurityArea.framework_node_id.in_([n.id for n in src_nodes])
+        )
+    )).scalars().all()
+    for m in src_maps:
+        if m.framework_node_id in id_map:
+            s.add(FrameworkNodeSecurityArea(
+                framework_node_id=id_map[m.framework_node_id],
+                security_area_id=m.security_area_id,
+                source=m.source, created_by="copy",
+            ))
+
+    if body.copy_org_unit_links:
+        src_links = (await s.execute(
+            select(FrameworkOrgUnit).where(FrameworkOrgUnit.framework_id == fw_id)
+        )).scalars().all()
+        for lnk in src_links:
+            s.add(FrameworkOrgUnit(
+                framework_id=new_fw.id, org_unit_id=lnk.org_unit_id,
+                compliance_status=lnk.compliance_status, notes=lnk.notes,
+            ))
+
+    new_fw.total_nodes = len(src_nodes)
+    new_fw.total_assessable = sum(1 for n in src_nodes if n.assessable)
+    s.add(FrameworkVersionHistory(
+        framework_id=new_fw.id, edit_version=1, lifecycle_status="draft",
+        change_summary=f"Kopia dokumentu: {fw.name}", changed_by="admin",
+        snapshot_nodes_count=new_fw.total_nodes,
+        snapshot_assessable_count=new_fw.total_assessable,
+    ))
+    await s.commit()
+
+    new_fw = await s.get(
+        Framework, new_fw.id,
+        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
+    )
+    extra = await _enrich_framework_out(new_fw, s)
+    out = FrameworkOut.model_validate(new_fw)
+    for k, v in extra.items():
+        if hasattr(out, k):
+            setattr(out, k, v)
+    return out
+
+
+# ===================================================
+# ORG UNIT LINKING
+# ===================================================
+
+@router.get("/{fw_id}/org-units", response_model=list[FrameworkOrgUnitOut], summary="Powiązane jednostki")
+async def get_framework_org_units(fw_id: int, s: AsyncSession = Depends(get_session)):
+    q = (
+        select(FrameworkOrgUnit, OrgUnit.name.label("ou_name"))
+        .outerjoin(OrgUnit, FrameworkOrgUnit.org_unit_id == OrgUnit.id)
+        .where(FrameworkOrgUnit.framework_id == fw_id)
+        .order_by(OrgUnit.name)
+    )
+    rows = (await s.execute(q)).all()
+    return [
+        FrameworkOrgUnitOut(
+            id=link.id, framework_id=link.framework_id,
+            org_unit_id=link.org_unit_id, org_unit_name=ou_name,
+            compliance_status=link.compliance_status,
+            last_assessed_at=link.last_assessed_at,
+            notes=link.notes, created_at=link.created_at,
+        )
+        for link, ou_name in rows
+    ]
+
+
+@router.post("/{fw_id}/org-units", summary="Powiąż dokument z jednostkami")
+async def link_org_units(
+    fw_id: int, body: FrameworkOrgUnitCreate, s: AsyncSession = Depends(get_session),
+):
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Dokument nie istnieje")
+    created = 0
+    for ou_id in body.org_unit_ids:
+        existing = (await s.execute(
+            select(FrameworkOrgUnit).where(
+                FrameworkOrgUnit.framework_id == fw_id,
+                FrameworkOrgUnit.org_unit_id == ou_id,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            continue
+        s.add(FrameworkOrgUnit(framework_id=fw_id, org_unit_id=ou_id, notes=body.notes))
+        created += 1
+    await s.commit()
+    return {"status": "ok", "created": created}
+
+
+@router.put("/{fw_id}/org-units/{link_id}", response_model=FrameworkOrgUnitOut)
+async def update_org_unit_link(
+    fw_id: int, link_id: int, body: FrameworkOrgUnitUpdate, s: AsyncSession = Depends(get_session),
+):
+    link = await s.get(FrameworkOrgUnit, link_id)
+    if not link or link.framework_id != fw_id:
+        raise HTTPException(404, "Powiązanie nie istnieje")
+    if body.compliance_status is not None:
+        link.compliance_status = body.compliance_status
+        link.last_assessed_at = datetime.utcnow()
+    if body.notes is not None:
+        link.notes = body.notes
+    await s.commit()
+    await s.refresh(link)
+    ou = await s.get(OrgUnit, link.org_unit_id)
+    return FrameworkOrgUnitOut(
+        id=link.id, framework_id=link.framework_id,
+        org_unit_id=link.org_unit_id, org_unit_name=ou.name if ou else None,
+        compliance_status=link.compliance_status,
+        last_assessed_at=link.last_assessed_at,
+        notes=link.notes, created_at=link.created_at,
+    )
+
+
+@router.delete("/{fw_id}/org-units/{link_id}", summary="Usuń powiązanie")
+async def delete_org_unit_link(fw_id: int, link_id: int, s: AsyncSession = Depends(get_session)):
+    link = await s.get(FrameworkOrgUnit, link_id)
+    if not link or link.framework_id != fw_id:
+        raise HTTPException(404, "Powiązanie nie istnieje")
+    await s.delete(link)
+    await s.commit()
+    return {"status": "deleted"}
+
+
+# ===================================================
+# REVIEW MANAGEMENT
+# ===================================================
+
+@router.get("/{fw_id}/reviews", response_model=list[FrameworkReviewOut], summary="Historia przeglądów")
+async def get_framework_reviews(fw_id: int, s: AsyncSession = Depends(get_session)):
+    q = (
+        select(FrameworkReview).where(FrameworkReview.framework_id == fw_id)
+        .order_by(FrameworkReview.review_date.desc())
+    )
+    rows = (await s.execute(q)).scalars().all()
+    return [FrameworkReviewOut.model_validate(r) for r in rows]
+
+
+@router.post("/{fw_id}/reviews", response_model=FrameworkReviewOut, summary="Dodaj przegląd")
+async def create_review(
+    fw_id: int, body: FrameworkReviewCreate, s: AsyncSession = Depends(get_session),
+):
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Dokument nie istnieje")
+    review = FrameworkReview(
+        framework_id=fw_id, reviewer=body.reviewer, review_type=body.review_type,
+        findings=body.findings, recommendations=body.recommendations,
+        status=body.status, next_review_date=body.next_review_date,
+    )
+    s.add(review)
+    fw.last_reviewed_at = datetime.utcnow()
+    fw.reviewed_by = body.reviewer
+    if body.next_review_date:
+        fw.next_review_date = body.next_review_date
+    elif fw.requires_review:
+        fw.next_review_date = date.today() + timedelta(days=fw.review_frequency_months * 30)
+    await s.commit()
+    await s.refresh(review)
+    return FrameworkReviewOut.model_validate(review)
+
+
+# ===================================================
+# NODE REORDER (drag-and-drop support)
+# ===================================================
+
+@router.put("/{fw_id}/nodes/{node_id}/move", summary="Przenieś / zmień kolejność węzła")
+async def move_node(
+    fw_id: int, node_id: int,
+    new_parent_id: int | None = Query(None),
+    new_order_id: int | None = Query(None),
+    after_node_id: int | None = Query(None),
+    s: AsyncSession = Depends(get_session),
+):
+    """Move a node to a new parent or change its order (drag-and-drop)."""
+    node = await s.get(FrameworkNode, node_id)
+    if not node or node.framework_id != fw_id:
+        raise HTTPException(404, "Węzeł nie istnieje w tym dokumencie")
+    fw = await s.get(Framework, fw_id)
+
+    if new_parent_id is not None:
+        if new_parent_id == 0:
+            node.parent_id = None
+            node.depth = 1
+        else:
+            parent = await s.get(FrameworkNode, new_parent_id)
+            if not parent or parent.framework_id != fw_id:
+                raise HTTPException(400, "Nieprawidłowy parent_id")
+            if parent.id == node.id:
+                raise HTTPException(400, "Węzeł nie może być swoim rodzicem")
+            node.parent_id = new_parent_id
+            node.depth = parent.depth + 1
+
+        async def _fix_depth(pid: int, pdepth: int):
+            ch = (await s.execute(
+                select(FrameworkNode).where(
+                    FrameworkNode.parent_id == pid, FrameworkNode.is_active.is_(True))
+            )).scalars().all()
+            for c in ch:
+                c.depth = pdepth + 1
+                await _fix_depth(c.id, c.depth)
+        await _fix_depth(node.id, node.depth)
+
+    if new_order_id is not None:
+        node.order_id = new_order_id
+    elif after_node_id is not None:
+        aft = await s.get(FrameworkNode, after_node_id)
+        if aft and aft.framework_id == fw_id:
+            node.order_id = aft.order_id + 1
+            await s.execute(
+                update(FrameworkNode).where(
+                    FrameworkNode.framework_id == fw_id,
+                    FrameworkNode.parent_id == node.parent_id,
+                    FrameworkNode.order_id >= node.order_id,
+                    FrameworkNode.id != node.id,
+                ).values(order_id=FrameworkNode.order_id + 1)
+            )
+
+    fw.edit_version += 1
+    fw.last_edited_by = "admin"
+    fw.last_edited_at = datetime.utcnow()
+    await s.commit()
+    return {"status": "moved", "node_id": node_id}
+
+
+# ===================================================
+# IMPORT ADOPTION FORM
+# ===================================================
+
+@router.put("/{fw_id}/adopt", response_model=FrameworkOut, summary="Formularz adopcji")
+async def adopt_framework(
+    fw_id: int, body: FrameworkImportAdoptionRequest, s: AsyncSession = Depends(get_session),
+):
+    """Apply adoption attributes to an imported document (after import, before approval)."""
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Dokument nie istnieje")
+    if body.name is not None:
+        fw.name = body.name
+    if body.ref_id is not None:
+        fw.ref_id = body.ref_id
+    if body.description is not None:
+        fw.description = body.description
+    if body.document_type_id is not None:
+        fw.document_type_id = body.document_type_id
+    if body.document_origin is not None:
+        fw.document_origin = body.document_origin
+    if body.owner is not None:
+        fw.owner = body.owner
+    fw.requires_review = body.requires_review
+    fw.review_frequency_months = body.review_frequency_months
+    if body.updates_document_id is not None:
+        fw.updates_document_id = body.updates_document_id
+    fw.last_edited_by = "admin"
+    fw.last_edited_at = datetime.utcnow()
+    await s.commit()
+
+    fw = await s.get(
+        Framework, fw_id,
+        options=[selectinload(Framework.dimensions).selectinload(AssessmentDimension.levels)],
+    )
+    extra = await _enrich_framework_out(fw, s)
+    out = FrameworkOut.model_validate(fw)
+    for k, v in extra.items():
+        if hasattr(out, k):
+            setattr(out, k, v)
+    return out

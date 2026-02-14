@@ -30,11 +30,15 @@ from app.schemas.smart_catalog import (
     AIEnrichRequest,
     AIGapOut,
     AIGapRequest,
+    AIInterpretOut,
+    AIInterpretRequest,
     AIScenarioOut,
     AIScenarioRequest,
     AISearchOut,
     AISearchRequest,
     AITestResult,
+    AITranslateOut,
+    AITranslateRequest,
     AIUsageStatsOut,
     ControlCatalogCreate,
     ControlCatalogOut,
@@ -1097,6 +1101,64 @@ async def ai_assist_entry(
         )
     except AIFeatureDisabledException as e:
         raise HTTPException(403, str(e))
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/interpret-node", response_model=AIInterpretOut)
+async def ai_interpret_node(
+    body: AIInterpretRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered interpretation of a framework requirement."""
+    from app.services.ai_service import AIRateLimitException
+
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.interpret_node(
+            user_id=user_id,
+            framework_name=body.framework_name,
+            node_ref_id=body.node_ref_id,
+            node_name=body.node_name,
+            node_description=body.node_description,
+        )
+        await s.commit()
+        return AIInterpretOut(
+            interpretation=result.get("interpretation", ""),
+            practical_examples=result.get("practical_examples", []),
+            common_pitfalls=result.get("common_pitfalls", []),
+            related_standards=result.get("related_standards", []),
+        )
+    except AIRateLimitException as e:
+        raise HTTPException(429, str(e))
+
+
+@router.post("/api/v1/ai/translate-node", response_model=AITranslateOut)
+async def ai_translate_node(
+    body: AITranslateRequest,
+    s: AsyncSession = Depends(get_session),
+    user_id: int = Depends(_get_user_id),
+):
+    """AI-powered translation of a framework requirement."""
+    from app.services.ai_service import AIRateLimitException
+
+    svc = await _get_ai_svc(s)
+    try:
+        result = await svc.translate_node(
+            user_id=user_id,
+            framework_name=body.framework_name,
+            node_ref_id=body.node_ref_id,
+            node_name=body.node_name,
+            node_description=body.node_description,
+            target_language=body.target_language,
+        )
+        await s.commit()
+        return AITranslateOut(
+            translated_name=result.get("translated_name", ""),
+            translated_description=result.get("translated_description"),
+            terminology_notes=result.get("terminology_notes", []),
+        )
     except AIRateLimitException as e:
         raise HTTPException(429, str(e))
 

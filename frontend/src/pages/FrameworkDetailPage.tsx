@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import Modal from "../components/Modal";
+import { useFeatureFlags } from "../hooks/useFeatureFlags";
 import type { FrameworkDetail, FrameworkNodeTree, Dimension, FrameworkVersionHistory, FrameworkOrgUnitLink, FrameworkReviewRecord, DictionaryEntry } from "../types";
 
 /* ─── Lifecycle helpers ─── */
@@ -56,6 +57,7 @@ export default function FrameworkDetailPage() {
   const [expandedNodes, setExpandedNodes] = useState<Set<number>>(new Set());
   const [selectedNode, setSelectedNode] = useState<FrameworkNodeTree | null>(null);
   const [showAddNode, setShowAddNode] = useState<{ parentId: number | null } | null>(null);
+  const { aiEnabled } = useFeatureFlags();
 
   const loadData = () => {
     if (!fwId) return;
@@ -375,6 +377,8 @@ export default function FrameworkDetailPage() {
                 onDelete={() => handleDeleteNode(selectedNode.id)}
                 onSave={(data) => handleUpdateNode(selectedNode.id, data)}
                 onAddChild={() => setShowAddNode({ parentId: selectedNode.id })}
+                frameworkName={fw.name}
+                aiEnabled={aiEnabled}
               />
             </div>
           )}
@@ -503,13 +507,25 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, 
 /* ═══════════════════════════════════════════════════
    NodeDetailPanel (right sidebar)
    ═══════════════════════════════════════════════════ */
-function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChild }: {
+const TRANSLATE_LANGUAGES = [
+  { code: "pl", label: "Polski" },
+  { code: "en", label: "English" },
+  { code: "de", label: "Deutsch" },
+  { code: "fr", label: "Français" },
+  { code: "es", label: "Español" },
+  { code: "it", label: "Italiano" },
+  { code: "uk", label: "Українська" },
+];
+
+function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChild, frameworkName, aiEnabled }: {
   node: FrameworkNodeTree;
   pointTypes: DictionaryEntry[];
   onClose: () => void;
   onDelete: () => void;
   onSave: (data: Record<string, unknown>) => void;
   onAddChild: () => void;
+  frameworkName: string;
+  aiEnabled: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(node.name);
@@ -518,6 +534,14 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
   const [assessable, setAssessable] = useState(node.assessable);
   const [annotation, setAnnotation] = useState(node.annotation || "");
   const [pointTypeId, setPointTypeId] = useState<number | null>(node.point_type_id ?? null);
+
+  /* AI state */
+  const [aiPanel, setAiPanel] = useState<"none" | "interpret" | "translate">("none");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [interpretResult, setInterpretResult] = useState<{ interpretation: string; practical_examples: string[]; common_pitfalls: string[]; related_standards: string[] } | null>(null);
+  const [translateResult, setTranslateResult] = useState<{ translated_name: string; translated_description: string | null; terminology_notes: string[] } | null>(null);
+  const [translateLang, setTranslateLang] = useState("pl");
 
   const ptLabel = node.point_type_id ? pointTypes.find(p => p.id === node.point_type_id)?.label : null;
 
@@ -529,7 +553,45 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
     setAnnotation(node.annotation || "");
     setPointTypeId(node.point_type_id ?? null);
     setEditing(false);
+    setAiPanel("none");
+    setInterpretResult(null);
+    setTranslateResult(null);
+    setAiError(null);
   }, [node.id]);
+
+  const handleInterpret = async () => {
+    setAiLoading(true);
+    setAiError(null);
+    setInterpretResult(null);
+    try {
+      const res = await api.post<{ interpretation: string; practical_examples: string[]; common_pitfalls: string[]; related_standards: string[] }>(
+        "/api/v1/ai/interpret-node",
+        { framework_name: frameworkName, node_ref_id: node.ref_id, node_name: node.name, node_description: node.description }
+      );
+      setInterpretResult(res);
+    } catch (e: unknown) {
+      setAiError(e instanceof Error ? e.message : "Błąd AI");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleTranslate = async () => {
+    setAiLoading(true);
+    setAiError(null);
+    setTranslateResult(null);
+    try {
+      const res = await api.post<{ translated_name: string; translated_description: string | null; terminology_notes: string[] }>(
+        "/api/v1/ai/translate-node",
+        { framework_name: frameworkName, node_ref_id: node.ref_id, node_name: node.name, node_description: node.description, target_language: translateLang }
+      );
+      setTranslateResult(res);
+    } catch (e: unknown) {
+      setAiError(e instanceof Error ? e.message : "Błąd AI");
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   return (
     <div style={{ fontSize: 12 }}>
@@ -584,6 +646,127 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
             {node.implementation_groups && <DetailRow label="Gr. implementacji" value={node.implementation_groups} />}
             {node.importance && <DetailRow label="Ważność" value={node.importance} />}
           </div>
+
+          {/* AI Actions */}
+          {aiEnabled && (
+            <div style={{ marginTop: 12, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                <button
+                  className="btn btn-sm"
+                  style={{
+                    flex: 1, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+                    background: aiPanel === "interpret" ? "var(--blue)" : undefined,
+                    color: aiPanel === "interpret" ? "#fff" : undefined,
+                    border: aiPanel === "interpret" ? "1px solid var(--blue)" : undefined,
+                  }}
+                  onClick={() => {
+                    if (aiPanel === "interpret") { setAiPanel("none"); }
+                    else { setAiPanel("interpret"); if (!interpretResult) handleInterpret(); }
+                  }}
+                  disabled={aiLoading}
+                  title="Interpretacja AI"
+                >
+                  <span style={{ fontSize: 14 }}>i</span> Interpretacja
+                </button>
+                <button
+                  className="btn btn-sm"
+                  style={{
+                    flex: 1, fontSize: 11, display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+                    background: aiPanel === "translate" ? "var(--purple, #8b5cf6)" : undefined,
+                    color: aiPanel === "translate" ? "#fff" : undefined,
+                    border: aiPanel === "translate" ? "1px solid var(--purple, #8b5cf6)" : undefined,
+                  }}
+                  onClick={() => setAiPanel(aiPanel === "translate" ? "none" : "translate")}
+                  disabled={aiLoading}
+                  title="Tłumaczenie AI"
+                >
+                  <span style={{ fontSize: 14 }}>A</span> Tłumaczenie
+                </button>
+              </div>
+
+              {aiLoading && (
+                <div style={{ padding: 12, textAlign: "center", fontSize: 11, color: "var(--text-muted)" }}>
+                  Przetwarzanie AI...
+                </div>
+              )}
+
+              {aiError && (
+                <div style={{ padding: 8, borderRadius: 6, background: "#7f1d1d", color: "#fca5a5", fontSize: 11, marginBottom: 8 }}>
+                  {aiError}
+                </div>
+              )}
+
+              {/* Interpretation result */}
+              {aiPanel === "interpret" && interpretResult && !aiLoading && (
+                <div style={{ background: "var(--bg-inset)", borderRadius: 8, padding: 10, fontSize: 11, lineHeight: 1.6 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--blue)" }}>Interpretacja</div>
+                  <div style={{ marginBottom: 8 }}>{interpretResult.interpretation}</div>
+
+                  {interpretResult.practical_examples.length > 0 && (
+                    <>
+                      <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--green)" }}>Przykłady praktyczne</div>
+                      <ul style={{ margin: "0 0 8px", paddingLeft: 16 }}>
+                        {interpretResult.practical_examples.map((ex, i) => <li key={i}>{ex}</li>)}
+                      </ul>
+                    </>
+                  )}
+
+                  {interpretResult.common_pitfalls.length > 0 && (
+                    <>
+                      <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--orange)" }}>Typowe błędy</div>
+                      <ul style={{ margin: "0 0 8px", paddingLeft: 16 }}>
+                        {interpretResult.common_pitfalls.map((p, i) => <li key={i}>{p}</li>)}
+                      </ul>
+                    </>
+                  )}
+
+                  {interpretResult.related_standards.length > 0 && (
+                    <>
+                      <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--text-muted)" }}>Powiązane standardy</div>
+                      <div>{interpretResult.related_standards.join(", ")}</div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Translation panel */}
+              {aiPanel === "translate" && (
+                <div style={{ background: "var(--bg-inset)", borderRadius: 8, padding: 10 }}>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+                    <select
+                      className="form-control"
+                      value={translateLang}
+                      onChange={e => { setTranslateLang(e.target.value); setTranslateResult(null); }}
+                      style={{ fontSize: 11, flex: 1 }}
+                    >
+                      {TRANSLATE_LANGUAGES.map(l => (
+                        <option key={l.code} value={l.code}>{l.label}</option>
+                      ))}
+                    </select>
+                    <button className="btn btn-sm" onClick={handleTranslate} disabled={aiLoading}
+                      style={{ fontSize: 10, background: "var(--purple, #8b5cf6)", color: "#fff", border: "none" }}>
+                      Tłumacz
+                    </button>
+                  </div>
+
+                  {translateResult && !aiLoading && (
+                    <div style={{ fontSize: 11, lineHeight: 1.6 }}>
+                      <div style={{ fontWeight: 600, color: "var(--purple, #8b5cf6)", marginBottom: 4 }}>Tłumaczenie</div>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>{translateResult.translated_name}</div>
+                      {translateResult.translated_description && (
+                        <div style={{ marginBottom: 6, color: "var(--text-secondary)" }}>{translateResult.translated_description}</div>
+                      )}
+                      {translateResult.terminology_notes.length > 0 && (
+                        <div style={{ fontSize: 10, color: "var(--text-muted)", fontStyle: "italic" }}>
+                          {translateResult.terminology_notes.join(" | ")}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Actions */}
           <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12, flexWrap: "wrap" }}>

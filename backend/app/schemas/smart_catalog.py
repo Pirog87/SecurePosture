@@ -346,6 +346,34 @@ class AIAssistOut(BaseModel):
     suggested_correlations: list[dict] = []
 
 
+class AIInterpretRequest(BaseModel):
+    framework_name: str = Field(..., min_length=1, max_length=300)
+    node_ref_id: str | None = None
+    node_name: str = Field(..., min_length=1, max_length=500)
+    node_description: str | None = None
+
+
+class AIInterpretOut(BaseModel):
+    interpretation: str = ""
+    practical_examples: list[str] = []
+    common_pitfalls: list[str] = []
+    related_standards: list[str] = []
+
+
+class AITranslateRequest(BaseModel):
+    framework_name: str = Field(..., min_length=1, max_length=300)
+    node_ref_id: str | None = None
+    node_name: str = Field(..., min_length=1, max_length=500)
+    node_description: str | None = None
+    target_language: str = Field(..., min_length=2, max_length=50)
+
+
+class AITranslateOut(BaseModel):
+    translated_name: str = ""
+    translated_description: str | None = None
+    terminology_notes: list[str] = []
+
+
 class AIUsageStatsOut(BaseModel):
     requests_count: int = 0
     tokens_used: int = 0

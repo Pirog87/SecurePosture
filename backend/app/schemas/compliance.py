@@ -401,11 +401,46 @@ class AuditReportUpsert(BaseModel):
     report_type: str | None = None
 
 
+# ═══ Mapping Set ═══
+
+
+class MappingSetOut(BaseModel):
+    id: int
+    source_framework_id: int
+    source_framework_name: str | None = None
+    target_framework_id: int
+    target_framework_name: str | None = None
+    name: str | None = None
+    description: str | None = None
+    status: str
+    revert_set_id: int | None = None
+    mapping_count: int = 0
+    coverage_percent: Decimal | None = None
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class MappingSetCreate(BaseModel):
+    source_framework_id: int
+    target_framework_id: int
+    name: str | None = Field(None, max_length=500)
+    description: str | None = None
+
+
+class MappingSetUpdate(BaseModel):
+    name: str | None = Field(None, max_length=500)
+    description: str | None = None
+    status: str | None = None
+
+
 # ═══ Framework Mapping ═══
 
 
 class FrameworkMappingOut(BaseModel):
     id: int
+    mapping_set_id: int | None = None
     source_framework_id: int
     source_framework_name: str | None = None
     source_requirement_id: int
@@ -417,10 +452,13 @@ class FrameworkMappingOut(BaseModel):
     target_requirement_ref: str | None = None
     target_requirement_name: str | None = None
     relationship_type: str
-    strength: str
+    strength: int = 2
+    rationale_type: str | None = None
     rationale: str | None = None
     mapping_source: str
     mapping_status: str
+    ai_score: Decimal | None = None
+    ai_model: str | None = None
     confirmed_by: str | None = None
     confirmed_at: datetime | None = None
     created_at: datetime
@@ -432,17 +470,58 @@ class FrameworkMappingCreate(BaseModel):
     source_requirement_id: int
     target_framework_id: int
     target_requirement_id: int
-    relationship_type: str = "related"
-    strength: str = "moderate"
+    mapping_set_id: int | None = None
+    relationship_type: str = "intersect"
+    strength: int = Field(2, ge=1, le=3)
+    rationale_type: str | None = None
     rationale: str | None = None
     mapping_source: str = "manual"
 
 
 class FrameworkMappingUpdate(BaseModel):
     relationship_type: str | None = None
-    strength: str | None = None
+    strength: int | None = Field(None, ge=1, le=3)
+    rationale_type: str | None = None
     rationale: str | None = None
     mapping_status: str | None = None
+    confirmed_by: str | None = None
+
+
+class FrameworkMappingBulkCreate(BaseModel):
+    """Bulk import of mappings (CISO Assistant style)."""
+    source_framework_id: int
+    target_framework_id: int
+    mapping_source: str = "import"
+    auto_revert: bool = True
+    mappings: list[dict]
+
+
+class FrameworkMappingConfirm(BaseModel):
+    confirmed_by: str = Field(..., min_length=1, max_length=200)
+
+
+# ═══ Mapping Matrix ═══
+
+
+class MappingMatrixCell(BaseModel):
+    source_ref_id: str | None = None
+    source_name: str | None = None
+    target_ref_id: str | None = None
+    target_name: str | None = None
+    relationship_type: str
+    strength: int
+
+
+class MappingMatrixOut(BaseModel):
+    source_framework_id: int
+    source_framework_name: str
+    target_framework_id: int
+    target_framework_name: str
+    total_mappings: int
+    coverage_percent: float
+    by_relationship: dict[str, int]
+    by_strength: dict[int, int]
+    mappings: list[MappingMatrixCell]
 
 
 # ═══ Test Template ═══

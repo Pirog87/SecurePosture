@@ -10,6 +10,13 @@ export interface FeatureFlags {
     natural_language_search?: boolean;
     gap_analysis?: boolean;
     entry_assist?: boolean;
+    interpret?: boolean;
+    translate?: boolean;
+    evidence?: boolean;
+    security_area_map?: boolean;
+    cross_mapping?: boolean;
+    coverage_report?: boolean;
+    document_import?: boolean;
   };
 }
 

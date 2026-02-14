@@ -23,6 +23,13 @@ interface AIConfig {
   feature_natural_language_search: boolean;
   feature_gap_analysis: boolean;
   feature_entry_assist: boolean;
+  feature_interpret: boolean;
+  feature_translate: boolean;
+  feature_evidence: boolean;
+  feature_security_area_map: boolean;
+  feature_cross_mapping: boolean;
+  feature_coverage_report: boolean;
+  feature_document_import: boolean;
   last_test_at: string | null;
   last_test_ok: boolean | null;
   last_test_error: string | null;
@@ -56,6 +63,13 @@ const EMPTY_CONFIG: AIConfig = {
   feature_natural_language_search: true,
   feature_gap_analysis: true,
   feature_entry_assist: true,
+  feature_interpret: true,
+  feature_translate: true,
+  feature_evidence: true,
+  feature_security_area_map: true,
+  feature_cross_mapping: true,
+  feature_coverage_report: true,
+  feature_document_import: true,
   last_test_at: null,
   last_test_ok: null,
   last_test_error: null,
@@ -67,12 +81,21 @@ const PROVIDER_OPTIONS = [
   { value: "openai_compatible", label: "OpenAI-compatible (OpenAI, vLLM, Ollama)" },
 ];
 
-const FEATURE_TOGGLES: { key: string; label: string; desc: string }[] = [
-  { key: "feature_scenario_generation", label: "Generowanie scenariuszy ryzyka", desc: "AI tworzy scenariusze zagrożeń dla kategorii aktywów" },
-  { key: "feature_correlation_enrichment", label: "Wzbogacanie korelacji", desc: "AI sugeruje brakujące powiązania threat-weakness-control" },
-  { key: "feature_natural_language_search", label: "Wyszukiwanie w języku naturalnym", desc: "Wyszukiwanie w katalogach za pomocą pytań w języku naturalnym" },
-  { key: "feature_gap_analysis", label: "Analiza luk bezpieczeństwa", desc: "AI analizuje pokrycie i identyfikuje luki" },
-  { key: "feature_entry_assist", label: "Asystent tworzenia wpisów", desc: "AI podpowiada klasyfikację i powiązania nowych wpisów" },
+const FEATURE_TOGGLES: { key: string; label: string; desc: string; group: string }[] = [
+  // Smart Catalog
+  { key: "feature_scenario_generation", label: "Generowanie scenariuszy ryzyka", desc: "AI tworzy scenariusze zagrożeń dla kategorii aktywów", group: "catalog" },
+  { key: "feature_correlation_enrichment", label: "Wzbogacanie korelacji", desc: "AI sugeruje brakujące powiązania threat-weakness-control", group: "catalog" },
+  { key: "feature_natural_language_search", label: "Wyszukiwanie w języku naturalnym", desc: "Wyszukiwanie w katalogach za pomocą pytań w języku naturalnym", group: "catalog" },
+  { key: "feature_gap_analysis", label: "Analiza luk bezpieczeństwa", desc: "AI analizuje pokrycie i identyfikuje luki", group: "catalog" },
+  { key: "feature_entry_assist", label: "Asystent tworzenia wpisów", desc: "AI podpowiada klasyfikację i powiązania nowych wpisów", group: "catalog" },
+  // Framework / Document
+  { key: "feature_interpret", label: "Interpretacja wymagań", desc: "AI wyjaśnia wymagania z frameworków w praktycznym kontekście", group: "framework" },
+  { key: "feature_translate", label: "Tłumaczenie wymagań", desc: "AI tłumaczy wymagania na wybrany język z zachowaniem terminologii", group: "framework" },
+  { key: "feature_evidence", label: "Generowanie dowodów audytowych", desc: "AI generuje listę dowodów jakich może wymagać audytor", group: "framework" },
+  { key: "feature_security_area_map", label: "Mapowanie obszarów bezpieczeństwa", desc: "AI przypisuje wymagania do obszarów bezpieczeństwa", group: "framework" },
+  { key: "feature_cross_mapping", label: "Cross-mapping frameworków", desc: "AI mapuje wymagania między różnymi standardami", group: "framework" },
+  { key: "feature_coverage_report", label: "Raporty pokrycia", desc: "AI generuje raporty zarządcze o pokryciu między frameworkami", group: "framework" },
+  { key: "feature_document_import", label: "Import dokumentów AI", desc: "AI analizuje dokumenty PDF/DOCX i wyodrębnia strukturę frameworka", group: "framework" },
 ];
 
 const ACTION_LABELS: Record<string, string> = {
@@ -121,6 +144,13 @@ export default function AIConfigPage() {
     feature_natural_language_search: true,
     feature_gap_analysis: true,
     feature_entry_assist: true,
+    feature_interpret: true,
+    feature_translate: true,
+    feature_evidence: true,
+    feature_security_area_map: true,
+    feature_cross_mapping: true,
+    feature_coverage_report: true,
+    feature_document_import: true,
   });
 
   const fetchConfig = useCallback(async () => {
@@ -144,6 +174,13 @@ export default function AIConfigPage() {
           feature_natural_language_search: data.feature_natural_language_search,
           feature_gap_analysis: data.feature_gap_analysis,
           feature_entry_assist: data.feature_entry_assist,
+          feature_interpret: data.feature_interpret,
+          feature_translate: data.feature_translate,
+          feature_evidence: data.feature_evidence,
+          feature_security_area_map: data.feature_security_area_map,
+          feature_cross_mapping: data.feature_cross_mapping,
+          feature_coverage_report: data.feature_coverage_report,
+          feature_document_import: data.feature_document_import,
         });
       }
     } catch {
@@ -479,29 +516,20 @@ export default function AIConfigPage() {
               Włącz/wyłącz poszczególne możliwości AI. Wyłączone nie będą widoczne w UI.
             </p>
 
-            {FEATURE_TOGGLES.map((ft) => (
-              <label
-                key={ft.key}
-                style={{
-                  display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12,
-                  cursor: "pointer", padding: "8px 10px", borderRadius: 6,
-                  background: (form as Record<string, unknown>)[ft.key] ? "var(--blue-dim)" : "var(--bg-subtle)",
-                  border: "1px solid",
-                  borderColor: (form as Record<string, unknown>)[ft.key] ? "rgba(59,130,246,0.2)" : "transparent",
-                  transition: "all 0.15s",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={(form as Record<string, unknown>)[ft.key] as boolean}
-                  onChange={(e) => setForm({ ...form, [ft.key]: e.target.checked })}
-                  style={{ width: 16, height: 16, marginTop: 1, accentColor: "var(--blue)", flexShrink: 0 }}
-                />
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 500 }}>{ft.label}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{ft.desc}</div>
-                </div>
-              </label>
+            {/* Smart Catalog group */}
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8 }}>
+              Smart Catalog
+            </div>
+            {FEATURE_TOGGLES.filter((ft) => ft.group === "catalog").map((ft) => (
+              <FeatureToggle key={ft.key} ft={ft} form={form} setForm={setForm} />
+            ))}
+
+            {/* Framework / Document group */}
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8, marginTop: 16 }}>
+              Frameworki / Dokumenty
+            </div>
+            {FEATURE_TOGGLES.filter((ft) => ft.group === "framework").map((ft) => (
+              <FeatureToggle key={ft.key} ft={ft} form={form} setForm={setForm} />
             ))}
 
             <button className="btn btn-primary btn-sm" onClick={saveConfig} disabled={saving} style={{ marginTop: 4 }}>
@@ -619,6 +647,34 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
       <td style={{ padding: "6px 0", color: "var(--text-muted)", fontSize: 12, width: 110, verticalAlign: "top" }}>{label}</td>
       <td style={{ padding: "6px 0", fontWeight: 500, wordBreak: "break-all" }}>{value}</td>
     </tr>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function FeatureToggle({ ft, form, setForm }: { ft: { key: string; label: string; desc: string }; form: any; setForm: any }) {
+  const checked = !!form[ft.key];
+  return (
+    <label
+      style={{
+        display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10,
+        cursor: "pointer", padding: "8px 10px", borderRadius: 6,
+        background: checked ? "var(--blue-dim)" : "var(--bg-subtle)",
+        border: "1px solid",
+        borderColor: checked ? "rgba(59,130,246,0.2)" : "transparent",
+        transition: "all 0.15s",
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => setForm({ ...form, [ft.key]: e.target.checked })}
+        style={{ width: 16, height: 16, marginTop: 1, accentColor: "var(--blue)", flexShrink: 0 }}
+      />
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 500 }}>{ft.label}</div>
+        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{ft.desc}</div>
+      </div>
+    </label>
   );
 }
 

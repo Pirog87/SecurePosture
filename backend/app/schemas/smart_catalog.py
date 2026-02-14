@@ -259,6 +259,13 @@ class AIConfigOut(BaseModel):
     feature_natural_language_search: bool = True
     feature_gap_analysis: bool = True
     feature_entry_assist: bool = True
+    feature_interpret: bool = True
+    feature_translate: bool = True
+    feature_evidence: bool = True
+    feature_security_area_map: bool = True
+    feature_cross_mapping: bool = True
+    feature_coverage_report: bool = True
+    feature_document_import: bool = True
     last_test_at: datetime | None = None
     last_test_ok: bool | None = None
     last_test_error: str | None = None
@@ -280,6 +287,13 @@ class AIConfigUpdate(BaseModel):
     feature_natural_language_search: bool | None = None
     feature_gap_analysis: bool | None = None
     feature_entry_assist: bool | None = None
+    feature_interpret: bool | None = None
+    feature_translate: bool | None = None
+    feature_evidence: bool | None = None
+    feature_security_area_map: bool | None = None
+    feature_cross_mapping: bool | None = None
+    feature_coverage_report: bool | None = None
+    feature_document_import: bool | None = None
 
 
 class AITestResult(BaseModel):

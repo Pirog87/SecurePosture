@@ -795,6 +795,13 @@ async def get_feature_flags(s: AsyncSession = Depends(get_session)):
             "natural_language_search": config.feature_natural_language_search,
             "gap_analysis": config.feature_gap_analysis,
             "entry_assist": config.feature_entry_assist,
+            "interpret": config.feature_interpret,
+            "translate": config.feature_translate,
+            "evidence": config.feature_evidence,
+            "security_area_map": config.feature_security_area_map,
+            "cross_mapping": config.feature_cross_mapping,
+            "coverage_report": config.feature_coverage_report,
+            "document_import": config.feature_document_import,
         },
     )
 

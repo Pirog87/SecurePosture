@@ -237,12 +237,21 @@ class AIProviderConfig(Base):
     max_requests_per_user_per_day: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     max_requests_per_org_per_day: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
 
-    # Feature toggles
+    # Feature toggles — Smart Catalog
     feature_scenario_generation: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     feature_correlation_enrichment: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     feature_natural_language_search: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     feature_gap_analysis: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     feature_entry_assist: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Feature toggles — Framework / Dokument
+    feature_interpret: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    feature_translate: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    feature_evidence: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    feature_security_area_map: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    feature_cross_mapping: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    feature_coverage_report: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    feature_document_import: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
 
     # Test metadata
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime)

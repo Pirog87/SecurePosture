@@ -297,7 +297,7 @@ export default function AIConfigPage() {
       )}
 
       {/* ── KPI Cards Row ── */}
-      <div className="grid-4" style={{ marginBottom: 20 }}>
+      <div className="grid-2" style={{ marginBottom: 20, maxWidth: 500 }}>
         {/* Status */}
         <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
           <div style={{
@@ -313,28 +313,14 @@ export default function AIConfigPage() {
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>Status AI</div>
         </div>
 
-        {/* Requests */}
+        {/* Provider/Model */}
         <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>
-            {usage?.requests_count ?? 0}
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--blue)" }}>
+            {providerLabel}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Zapytań ({days}d)</div>
-        </div>
-
-        {/* Tokens */}
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>
-            {((usage?.tokens_input ?? 0) + (usage?.tokens_output ?? 0)).toLocaleString("pl-PL")}
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+            {config.model_name || "—"}
           </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Tokenów ({days}d)</div>
-        </div>
-
-        {/* Cost */}
-        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--orange)" }}>
-            ${(usage?.cost_usd ?? 0).toFixed(4)}
-          </div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Koszt USD ({days}d)</div>
         </div>
       </div>
 

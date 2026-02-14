@@ -228,6 +228,14 @@ class AIService:
 
         logger.info("_parse_json: response length=%d, starts with: %.80s", text_len, stripped[:80])
 
+        # 0. Strip BOM and common prefixes
+        if stripped.startswith('\ufeff'):
+            stripped = stripped[1:]
+        # Some models prefix with "Here is the JSON:" or similar
+        for prefix in ["Here is the JSON:", "Here's the JSON:", "JSON:", "json:"]:
+            if stripped.lower().startswith(prefix.lower()):
+                stripped = stripped[len(prefix):].strip()
+
         # 1. Direct parse (ideal case — model returned pure JSON)
         try:
             result = json.loads(stripped)
@@ -255,6 +263,21 @@ class AIService:
                 return result
             except json.JSONDecodeError:
                 pass
+
+        # 2b. Handle markdown without closing ``` (truncated response with code block)
+        match = re.search(r"```(?:json)?\s*([\[{].*)", stripped, re.DOTALL)
+        if match:
+            block = match.group(1).rstrip().rstrip('`')
+            try:
+                result = json.loads(block)
+                logger.info("_parse_json: extracted from unclosed markdown block OK")
+                return result
+            except json.JSONDecodeError:
+                # Try repair on the markdown block content
+                repaired = self._try_repair_json(block)
+                if repaired is not None:
+                    logger.warning("_parse_json: repaired unclosed markdown block")
+                    return repaired
 
         # 3. Find first { or [ and try to parse from there
         json_start = re.search(r'[\[{]', stripped)
@@ -285,7 +308,35 @@ class AIService:
                 except json.JSONDecodeError:
                     pass
 
-        # 3c. Try to repair truncated JSON (response cut off at max_tokens)
+        # 3c. Try nested brace matching — find matching closing brace for first opening brace
+        depth = 0
+        in_str = False
+        esc = False
+        for i, ch in enumerate(candidate):
+            if esc:
+                esc = False
+                continue
+            if ch == '\\' and in_str:
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch in '{[':
+                depth += 1
+            elif ch in '}]':
+                depth -= 1
+                if depth == 0:
+                    try:
+                        result = json.loads(candidate[:i + 1])
+                        logger.info("_parse_json: parsed by brace matching at position %d", i)
+                        return result
+                    except json.JSONDecodeError:
+                        break
+
+        # 3d. Try to repair truncated JSON (response cut off at max_tokens)
         logger.info("_parse_json: attempting JSON repair on %d chars...", len(candidate))
         repaired = self._try_repair_json(candidate)
         if repaired is not None:
@@ -380,8 +431,14 @@ class AIService:
                         tokens_input: int | None = None,
                         tokens_output: int | None = None,
                         cost_usd=None):
-        """Log AI call to audit table with token usage and cost."""
-        log = AIAuditLog(
+        """Log AI call to audit table with token usage and cost.
+
+        Uses a separate DB session so the audit log persists even when
+        the caller rolls back (e.g. failed AI import).
+        """
+        from app.database import async_session as _audit_session_factory
+
+        log_kwargs = dict(
             user_id=user_id,
             org_unit_id=self.config.org_unit_id if self.config else None,
             action_type=action_type,
@@ -396,8 +453,15 @@ class AIService:
             success=success,
             error=error,
         )
-        self.session.add(log)
-        await self.session.flush()
+        try:
+            async with _audit_session_factory() as audit_s:
+                audit_s.add(AIAuditLog(**log_kwargs))
+                await audit_s.commit()
+        except Exception as e:
+            logger.error("Audit log separate-session commit failed: %s", e)
+            # Fallback: add to main session (may be lost on rollback)
+            self.session.add(AIAuditLog(**log_kwargs))
+            await self.session.flush()
 
     # ═══════════════════════════════════════════════════════════════════
     # USE CASE 1: AI-assisted scenario generation

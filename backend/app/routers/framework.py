@@ -1303,7 +1303,10 @@ async def import_from_ai(
         progress["message"] = "AI nie jest skonfigurowane"
         raise HTTPException(503, "AI nie jest skonfigurowane")
     except AIParsingError as e:
-        await s.rollback()
+        try:
+            await s.rollback()
+        except Exception:
+            pass
         logger.exception("AI import: JSON parsing failed")
         progress["status"] = "error"
         progress["message"] = f"AI nie zwróciło poprawnego JSON: {e}"
@@ -1313,10 +1316,22 @@ async def import_from_ai(
             f"Spróbuj z mniejszym dokumentem lub innym modelem. Szczegóły: {e}",
         )
     except Exception as e:
-        await s.rollback()
+        # Check if this is actually an AIParsingError wrapped in another exception
+        err_msg = str(e)
+        is_parsing = "nieprawidlowy JSON" in err_msg or "nie zwrocilo JSON" in err_msg
+        try:
+            await s.rollback()
+        except Exception:
+            pass
         logger.exception("AI import error")
         progress["status"] = "error"
         progress["message"] = f"Błąd: {e}"
+        if is_parsing:
+            raise HTTPException(
+                502,
+                f"AI nie zwróciło poprawnego JSON. "
+                f"Spróbuj z mniejszym dokumentem lub innym modelem. Szczegóły: {e}",
+            )
         raise HTTPException(500, f"Błąd importu AI: {e}")
     finally:
         # Clean up old progress entries (keep last 20)

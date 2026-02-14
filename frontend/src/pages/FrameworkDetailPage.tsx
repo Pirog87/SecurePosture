@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../services/api";
+import Modal from "../components/Modal";
 import type { FrameworkDetail, FrameworkNodeTree, Dimension, FrameworkVersionHistory } from "../types";
 
-const LIFECYCLE_LABELS: Record<string, { label: string; cls: string }> = {
-  draft: { label: "Szkic", cls: "badge-gray" },
-  review: { label: "Przeglad", cls: "badge-yellow" },
-  published: { label: "Opublikowany", cls: "badge-green" },
-  deprecated: { label: "Wycofany", cls: "badge-red" },
-  archived: { label: "Zarchiwizowany", cls: "badge-gray" },
+/* ─── Lifecycle helpers ─── */
+const LIFECYCLE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
+  draft:      { label: "Szkic",          color: "var(--text-muted)", bg: "var(--bg-inset)" },
+  review:     { label: "Przegląd",       color: "var(--orange)",     bg: "var(--orange-dim)" },
+  published:  { label: "Opublikowany",   color: "var(--green)",      bg: "var(--green-dim)" },
+  deprecated: { label: "Wycofany",       color: "var(--red)",        bg: "var(--red-dim)" },
+  archived:   { label: "Zarchiwizowany", color: "var(--text-muted)", bg: "var(--bg-inset)" },
 };
 
 const LIFECYCLE_TRANSITIONS: Record<string, string[]> = {
@@ -19,6 +21,36 @@ const LIFECYCLE_TRANSITIONS: Record<string, string[]> = {
   archived: ["draft"],
 };
 
+function lcColor(s: string) { return LIFECYCLE_LABELS[s]?.color ?? "var(--text-muted)"; }
+function lcBg(s: string) { return LIFECYCLE_LABELS[s]?.bg ?? "var(--bg-inset)"; }
+function lcLabel(s: string) { return LIFECYCLE_LABELS[s]?.label ?? s; }
+
+/* ─── Detail panel rows ─── */
+function SectionHeader({ number, label }: { number: number; label: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, marginTop: 14 }}>
+      <div style={{
+        width: 28, height: 28, borderRadius: "50%", background: "var(--blue)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: 14, fontWeight: 700, color: "#fff", flexShrink: 0,
+      }}>{number}</div>
+      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{label}</div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+      <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{label}</span>
+      <span style={{ textAlign: "right", color: color ?? undefined, fontWeight: color ? 500 : undefined }}>{value ?? "—"}</span>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════
+   FrameworkDetailPage
+   ═══════════════════════════════════════════════════ */
 export default function FrameworkDetailPage() {
   const { fwId } = useParams<{ fwId: string }>();
   const navigate = useNavigate();
@@ -77,6 +109,23 @@ export default function FrameworkDetailPage() {
 
   const collapseAll = () => setExpandedNodes(new Set());
 
+  /* ── Tree stats ── */
+  const treeStats = useMemo(() => {
+    let total = 0;
+    let assessable = 0;
+    let maxDepth = 0;
+    const walk = (nodes: FrameworkNodeTree[]) => {
+      for (const n of nodes) {
+        total++;
+        if (n.assessable) assessable++;
+        if (n.depth > maxDepth) maxDepth = n.depth;
+        walk(n.children);
+      }
+    };
+    walk(tree);
+    return { total, assessable, maxDepth };
+  }, [tree]);
+
   const handleLifecycleChange = async (newStatus: string) => {
     if (!fw) return;
     const summary = prompt("Opis zmiany statusu (opcjonalnie):");
@@ -84,7 +133,7 @@ export default function FrameworkDetailPage() {
       await api.put(`/api/v1/frameworks/${fw.id}/lifecycle`, { status: newStatus, change_summary: summary || undefined });
       loadData();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Blad zmiany statusu");
+      alert(e instanceof Error ? e.message : "Błąd zmiany statusu");
     }
   };
 
@@ -95,18 +144,18 @@ export default function FrameworkDetailPage() {
       setShowAddNode(null);
       loadData();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Blad dodawania wezla");
+      alert(e instanceof Error ? e.message : "Błąd dodawania węzła");
     }
   };
 
   const handleDeleteNode = async (nodeId: number) => {
-    if (!fw || !confirm("Usunac ten wezel? Elementy podrzedne zostana przeniesione poziom wyzej.")) return;
+    if (!fw || !confirm("Usunąć ten węzeł? Elementy podrzędne zostaną przeniesione poziom wyżej.")) return;
     try {
       await api.delete(`/api/v1/frameworks/${fw.id}/nodes/${nodeId}`);
       setSelectedNode(null);
       loadData();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Blad usuwania");
+      alert(e instanceof Error ? e.message : "Błąd usuwania");
     }
   };
 
@@ -117,97 +166,125 @@ export default function FrameworkDetailPage() {
       setSelectedNode(null);
       loadData();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Blad edycji");
+      alert(e instanceof Error ? e.message : "Błąd edycji");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!fw) return;
+    const action = fw.lifecycle_status === "published" ? "zarchiwizować" : "trwale usunąć";
+    if (!confirm(`Czy na pewno chcesz ${action} framework "${fw.name}"?`)) return;
+    try {
+      await api.delete(`/api/v1/frameworks/${fw.id}`);
+      navigate("/frameworks");
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Błąd usuwania");
     }
   };
 
   if (loading) {
-    return <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Ladowanie frameworka...</div>;
+    return <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Ładowanie frameworka...</div>;
   }
   if (!fw) {
     return <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>Framework nie znaleziony</div>;
   }
 
-  const lc = LIFECYCLE_LABELS[fw.lifecycle_status] || { label: fw.lifecycle_status, cls: "badge-gray" };
   const transitions = LIFECYCLE_TRANSITIONS[fw.lifecycle_status] || [];
 
   return (
     <div>
-      {/* Header */}
-      <div className="toolbar">
-        <div className="toolbar-left">
+      {/* ── Header toolbar ── */}
+      <div className="toolbar" style={{ flexWrap: "wrap", gap: 8 }}>
+        <div className="toolbar-left" style={{ alignItems: "center" }}>
           <button className="btn btn-sm" onClick={() => navigate("/frameworks")} style={{ marginRight: 8 }}>
             &larr; Wstecz
           </button>
           <div>
-            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{fw.name}</h2>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              {fw.published_version && <span>Publ. v{fw.published_version}</span>}
-              {fw.version && !fw.published_version && <span>v{fw.version}</span>}
-              {fw.provider && <span>| {fw.provider}</span>}
-              <span>| {fw.total_nodes} wezlow | {fw.total_assessable} ocenialnych</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{fw.name}</h2>
+              <span className="score-badge" style={{ background: lcBg(fw.lifecycle_status), color: lcColor(fw.lifecycle_status), fontSize: 11 }}>
+                {lcLabel(fw.lifecycle_status)}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 2 }}>
+              {fw.provider && <span>{fw.provider}</span>}
+              {(fw.published_version || fw.version) && <span>| v{fw.published_version || fw.version}</span>}
+              <span>| {fw.total_nodes} węzłów</span>
+              <span>| {fw.total_assessable} ocenialnych</span>
               <span>| Edycja v{fw.edit_version}</span>
-              <span className={`badge ${lc.cls}`} style={{ fontSize: 9 }}>{lc.label}</span>
             </div>
           </div>
         </div>
-        <div className="toolbar-right" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          {/* Lifecycle transitions */}
-          {transitions.map(status => {
-            const t = LIFECYCLE_LABELS[status];
-            return (
-              <button key={status} className="btn btn-sm" onClick={() => handleLifecycleChange(status)}
-                      title={`Zmien na: ${t?.label || status}`}>
-                {t?.label || status}
-              </button>
-            );
-          })}
+        <div className="toolbar-right" style={{ alignItems: "center", flexWrap: "wrap" }}>
+          {transitions.map(status => (
+            <button key={status} className="btn btn-sm" onClick={() => handleLifecycleChange(status)}
+                    title={`Zmień na: ${lcLabel(status)}`}>
+              {lcLabel(status)}
+            </button>
+          ))}
+          <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={handleDelete}>
+            {fw.lifecycle_status === "published" ? "Archiwizuj" : "Usuń"}
+          </button>
           <button className="btn btn-primary btn-sm" onClick={() => navigate(`/assessments/new?framework_id=${fw.id}`)}>
             Nowa ocena
           </button>
         </div>
       </div>
 
+      {/* ── Description ── */}
       {fw.description && (
-        <div className="card" style={{ padding: "10px 14px", marginBottom: 12, fontSize: 12 }}>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
           {fw.description}
         </div>
       )}
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-        <button className={`btn btn-sm ${tab === "tree" ? "btn-primary" : ""}`} onClick={() => setTab("tree")}>
-          Drzewo
-        </button>
-        <button className={`btn btn-sm ${tab === "dimensions" ? "btn-primary" : ""}`} onClick={() => setTab("dimensions")}>
-          Wymiary ({fw.dimensions.length})
-        </button>
-        <button className={`btn btn-sm ${tab === "versions" ? "btn-primary" : ""}`} onClick={() => setTab("versions")}>
-          Historia wersji ({versions.length})
-        </button>
-        <button className={`btn btn-sm ${tab === "edit" ? "btn-primary" : ""}`} onClick={() => setTab("edit")}>
-          Edycja metadanych
-        </button>
+      {/* ── Tabs ── */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16 }}>
+        {([
+          { key: "tree", label: `Drzewo (${treeStats.total})` },
+          { key: "dimensions", label: `Wymiary (${fw.dimensions.length})` },
+          { key: "versions", label: `Historia wersji (${versions.length})` },
+          { key: "edit", label: "Edycja metadanych" },
+        ] as { key: typeof tab; label: string }[]).map(t => (
+          <button key={t.key}
+            style={{
+              padding: "8px 16px", fontSize: 12, fontWeight: tab === t.key ? 600 : 400,
+              background: tab === t.key ? "var(--blue-dim)" : "transparent",
+              borderBottom: tab === t.key ? "2px solid var(--blue)" : "2px solid transparent",
+              color: tab === t.key ? "var(--blue)" : "var(--text-muted)",
+              border: "none", borderBottomWidth: 2, borderBottomStyle: "solid",
+              cursor: "pointer",
+            }}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* Tree Tab */}
+      {/* ═══ Tree Tab ═══ */}
       {tab === "tree" && (
-        <div style={{ display: "grid", gridTemplateColumns: selectedNode ? "1fr 350px" : "1fr", gap: 12 }}>
-          <div className="card" style={{ padding: 0, overflow: "auto" }}>
-            <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button className="btn btn-sm" onClick={expandAll}>Rozwin wszystko</button>
-              <button className="btn btn-sm" onClick={collapseAll}>Zwin wszystko</button>
+        <div style={{ display: "grid", gridTemplateColumns: selectedNode ? "1fr 420px" : "1fr", gap: 14 }}>
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            {/* Tree toolbar */}
+            <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button className="btn btn-sm" onClick={expandAll}>Rozwiń wszystko</button>
+              <button className="btn btn-sm" onClick={collapseAll}>Zwiń wszystko</button>
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                {treeStats.total} węzłów | {treeStats.assessable} ocenialnych | głęb. {treeStats.maxDepth}
+              </span>
               <div style={{ flex: 1 }} />
               <button className="btn btn-sm btn-primary" onClick={() => setShowAddNode({ parentId: null })}>
-                + Dodaj wezel glowny
+                + Dodaj węzeł główny
               </button>
             </div>
+
             {tree.length === 0 ? (
-              <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
-                Brak wezlow. Dodaj pierwszy wezel lub zaimportuj framework.
+              <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+                Brak węzłów. Dodaj pierwszy węzeł lub zaimportuj framework.
               </div>
             ) : (
-              <div style={{ padding: "4px 0" }}>
+              <div style={{ padding: "4px 0", maxHeight: "calc(100vh - 260px)", overflowY: "auto" }}>
                 {tree.map(node => (
                   <TreeNode key={node.id} node={node} expanded={expandedNodes} onToggle={toggleNode}
                             selectedId={selectedNode?.id ?? null}
@@ -220,45 +297,46 @@ export default function FrameworkDetailPage() {
 
           {/* Node detail sidebar */}
           {selectedNode && (
-            <NodeDetailPanel
-              node={selectedNode}
-              onClose={() => setSelectedNode(null)}
-              onDelete={() => handleDeleteNode(selectedNode.id)}
-              onSave={(data) => handleUpdateNode(selectedNode.id, data)}
-              onAddChild={() => setShowAddNode({ parentId: selectedNode.id })}
-            />
+            <div className="card" style={{ position: "sticky", top: 0, alignSelf: "start", maxHeight: "calc(100vh - 100px)", overflowY: "auto" }}>
+              <NodeDetailPanel
+                node={selectedNode}
+                onClose={() => setSelectedNode(null)}
+                onDelete={() => handleDeleteNode(selectedNode.id)}
+                onSave={(data) => handleUpdateNode(selectedNode.id, data)}
+                onAddChild={() => setShowAddNode({ parentId: selectedNode.id })}
+              />
+            </div>
           )}
         </div>
       )}
 
-      {/* Dimensions Tab */}
-      {tab === "dimensions" && (
-        <DimensionsPanel dimensions={fw.dimensions} />
-      )}
+      {/* ═══ Dimensions Tab ═══ */}
+      {tab === "dimensions" && <DimensionsPanel dimensions={fw.dimensions} />}
 
-      {/* Version History Tab */}
-      {tab === "versions" && (
-        <VersionHistoryPanel versions={versions} />
-      )}
+      {/* ═══ Version History Tab ═══ */}
+      {tab === "versions" && <VersionHistoryPanel versions={versions} />}
 
-      {/* Edit Metadata Tab */}
-      {tab === "edit" && (
-        <EditMetadataPanel fw={fw} onSaved={loadData} />
-      )}
+      {/* ═══ Edit Metadata Tab ═══ */}
+      {tab === "edit" && <EditMetadataPanel fw={fw} onSaved={loadData} />}
 
       {/* Add Node Modal */}
-      {showAddNode && (
-        <AddNodeModal
-          parentId={showAddNode.parentId}
-          onClose={() => setShowAddNode(null)}
-          onCreate={handleAddNode}
-        />
-      )}
+      <Modal open={!!showAddNode} onClose={() => setShowAddNode(null)}
+             title={showAddNode?.parentId ? "Dodaj podwęzeł" : "Dodaj węzeł główny"}>
+        {showAddNode && (
+          <AddNodeForm
+            parentId={showAddNode.parentId}
+            onClose={() => setShowAddNode(null)}
+            onCreate={handleAddNode}
+          />
+        )}
+      </Modal>
     </div>
   );
 }
 
-/* --- Tree Node Component (enhanced) --- */
+/* ═══════════════════════════════════════════════════
+   TreeNode Component
+   ═══════════════════════════════════════════════════ */
 function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }: {
   node: FrameworkNodeTree;
   expanded: Set<number>;
@@ -279,16 +357,14 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }
           display: "flex", alignItems: "flex-start", gap: 6,
           padding: "5px 12px", paddingLeft: indent + 12,
           fontSize: 12,
-          background: isSelected ? "var(--blue-dim, rgba(59,130,246,0.1))" : undefined,
-          borderBottom: "1px solid rgba(42,53,84,0.06)",
+          background: isSelected ? "var(--bg-card-hover)" : undefined,
+          borderLeft: isSelected ? "3px solid var(--blue)" : "3px solid transparent",
           cursor: "pointer",
+          transition: "background 0.1s",
         }}
-        onClick={(e) => {
-          e.stopPropagation();
-          onSelect(node);
-        }}
+        onClick={(e) => { e.stopPropagation(); onSelect(node); }}
       >
-        {/* Expand/collapse toggle */}
+        {/* Expand/collapse */}
         <span
           style={{ width: 18, textAlign: "center", fontSize: 10, color: "var(--text-muted)", flexShrink: 0, cursor: hasChildren ? "pointer" : "default", lineHeight: "18px", userSelect: "none" }}
           onClick={(e) => { e.stopPropagation(); hasChildren && onToggle(node.id); }}
@@ -308,13 +384,12 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }
               {node.name_pl || node.name}
             </span>
             {node.assessable && (
-              <span className="badge badge-green" style={{ fontSize: 8, padding: "1px 5px" }}>ocenialny</span>
+              <span className="score-badge" style={{ background: "var(--green-dim)", color: "var(--green)", fontSize: 8, padding: "1px 5px" }}>ocenialny</span>
             )}
             {node.implementation_groups && (
-              <span className="badge badge-gray" style={{ fontSize: 8, padding: "1px 5px" }}>{node.implementation_groups}</span>
+              <span className="score-badge" style={{ background: "var(--bg-inset)", color: "var(--text-muted)", fontSize: 8, padding: "1px 5px" }}>{node.implementation_groups}</span>
             )}
           </div>
-          {/* Show description for expanded nodes or leaf nodes */}
           {node.description && (isExpanded || !hasChildren) && (
             <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2, lineHeight: 1.3, maxHeight: 40, overflow: "hidden" }}>
               {node.description}
@@ -322,10 +397,10 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }
           )}
         </div>
 
-        {/* Quick add child button */}
+        {/* Quick add child */}
         <span
-          style={{ fontSize: 10, color: "var(--text-muted)", cursor: "pointer", padding: "0 4px", flexShrink: 0, lineHeight: "18px" }}
-          title="Dodaj podwezel"
+          style={{ fontSize: 14, color: "var(--text-muted)", cursor: "pointer", padding: "0 4px", flexShrink: 0, lineHeight: "18px", opacity: 0.5 }}
+          title="Dodaj podwęzeł"
           onClick={(e) => { e.stopPropagation(); onAddChild(node.id); }}
         >
           +
@@ -340,7 +415,9 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild }
   );
 }
 
-/* --- Node Detail Panel (sidebar) --- */
+/* ═══════════════════════════════════════════════════
+   NodeDetailPanel (right sidebar)
+   ═══════════════════════════════════════════════════ */
 function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
   node: FrameworkNodeTree;
   onClose: () => void;
@@ -365,10 +442,13 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
   }, [node.id]);
 
   return (
-    <div className="card" style={{ padding: "12px 16px", fontSize: 12, overflow: "auto" }}>
+    <div style={{ fontSize: 12 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <strong style={{ fontSize: 13 }}>Szczegoly wezla</strong>
-        <button className="btn btn-sm" onClick={onClose} style={{ fontSize: 10 }}>X</button>
+        <div className="card-title" style={{ margin: 0 }}>Szczegóły węzła</div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {!editing && <button className="btn btn-sm" onClick={() => setEditing(true)}>Edytuj</button>}
+          <button className="btn btn-sm" onClick={onClose}>&#10005;</button>
+        </div>
       </div>
 
       {!editing ? (
@@ -378,62 +458,67 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
               {node.ref_id}
             </div>
           )}
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>{node.name_pl || node.name}</div>
+          <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>{node.name_pl || node.name}</div>
 
           {node.description && (
-            <div style={{ marginBottom: 8, color: "var(--text-secondary)", lineHeight: 1.4 }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", background: "var(--bg-inset)", borderRadius: 6, padding: 8, marginBottom: 8, lineHeight: 1.5 }}>
               {node.description}
             </div>
           )}
 
           {node.annotation && (
-            <div style={{ marginBottom: 8, padding: "6px 8px", background: "var(--surface-hover)", borderRadius: 4, fontSize: 11 }}>
+            <div style={{ marginBottom: 8, padding: "6px 8px", background: "var(--bg-inset)", borderRadius: 6, fontSize: 11 }}>
               <strong>Adnotacja:</strong><br />{node.annotation}
             </div>
           )}
 
           {node.typical_evidence && (
-            <div style={{ marginBottom: 8, padding: "6px 8px", background: "var(--surface-hover)", borderRadius: 4, fontSize: 11 }}>
+            <div style={{ marginBottom: 8, padding: "6px 8px", background: "var(--bg-inset)", borderRadius: 6, fontSize: 11 }}>
               <strong>Typowe dowody:</strong><br />{node.typical_evidence}
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-            {node.assessable && <span className="badge badge-green" style={{ fontSize: 9 }}>Ocenialny</span>}
-            {node.implementation_groups && <span className="badge badge-gray" style={{ fontSize: 9 }}>IG: {node.implementation_groups}</span>}
-            {node.importance && <span className="badge badge-gray" style={{ fontSize: 9 }}>{node.importance}</span>}
-            <span className="badge badge-gray" style={{ fontSize: 9 }}>Glebokosc: {node.depth}</span>
+          <div style={{ lineHeight: 2 }}>
+            <DetailRow label="Głębokość" value={node.depth} />
+            <DetailRow label="Ocenialny" value={
+              node.assessable
+                ? <span style={{ color: "var(--green)", fontWeight: 500 }}>Tak</span>
+                : <span style={{ color: "var(--text-muted)" }}>Nie</span>
+            } />
+            {node.implementation_groups && <DetailRow label="Gr. implementacji" value={node.implementation_groups} />}
+            {node.importance && <DetailRow label="Ważność" value={node.importance} />}
           </div>
 
-          <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-            <button className="btn btn-sm btn-primary" onClick={() => setEditing(true)}>Edytuj</button>
-            <button className="btn btn-sm" onClick={onAddChild}>+ Podwezel</button>
-            <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={onDelete}>Usun</button>
+          {/* Actions */}
+          <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12, flexWrap: "wrap" }}>
+            <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => setEditing(true)}>Edytuj</button>
+            <button className="btn btn-sm" style={{ flex: 1 }} onClick={onAddChild}>+ Podwęzeł</button>
+            <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={onDelete}>Usuń</button>
           </div>
         </>
       ) : (
-        <div style={{ display: "grid", gap: 8 }}>
-          <label style={{ fontSize: 11 }}>
-            Nazwa
-            <input type="text" value={name} onChange={e => setName(e.target.value)} style={{ width: "100%", marginTop: 2 }} />
-          </label>
-          <label style={{ fontSize: 11 }}>
-            ID referencyjny
-            <input type="text" value={refId} onChange={e => setRefId(e.target.value)} style={{ width: "100%", marginTop: 2 }} />
-          </label>
-          <label style={{ fontSize: 11 }}>
-            Opis
-            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={4} style={{ width: "100%", marginTop: 2 }} />
-          </label>
-          <label style={{ fontSize: 11 }}>
-            Adnotacja
-            <textarea value={annotation} onChange={e => setAnnotation(e.target.value)} rows={2} style={{ width: "100%", marginTop: 2 }} />
-          </label>
-          <label style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "grid", gap: 10 }}>
+          <div className="form-group">
+            <label>Nazwa</label>
+            <input className="form-control" value={name} onChange={e => setName(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>ID referencyjny</label>
+            <input className="form-control" value={refId} onChange={e => setRefId(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>Opis</label>
+            <textarea className="form-control" value={description} onChange={e => setDescription(e.target.value)} rows={4} />
+          </div>
+          <div className="form-group">
+            <label>Adnotacja</label>
+            <textarea className="form-control" value={annotation} onChange={e => setAnnotation(e.target.value)} rows={2} />
+          </div>
+          <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={assessable} onChange={e => setAssessable(e.target.checked)} />
-            Ocenialny (lisc drzewa do oceny)
+            Ocenialny (liść drzewa do oceny)
           </label>
-          <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button className="btn btn-sm btn-primary" onClick={() => {
               onSave({ name, ref_id: refId || null, description: description || null, assessable, annotation: annotation || null });
             }}>Zapisz</button>
@@ -445,8 +530,10 @@ function NodeDetailPanel({ node, onClose, onDelete, onSave, onAddChild }: {
   );
 }
 
-/* --- Add Node Modal --- */
-function AddNodeModal({ parentId, onClose, onCreate }: {
+/* ═══════════════════════════════════════════════════
+   AddNodeForm
+   ═══════════════════════════════════════════════════ */
+function AddNodeForm({ parentId, onClose, onCreate }: {
   parentId: number | null;
   onClose: () => void;
   onCreate: (data: { name: string; ref_id: string; description: string; assessable: boolean; parent_id: number | null }) => void;
@@ -457,53 +544,46 @@ function AddNodeModal({ parentId, onClose, onCreate }: {
   const [assessable, setAssessable] = useState(false);
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex",
-      alignItems: "center", justifyContent: "center", zIndex: 1000,
-    }} onClick={onClose}>
-      <div className="card" style={{ width: 450, maxWidth: "90vw", padding: 24 }} onClick={e => e.stopPropagation()}>
-        <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700 }}>
-          {parentId ? "Dodaj podwezel" : "Dodaj wezel glowny"}
-        </h3>
-        <div style={{ display: "grid", gap: 10 }}>
-          <label style={{ fontSize: 12 }}>
-            Nazwa *
-            <input type="text" value={name} onChange={e => setName(e.target.value)}
-                   style={{ width: "100%", marginTop: 4 }} placeholder="Nazwa wezla" autoFocus />
-          </label>
-          <label style={{ fontSize: 12 }}>
-            ID referencyjny
-            <input type="text" value={refId} onChange={e => setRefId(e.target.value)}
-                   style={{ width: "100%", marginTop: 4 }} placeholder="np. A.5.1" />
-          </label>
-          <label style={{ fontSize: 12 }}>
-            Opis
-            <textarea value={description} onChange={e => setDescription(e.target.value)}
-                      rows={3} style={{ width: "100%", marginTop: 4 }} />
-          </label>
-          <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
-            <input type="checkbox" checked={assessable} onChange={e => setAssessable(e.target.checked)} />
-            Ocenialny (lisc drzewa do oceny)
-          </label>
+    <div>
+      <div style={{ display: "grid", gap: 12 }}>
+        <div className="form-group">
+          <label>Nazwa *</label>
+          <input className="form-control" value={name} onChange={e => setName(e.target.value)}
+                 placeholder="Nazwa węzła" autoFocus />
         </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-          <button className="btn" onClick={onClose}>Anuluj</button>
-          <button className="btn btn-primary" disabled={!name.trim()}
-                  onClick={() => onCreate({ name, ref_id: refId, description, assessable, parent_id: parentId })}>
-            Dodaj
-          </button>
+        <div className="form-group">
+          <label>ID referencyjny</label>
+          <input className="form-control" value={refId} onChange={e => setRefId(e.target.value)}
+                 placeholder="np. A.5.1" />
         </div>
+        <div className="form-group">
+          <label>Opis</label>
+          <textarea className="form-control" value={description} onChange={e => setDescription(e.target.value)} rows={3} />
+        </div>
+        <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={assessable} onChange={e => setAssessable(e.target.checked)} />
+          Ocenialny (liść drzewa do oceny)
+        </label>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+        <button className="btn" onClick={onClose}>Anuluj</button>
+        <button className="btn btn-primary" disabled={!name.trim()}
+                onClick={() => onCreate({ name, ref_id: refId, description, assessable, parent_id: parentId })}>
+          Dodaj
+        </button>
       </div>
     </div>
   );
 }
 
-/* --- Dimensions Panel --- */
+/* ═══════════════════════════════════════════════════
+   DimensionsPanel
+   ═══════════════════════════════════════════════════ */
 function DimensionsPanel({ dimensions }: { dimensions: Dimension[] }) {
   if (dimensions.length === 0) {
     return (
-      <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
-        Ten framework nie ma zdefiniowanych wymiarow oceny.
+      <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+        Ten framework nie ma zdefiniowanych wymiarów oceny.
       </div>
     );
   }
@@ -526,11 +606,11 @@ function DimensionsPanel({ dimensions }: { dimensions: Dimension[] }) {
               {dim.levels.map(lv => (
                 <div key={lv.id} style={{
                   padding: "4px 10px", borderRadius: 6, fontSize: 11,
-                  background: lv.color ? `${lv.color}20` : "var(--surface-hover)",
-                  color: lv.color ?? "var(--text-primary)",
+                  background: lv.color ? `${lv.color}20` : "var(--bg-inset)",
+                  color: lv.color ?? "var(--text)",
                   border: `1px solid ${lv.color ?? "var(--border)"}`,
                 }}>
-                  <strong>{lv.value}</strong> -- {lv.label_pl || lv.label}
+                  <strong>{lv.value}</strong> — {lv.label_pl || lv.label}
                 </div>
               ))}
             </div>
@@ -541,58 +621,65 @@ function DimensionsPanel({ dimensions }: { dimensions: Dimension[] }) {
   );
 }
 
-/* --- Version History Panel --- */
+/* ═══════════════════════════════════════════════════
+   VersionHistoryPanel
+   ═══════════════════════════════════════════════════ */
 function VersionHistoryPanel({ versions }: { versions: FrameworkVersionHistory[] }) {
   if (versions.length === 0) {
     return (
-      <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
+      <div className="card" style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
         Brak historii wersji.
       </div>
     );
   }
 
   return (
-    <div className="card" style={{ padding: 0, overflow: "auto" }}>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Wersja</th>
-            <th>Status</th>
-            <th>Opis zmian</th>
-            <th>Zmienione przez</th>
-            <th>Data</th>
-            <th style={{ textAlign: "right" }}>Wezly</th>
-            <th style={{ textAlign: "right" }}>Ocenialne</th>
-          </tr>
-        </thead>
-        <tbody>
-          {versions.map(v => {
-            const lc = LIFECYCLE_LABELS[v.lifecycle_status] || { label: v.lifecycle_status, cls: "badge-gray" };
-            return (
+    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ overflowX: "auto" }}>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Wersja</th>
+              <th>Status</th>
+              <th>Opis zmian</th>
+              <th>Zmienione przez</th>
+              <th>Data</th>
+              <th style={{ textAlign: "right" }}>Węzły</th>
+              <th style={{ textAlign: "right" }}>Ocenialne</th>
+            </tr>
+          </thead>
+          <tbody>
+            {versions.map(v => (
               <tr key={v.id}>
                 <td style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 600 }}>v{v.edit_version}</td>
-                <td><span className={`badge ${lc.cls}`} style={{ fontSize: 9 }}>{lc.label}</span></td>
-                <td style={{ fontSize: 11, maxWidth: 300 }}>{v.change_summary || "--"}</td>
-                <td style={{ fontSize: 11 }}>{v.changed_by || "--"}</td>
+                <td>
+                  <span className="score-badge" style={{ background: lcBg(v.lifecycle_status), color: lcColor(v.lifecycle_status), fontSize: 10 }}>
+                    {lcLabel(v.lifecycle_status)}
+                  </span>
+                </td>
+                <td style={{ fontSize: 11, maxWidth: 300 }}>{v.change_summary || "—"}</td>
+                <td style={{ fontSize: 11 }}>{v.changed_by || "—"}</td>
                 <td style={{ fontSize: 11, whiteSpace: "nowrap" }}>
-                  {v.changed_at ? new Date(v.changed_at).toLocaleString("pl-PL") : "--"}
+                  {v.changed_at ? new Date(v.changed_at).toLocaleString("pl-PL") : "—"}
                 </td>
                 <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
-                  {v.snapshot_nodes_count ?? "--"}
+                  {v.snapshot_nodes_count ?? "—"}
                 </td>
                 <td style={{ textAlign: "right", fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
-                  {v.snapshot_assessable_count ?? "--"}
+                  {v.snapshot_assessable_count ?? "—"}
                 </td>
               </tr>
-            );
-          })}
-        </tbody>
-      </table>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-/* --- Edit Metadata Panel --- */
+/* ═══════════════════════════════════════════════════
+   EditMetadataPanel
+   ═══════════════════════════════════════════════════ */
 function EditMetadataPanel({ fw, onSaved }: { fw: FrameworkDetail; onSaved: () => void }) {
   const [name, setName] = useState(fw.name);
   const [refId, setRefId] = useState(fw.ref_id || "");
@@ -618,7 +705,7 @@ function EditMetadataPanel({ fw, onSaved }: { fw: FrameworkDetail; onSaved: () =
       setChangeSummary("");
       onSaved();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Blad zapisu");
+      alert(e instanceof Error ? e.message : "Błąd zapisu");
     } finally {
       setSaving(false);
     }
@@ -626,51 +713,50 @@ function EditMetadataPanel({ fw, onSaved }: { fw: FrameworkDetail; onSaved: () =
 
   return (
     <div className="card" style={{ padding: "16px 20px" }}>
-      <h3 style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 700 }}>Edycja metadanych frameworka</h3>
+      <div style={{ maxWidth: 600 }}>
+        <div style={{ display: "grid", gap: 14 }}>
+          <div className="form-group">
+            <label>Nazwa</label>
+            <input className="form-control" value={name} onChange={e => setName(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>ID referencyjny</label>
+            <input className="form-control" value={refId} onChange={e => setRefId(e.target.value)} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
+            <div className="form-group">
+              <label>Wersja źródłowa</label>
+              <input className="form-control" value={version} onChange={e => setVersion(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Wersja publikacji</label>
+              <input className="form-control" value={publishedVersion} onChange={e => setPublishedVersion(e.target.value)} placeholder="np. 1.0" />
+            </div>
+            <div className="form-group">
+              <label>Dostawca</label>
+              <input className="form-control" value={provider} onChange={e => setProvider(e.target.value)} />
+            </div>
+          </div>
+          <div className="form-group">
+            <label>Opis</label>
+            <textarea className="form-control" value={description} onChange={e => setDescription(e.target.value)} rows={4} />
+          </div>
+          <div className="form-group">
+            <label>Opis zmian (do historii wersji)</label>
+            <input className="form-control" value={changeSummary} onChange={e => setChangeSummary(e.target.value)}
+                   placeholder="Co zostało zmienione?" />
+          </div>
 
-      <div style={{ display: "grid", gap: 12, maxWidth: 600 }}>
-        <label style={{ fontSize: 12 }}>
-          Nazwa
-          <input type="text" value={name} onChange={e => setName(e.target.value)} style={{ width: "100%", marginTop: 4 }} />
-        </label>
-        <label style={{ fontSize: 12 }}>
-          ID referencyjny
-          <input type="text" value={refId} onChange={e => setRefId(e.target.value)} style={{ width: "100%", marginTop: 4 }} />
-        </label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-          <label style={{ fontSize: 12 }}>
-            Wersja zrodlowa
-            <input type="text" value={version} onChange={e => setVersion(e.target.value)} style={{ width: "100%", marginTop: 4 }} />
-          </label>
-          <label style={{ fontSize: 12 }}>
-            Wersja publikacji (w naszym systemie)
-            <input type="text" value={publishedVersion} onChange={e => setPublishedVersion(e.target.value)}
-                   style={{ width: "100%", marginTop: 4 }} placeholder="np. 1.0" />
-          </label>
-          <label style={{ fontSize: 12 }}>
-            Dostawca
-            <input type="text" value={provider} onChange={e => setProvider(e.target.value)} style={{ width: "100%", marginTop: 4 }} />
-          </label>
-        </div>
-        <label style={{ fontSize: 12 }}>
-          Opis
-          <textarea value={description} onChange={e => setDescription(e.target.value)} rows={4} style={{ width: "100%", marginTop: 4 }} />
-        </label>
-        <label style={{ fontSize: 12 }}>
-          Opis zmian (do historii wersji)
-          <input type="text" value={changeSummary} onChange={e => setChangeSummary(e.target.value)}
-                 style={{ width: "100%", marginTop: 4 }} placeholder="Co zostalo zmienione?" />
-        </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+              {saving ? "Zapisywanie..." : "Zapisz zmiany"}
+            </button>
+          </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? "Zapisywanie..." : "Zapisz zmiany"}
-          </button>
-        </div>
-
-        <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 8 }}>
-          Kazda edycja tworzy nowa wersje w historii. Wersja publikacji (np. "8.0" benchmarku CIS)
-          jest niezalezna od wersji edycji w systemie (v{fw.edit_version}).
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
+            Każda edycja tworzy nową wersję w historii. Wersja publikacji (np. "8.0" benchmarku CIS)
+            jest niezależna od wersji edycji w systemie (v{fw.edit_version}).
+          </div>
         </div>
       </div>
     </div>

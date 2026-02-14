@@ -1138,10 +1138,12 @@ async def import_from_ai(
         s.add(FrameworkVersionHistory(
             framework_id=fw.id,
             edit_version=1,
-            change_type="import",
-            change_description=f"AI import z {file.filename} ({meta.get('format', '?')}, "
-                               f"{meta.get('chunks', 1)} fragmentów, {total_nodes} węzłów)",
+            lifecycle_status="draft",
+            change_summary=f"AI import z {file.filename} ({meta.get('format', '?')}, "
+                           f"{meta.get('chunks', 1)} fragmentów, {total_nodes} węzłów)",
             changed_by="ai-import",
+            snapshot_nodes_count=total_nodes,
+            snapshot_assessable_count=total_assessable,
         ))
 
         await s.commit()

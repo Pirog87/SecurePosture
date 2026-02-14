@@ -155,6 +155,32 @@ async def _get_entry(s: AsyncSession, entry_id: int) -> DictionaryEntry:
     return entry
 
 
+# ── GET entries by query param (frontend compat) ──
+
+@router.get(
+    "/entries",
+    response_model=list[DictionaryEntryOut],
+    summary="Pozycje słownika (wg type_code)",
+)
+async def get_entries_by_type_code(
+    type_code: str = Query(..., description="Kod typu słownika"),
+    include_archived: bool = Query(False),
+    s: AsyncSession = Depends(get_session),
+):
+    """Return entries filtered by type_code query parameter."""
+    dt = await _get_type_by_code(s, type_code)
+    entry_filter = DictionaryEntry.dict_type_id == dt.id
+    if not include_archived:
+        entry_filter = entry_filter & DictionaryEntry.is_active.is_(True)
+    q = (
+        select(DictionaryEntry)
+        .where(entry_filter)
+        .order_by(DictionaryEntry.sort_order, DictionaryEntry.label)
+    )
+    entries = (await s.execute(q)).scalars().all()
+    return [DictionaryEntryOut.model_validate(e) for e in entries]
+
+
 # ── LIST dictionary types ──
 
 @router.get(

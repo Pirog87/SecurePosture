@@ -10,8 +10,9 @@ Inspired by CISO Assistant's set-theoretic mapping model:
 - Bulk import & confirmation workflow
 """
 from datetime import datetime
+import io
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import func, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -437,6 +438,105 @@ async def bulk_import_mappings(body: FrameworkMappingBulkCreate, s: AsyncSession
         "skipped": skipped,
         "errors": errors[:20],  # Limit error messages
         "mapping_set_id": ms.id,
+    }
+
+
+# ═══ YAML Import (CISO Assistant mapping files) ════════════════
+
+
+@router.post("/import/yaml")
+async def import_mapping_yaml_endpoint(
+    file: UploadFile = File(...),
+    source_framework_id: int | None = Query(None, description="Override source framework (optional)"),
+    target_framework_id: int | None = Query(None, description="Override target framework (optional)"),
+    auto_revert: bool = Query(True, description="Auto-generate inverse mappings"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Import mappings from a CISO Assistant mapping YAML file.
+
+    Parses the YAML file's requirement_mapping_sets and creates framework mappings.
+    Frameworks are resolved by URN from the YAML, or can be overridden with query params.
+    """
+    from app.services.mapping_import import import_mapping_yaml
+
+    if not file.filename or not file.filename.endswith((".yaml", ".yml")):
+        raise HTTPException(400, "File must be a YAML file (.yaml or .yml)")
+
+    content = await file.read()
+    file_obj = io.BytesIO(content)
+
+    try:
+        result = await import_mapping_yaml(
+            s,
+            file_obj,
+            source_framework_id=source_framework_id,
+            target_framework_id=target_framework_id,
+            auto_revert=auto_revert,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        await s.rollback()
+        raise HTTPException(500, f"Import error: {e}")
+
+    return {
+        "mapping_set_id": result.mapping_set_id,
+        "source_framework_name": result.source_framework_name,
+        "target_framework_name": result.target_framework_name,
+        "created": result.created,
+        "revert_created": result.revert_created,
+        "skipped": result.skipped,
+        "errors": result.errors[:20],
+    }
+
+
+@router.post("/import/github-mapping")
+async def import_mapping_from_github(
+    mapping_path: str = Query(..., description="Path to mapping YAML in CISO Assistant repo, e.g. 'mapping-nist-sp-800-53-rev5-to-iso27001-2022.yaml'"),
+    source_framework_id: int | None = Query(None),
+    target_framework_id: int | None = Query(None),
+    auto_revert: bool = Query(True),
+    s: AsyncSession = Depends(get_session),
+):
+    """Import mappings directly from the CISO Assistant GitHub repository."""
+    import httpx
+
+    base_url = "https://raw.githubusercontent.com/intuitem/ciso-assistant-community/main/backend/library/libraries"
+    url = f"{base_url}/{mapping_path}"
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+    except httpx.HTTPError as e:
+        raise HTTPException(400, f"Failed to fetch from GitHub: {e}")
+
+    from app.services.mapping_import import import_mapping_yaml
+
+    file_obj = io.BytesIO(resp.content)
+    try:
+        result = await import_mapping_yaml(
+            s,
+            file_obj,
+            source_framework_id=source_framework_id,
+            target_framework_id=target_framework_id,
+            auto_revert=auto_revert,
+            imported_by="github-import",
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        await s.rollback()
+        raise HTTPException(500, f"GitHub import error: {e}")
+
+    return {
+        "mapping_set_id": result.mapping_set_id,
+        "source_framework_name": result.source_framework_name,
+        "target_framework_name": result.target_framework_name,
+        "created": result.created,
+        "revert_created": result.revert_created,
+        "skipped": result.skipped,
+        "errors": result.errors[:20],
     }
 
 

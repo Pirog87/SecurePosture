@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { api } from "../services/api";
 import StatsCards, { type StatCard } from "../components/StatsCards";
 import TableToolbar, { type ColumnDef } from "../components/TableToolbar";
@@ -78,10 +78,10 @@ interface MappingStats {
 /* ─── CISO Assistant Relationship Types ─── */
 const RELATIONSHIP_LABELS: Record<string, string> = {
   equal: "Equal (=)",
-  subset: "Subset (\u2286)",
-  superset: "Superset (\u2287)",
-  intersect: "Intersect (\u2229)",
-  not_related: "Not Related (\u2205)",
+  subset: "Subset (⊆)",
+  superset: "Superset (⊇)",
+  intersect: "Intersect (∩)",
+  not_related: "Not Related (∅)",
 };
 
 const RELATIONSHIP_COLORS: Record<string, string> = {
@@ -94,14 +94,14 @@ const RELATIONSHIP_COLORS: Record<string, string> = {
 
 const RELATIONSHIP_PL: Record<string, string> = {
   equal: "Ekwiwalentne",
-  subset: "Podzbi\u00f3r",
-  superset: "Nadzbi\u00f3r",
-  intersect: "Przeci\u0119cie",
-  not_related: "Brak powi\u0105zania",
+  subset: "Podzbiór",
+  superset: "Nadzbiór",
+  intersect: "Przecięcie",
+  not_related: "Brak powiązania",
 };
 
 const STRENGTH_LABELS: Record<number, string> = {
-  1: "S\u0142abe",
+  1: "Słabe",
   2: "Umiarkowane",
   3: "Silne",
 };
@@ -119,7 +119,7 @@ const RATIONALE_LABELS: Record<string, string> = {
 };
 
 const SOURCE_LABELS: Record<string, string> = {
-  manual: "R\u0119czne",
+  manual: "Ręczne",
   ai_assisted: "AI-Assisted",
   scf_strm: "SCF STRM",
   import: "Import",
@@ -187,7 +187,7 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
       <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{label}</span>
-      <span style={{ textAlign: "right", color: color ?? undefined, fontWeight: color ? 500 : undefined }}>{value ?? "\u2014"}</span>
+      <span style={{ textAlign: "right", color: color ?? undefined, fontWeight: color ? 500 : undefined }}>{value ?? "—"}</span>
     </div>
   );
 }
@@ -237,10 +237,10 @@ type TabId = "mappings" | "sets" | "coverage" | "matrix";
 
 function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => void }) {
   const tabs: { id: TabId; label: string; icon: string }[] = [
-    { id: "mappings", label: "Mapowania", icon: "\ud83d\udd17" },
-    { id: "sets", label: "Zestawy", icon: "\ud83d\udce6" },
-    { id: "coverage", label: "Pokrycie", icon: "\ud83d\udcca" },
-    { id: "matrix", label: "Matryca", icon: "\ud83d\uddd3" },
+    { id: "mappings", label: "Mapowania", icon: "🔗" },
+    { id: "sets", label: "Zestawy", icon: "📦" },
+    { id: "coverage", label: "Pokrycie", icon: "📊" },
+    { id: "matrix", label: "Matryca", icon: "🗓" },
   ];
   return (
     <div style={{ display: "flex", gap: 2, background: "var(--bg-secondary)", borderRadius: 8, padding: 3, marginBottom: 16 }}>
@@ -267,12 +267,32 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
 /* ═══════════════════════════════════════════════════════════
    MappingSetsTab
    ═══════════════════════════════════════════════════════════ */
+interface ImportResult {
+  mapping_set_id: number | null;
+  source_framework_name: string | null;
+  target_framework_name: string | null;
+  created: number;
+  revert_created: number;
+  skipped: number;
+  errors: string[];
+}
+
 function MappingSetsTab({ sets, frameworks, onRefresh }: {
   sets: MappingSet[];
   frameworks: Framework[];
   onRefresh: () => void;
 }) {
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importMode, setImportMode] = useState<"file" | "github">("file");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [githubPath, setGithubPath] = useState("mapping-nist-sp-800-53-rev5-to-iso27001-2022.yaml");
+  const [importSrcFw, setImportSrcFw] = useState(0);
+  const [importTgtFw, setImportTgtFw] = useState(0);
+  const [importAutoRevert, setImportAutoRevert] = useState(true);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState({ source_framework_id: 0, target_framework_id: 0, name: "" });
 
   const handleCreate = async () => {
@@ -286,24 +306,80 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
       setShowCreate(false);
       setForm({ source_framework_id: 0, target_framework_id: 0, name: "" });
       onRefresh();
-    } catch { alert("B\u0142\u0105d tworzenia zestawu"); }
+    } catch { alert("Błąd tworzenia zestawu"); }
   };
+
+  const handleImport = async () => {
+    setImporting(true);
+    setImportResult(null);
+    try {
+      let result: ImportResult;
+      if (importMode === "file") {
+        if (!importFile) return;
+        const formData = new FormData();
+        formData.append("file", importFile);
+        const params = new URLSearchParams();
+        if (importSrcFw) params.set("source_framework_id", String(importSrcFw));
+        if (importTgtFw) params.set("target_framework_id", String(importTgtFw));
+        params.set("auto_revert", String(importAutoRevert));
+        result = await api.postFormData<ImportResult>(`/api/v1/framework-mappings/import/yaml?${params}`, formData);
+      } else {
+        if (!githubPath.trim()) return;
+        const params = new URLSearchParams({ mapping_path: githubPath.trim(), auto_revert: String(importAutoRevert) });
+        if (importSrcFw) params.set("source_framework_id", String(importSrcFw));
+        if (importTgtFw) params.set("target_framework_id", String(importTgtFw));
+        result = await api.post<ImportResult>(`/api/v1/framework-mappings/import/github-mapping?${params}`, {});
+      }
+      setImportResult(result);
+      onRefresh();
+    } catch (e: any) {
+      const msg = e?.message || "Błąd importu";
+      setImportResult({ mapping_set_id: null, source_framework_name: null, target_framework_name: null, created: 0, revert_created: 0, skipped: 0, errors: [msg] });
+    }
+    setImporting(false);
+  };
+
+  const resetImport = () => {
+    setImportFile(null);
+    setImportResult(null);
+    setImportSrcFw(0);
+    setImportTgtFw(0);
+    setImportAutoRevert(true);
+    setGithubPath("mapping-nist-sp-800-53-rev5-to-iso27001-2022.yaml");
+    setImportMode("file");
+  };
+
+  const GITHUB_MAPPING_FILES = [
+    "mapping-nist-sp-800-53-rev5-to-iso27001-2022.yaml",
+    "mapping-iso27001-2022-to-nist-sp-800-53-rev5.yaml",
+    "mapping-nist-csf-2.0-to-iso27001-2022.yaml",
+    "mapping-iso27001-2022-to-nist-csf-2.0.yaml",
+    "mapping-cis-controls-v8-to-iso27001-2022.yaml",
+    "mapping-iso27001-2022-to-cis-controls-v8.yaml",
+    "mapping-nist-sp-800-53-rev5-to-nist-csf-2.0.yaml",
+  ];
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Zestawy Mapowa\u0144</h3>
+          <h3 style={{ margin: 0, fontSize: 16 }}>Zestawy Mapowań</h3>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
-            Grupuj mapowania mi\u0119dzy parami framework\u00f3w (wzorzec CISO Assistant)
+            Grupuj mapowania między parami frameworków (wzorzec CISO Assistant)
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Nowy zestaw</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn" onClick={() => { resetImport(); setShowImport(true); }}
+            style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            Import YAML
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Nowy zestaw</button>
+        </div>
       </div>
 
       {sets.length === 0 ? (
         <div className="card" style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
-          Brak zestaw\u00f3w mapowa\u0144. Utw\u00f3rz zestaw, aby grupowa\u0107 mapowania mi\u0119dzy frameworkami.
+          Brak zestawów mapowań. Utwórz zestaw, aby grupować mapowania między frameworkami.
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 12 }}>
@@ -314,16 +390,16 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
                 <StatusBadge status={s.status} />
               </div>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
-                {s.source_framework_name} \u2192 {s.target_framework_name}
+                {s.source_framework_name} → {s.target_framework_name}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <div style={{ padding: "8px 12px", borderRadius: 6, background: "var(--bg-secondary)" }}>
                   <div style={{ fontSize: 20, fontWeight: 700, color: "var(--blue)" }}>{s.mapping_count}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Mapowa\u0144</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Mapowań</div>
                 </div>
                 <div style={{ padding: "8px 12px", borderRadius: 6, background: "var(--bg-secondary)" }}>
                   <div style={{ fontSize: 20, fontWeight: 700, color: s.coverage_percent != null && s.coverage_percent >= 80 ? "#10b981" : "#f59e0b" }}>
-                    {s.coverage_percent != null ? `${s.coverage_percent}%` : "\u2014"}
+                    {s.coverage_percent != null ? `${s.coverage_percent}%` : "—"}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Pokrycie</div>
                 </div>
@@ -333,17 +409,17 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
         </div>
       )}
 
-      <Modal open={showCreate} title="Nowy zestaw mapowa\u0144" onClose={() => setShowCreate(false)}>
+      <Modal open={showCreate} title="Nowy zestaw mapowań" onClose={() => setShowCreate(false)}>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <label>Source Framework *
             <select className="form-control" value={form.source_framework_id} onChange={e => setForm({ ...form, source_framework_id: Number(e.target.value) })}>
-              <option value={0}>\u2014 wybierz \u2014</option>
+              <option value={0}>— wybierz —</option>
               {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
             </select>
           </label>
           <label>Target Framework *
             <select className="form-control" value={form.target_framework_id} onChange={e => setForm({ ...form, target_framework_id: Number(e.target.value) })}>
-              <option value={0}>\u2014 wybierz \u2014</option>
+              <option value={0}>— wybierz —</option>
               {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
             </select>
           </label>
@@ -352,7 +428,182 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
           </label>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
             <button className="btn" onClick={() => setShowCreate(false)}>Anuluj</button>
-            <button className="btn btn-primary" onClick={handleCreate} disabled={!form.source_framework_id || !form.target_framework_id}>Utw\u00f3rz</button>
+            <button className="btn btn-primary" onClick={handleCreate} disabled={!form.source_framework_id || !form.target_framework_id}>Utwórz</button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Import YAML Modal */}
+      <Modal open={showImport} title="Import mapowań CISO Assistant" onClose={() => setShowImport(false)} wide>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Info box */}
+          <div style={{ padding: 12, borderRadius: 8, background: "var(--bg-secondary)", fontSize: 12 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Format CISO Assistant YAML</div>
+            <div style={{ color: "var(--text-muted)", lineHeight: 1.6 }}>
+              Importuj pliki mapowań z repozytorium CISO Assistant Community.
+              Pliki zawieraj{'ą'} sekcj{'ę'} <code>requirement_mapping_sets</code> z definicjami
+              powi{'ą'}za{'ń'} mi{'ę'}dzy wymaganiami dw{'ó'}ch framework{'ó'}w.
+              Frameworki {'źr\'ó'}d{'ł'}owe i docelowe musz{'ą'} by{'ć'} wcze{'ś'}niej zaimportowane.
+            </div>
+          </div>
+
+          {/* Mode selector */}
+          <div style={{ display: "flex", gap: 2, background: "var(--bg-secondary)", borderRadius: 6, padding: 2 }}>
+            <button
+              onClick={() => setImportMode("file")}
+              style={{
+                flex: 1, padding: "6px 12px", borderRadius: 4, border: "none", cursor: "pointer",
+                background: importMode === "file" ? "var(--bg-primary)" : "transparent",
+                color: importMode === "file" ? "var(--text-primary)" : "var(--text-muted)",
+                fontWeight: importMode === "file" ? 600 : 400, fontSize: 12,
+              }}
+            >
+              Plik YAML
+            </button>
+            <button
+              onClick={() => setImportMode("github")}
+              style={{
+                flex: 1, padding: "6px 12px", borderRadius: 4, border: "none", cursor: "pointer",
+                background: importMode === "github" ? "var(--bg-primary)" : "transparent",
+                color: importMode === "github" ? "var(--text-primary)" : "var(--text-muted)",
+                fontWeight: importMode === "github" ? 600 : 400, fontSize: 12,
+              }}
+            >
+              GitHub CISO Assistant
+            </button>
+          </div>
+
+          {/* File upload */}
+          {importMode === "file" && (
+            <div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".yaml,.yml"
+                style={{ display: "none" }}
+                onChange={e => setImportFile(e.target.files?.[0] || null)}
+              />
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  border: "2px dashed var(--border)", borderRadius: 8, padding: 24,
+                  textAlign: "center", cursor: "pointer", transition: "border-color 0.15s",
+                  background: importFile ? "var(--bg-secondary)" : "transparent",
+                }}
+              >
+                {importFile ? (
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{importFile.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                      {(importFile.size / 1024).toFixed(1)} KB — kliknij aby zmieni{'ć'}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: "var(--text-muted)" }}>
+                    <div style={{ fontSize: 24, marginBottom: 4 }}>+</div>
+                    <div style={{ fontSize: 13 }}>Kliknij aby wybra{'ć'} plik YAML</div>
+                    <div style={{ fontSize: 11, marginTop: 4 }}>mapping-*.yaml z repozytorium CISO Assistant</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* GitHub path */}
+          {importMode === "github" && (
+            <div>
+              <label style={{ fontSize: 13 }}>Plik mapowania z repozytorium CISO Assistant
+                <select
+                  className="form-control"
+                  value={githubPath}
+                  onChange={e => setGithubPath(e.target.value)}
+                  style={{ marginTop: 4 }}
+                >
+                  {GITHUB_MAPPING_FILES.map(f => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                intuitem/ciso-assistant-community/backend/library/libraries/
+              </div>
+            </div>
+          )}
+
+          {/* Optional framework overrides */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <label style={{ fontSize: 13 }}>Source Framework (opcjonalnie)
+              <select className="form-control" value={importSrcFw} onChange={e => setImportSrcFw(Number(e.target.value))}>
+                <option value={0}>— auto z YAML —</option>
+                {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+              </select>
+            </label>
+            <label style={{ fontSize: 13 }}>Target Framework (opcjonalnie)
+              <select className="form-control" value={importTgtFw} onChange={e => setImportTgtFw(Number(e.target.value))}>
+                <option value={0}>— auto z YAML —</option>
+                {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+              </select>
+            </label>
+          </div>
+
+          {/* Auto-revert checkbox */}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, cursor: "pointer" }}>
+            <input type="checkbox" checked={importAutoRevert} onChange={e => setImportAutoRevert(e.target.checked)} />
+            Auto-revert (generuj odwrotne mapowania)
+          </label>
+
+          {/* Result */}
+          {importResult && (
+            <div style={{
+              padding: 12, borderRadius: 8, fontSize: 13, lineHeight: 1.6,
+              background: importResult.created > 0 ? "#10b98118" : "#ef444418",
+              border: `1px solid ${importResult.created > 0 ? "#10b98140" : "#ef444440"}`,
+            }}>
+              {importResult.created > 0 ? (
+                <>
+                  <div style={{ fontWeight: 600, color: "#10b981", marginBottom: 4 }}>
+                    Import zako{'ń'}czony pomy{'ś'}lnie
+                  </div>
+                  <div>Utworzono: <strong>{importResult.created}</strong> mapowa{'ń'}</div>
+                  {importResult.revert_created > 0 && (
+                    <div>Odwrotne: <strong>{importResult.revert_created}</strong> mapowa{'ń'}</div>
+                  )}
+                  {importResult.skipped > 0 && (
+                    <div>Pomini{'ę'}to (duplikaty): <strong>{importResult.skipped}</strong></div>
+                  )}
+                  {importResult.source_framework_name && importResult.target_framework_name && (
+                    <div style={{ marginTop: 4, color: "var(--text-muted)" }}>
+                      {importResult.source_framework_name} {'→'} {importResult.target_framework_name}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div style={{ fontWeight: 600, color: "#ef4444", marginBottom: 4 }}>
+                    Bł{'ą'}d importu
+                  </div>
+                  {importResult.errors.map((err, i) => (
+                    <div key={i} style={{ fontSize: 12, color: "var(--text-muted)" }}>{err}</div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+            <button className="btn" onClick={() => setShowImport(false)}>
+              {importResult?.created ? "Zamknij" : "Anuluj"}
+            </button>
+            {!importResult?.created && (
+              <button
+                className="btn btn-primary"
+                onClick={handleImport}
+                disabled={importing || (importMode === "file" && !importFile) || (importMode === "github" && !githubPath.trim())}
+              >
+                {importing ? "Importowanie..." : "Importuj mapowania"}
+              </button>
+            )}
           </div>
         </div>
       </Modal>
@@ -383,25 +634,25 @@ function CoverageTab({ frameworks }: { frameworks: Framework[] }) {
     <div>
       <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>Analiza Pokrycia</h3>
       <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--text-muted)" }}>
-        Sprawd\u017a, jakie wymagania s\u0105 pokryte mapowaniami mi\u0119dzy frameworkami
+        Sprawdź, jakie wymagania są pokryte mapowaniami między frameworkami
       </p>
 
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
           <label style={{ margin: 0 }}>Source Framework
             <select className="form-control" value={srcFw} onChange={e => setSrcFw(Number(e.target.value))}>
-              <option value={0}>\u2014 wybierz \u2014</option>
+              <option value={0}>— wybierz —</option>
               {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
             </select>
           </label>
           <label style={{ margin: 0 }}>Target Framework
             <select className="form-control" value={tgtFw} onChange={e => setTgtFw(Number(e.target.value))}>
-              <option value={0}>\u2014 wybierz \u2014</option>
+              <option value={0}>— wybierz —</option>
               {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
             </select>
           </label>
           <button className="btn btn-primary" onClick={loadCoverage} disabled={!srcFw || !tgtFw || loading}>
-            {loading ? "Analizuj\u0119..." : "Analizuj pokrycie"}
+            {loading ? "Analizuję..." : "Analizuj pokrycie"}
           </button>
         </div>
       </div>
@@ -410,7 +661,7 @@ function CoverageTab({ frameworks }: { frameworks: Framework[] }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
           {/* Coverage Summary */}
           <div className="card" style={{ padding: 16 }}>
-            <h4 style={{ margin: "0 0 16px", fontSize: 14 }}>Pokrycie wymaga\u0144</h4>
+            <h4 style={{ margin: "0 0 16px", fontSize: 14 }}>Pokrycie wymagań</h4>
             <div style={{ textAlign: "center", marginBottom: 16 }}>
               <div style={{
                 width: 100, height: 100, borderRadius: "50%", margin: "0 auto 8px",
@@ -426,12 +677,12 @@ function CoverageTab({ frameworks }: { frameworks: Framework[] }) {
                 </div>
               </div>
             </div>
-            <CoverageBar percent={coverage.coverage_percent} label="Ca\u0142kowite pokrycie" color="#10b981" />
+            <CoverageBar percent={coverage.coverage_percent} label="Całkowite pokrycie" color="#10b981" />
             <CoverageBar percent={coverage.confirmed_coverage_percent} label="Potwierdzone pokrycie" color="#6366f1" />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 12 }}>
               <div style={{ textAlign: "center", padding: 8, borderRadius: 6, background: "var(--bg-secondary)" }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "var(--blue)" }}>{coverage.total_requirements}</div>
-                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Wymaga\u0144</div>
+                <div style={{ fontSize: 10, color: "var(--text-muted)" }}>Wymagań</div>
               </div>
               <div style={{ textAlign: "center", padding: 8, borderRadius: 6, background: "var(--bg-secondary)" }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#10b981" }}>{coverage.covered}</div>
@@ -446,9 +697,9 @@ function CoverageTab({ frameworks }: { frameworks: Framework[] }) {
 
           {/* Relationship Breakdown */}
           <div className="card" style={{ padding: 16 }}>
-            <h4 style={{ margin: "0 0 16px", fontSize: 14 }}>Rozk\u0142ad relacji</h4>
+            <h4 style={{ margin: "0 0 16px", fontSize: 14 }}>Rozkład relacji</h4>
             <RelationshipChart data={coverage.by_relationship} />
-            <h4 style={{ margin: "16px 0 12px", fontSize: 14 }}>Si\u0142a powi\u0105za\u0144</h4>
+            <h4 style={{ margin: "16px 0 12px", fontSize: 14 }}>Siła powiązań</h4>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {Object.entries(coverage.by_strength).map(([str, count]) => {
                 const s = Number(str);
@@ -486,8 +737,8 @@ function CoverageTab({ frameworks }: { frameworks: Framework[] }) {
                   <tbody>
                     {coverage.uncovered_requirements.map(r => (
                       <tr key={r.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                        <td style={{ padding: "6px 8px", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{r.ref_id || "\u2014"}</td>
-                        <td style={{ padding: "6px 8px" }}>{r.name || "\u2014"}</td>
+                        <td style={{ padding: "6px 8px", fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>{r.ref_id || "—"}</td>
+                        <td style={{ padding: "6px 8px" }}>{r.name || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -523,8 +774,8 @@ function MatrixTab({ frameworks }: { frameworks: Framework[] }) {
   // Build heatmap grid from mappings
   const heatmap = useMemo(() => {
     if (!matrix?.mappings?.length) return null;
-    const srcRefs = [...new Set(matrix.mappings.map((m: any) => m.source_ref_id))].sort();
-    const tgtRefs = [...new Set(matrix.mappings.map((m: any) => m.target_ref_id))].sort();
+    const srcRefs = [...new Set(matrix.mappings.map((m: any) => m.source_ref_id as string))].sort() as string[];
+    const tgtRefs = [...new Set(matrix.mappings.map((m: any) => m.target_ref_id as string))].sort() as string[];
     const lookup = new Map<string, any>();
     for (const m of matrix.mappings) {
       lookup.set(`${m.source_ref_id}|${m.target_ref_id}`, m);
@@ -534,27 +785,27 @@ function MatrixTab({ frameworks }: { frameworks: Framework[] }) {
 
   return (
     <div>
-      <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>Matryca Mapowa\u0144</h3>
+      <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>Matryca Mapowań</h3>
       <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--text-muted)" }}>
-        Wizualizacja powi\u0105za\u0144 mi\u0119dzy wymaganiami dw\u00f3ch framework\u00f3w w formie heatmapy
+        Wizualizacja powiązań między wymaganiami dwóch frameworków w formie heatmapy
       </p>
 
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "end" }}>
           <label style={{ margin: 0 }}>Source Framework
             <select className="form-control" value={srcFw} onChange={e => setSrcFw(Number(e.target.value))}>
-              <option value={0}>\u2014 wybierz \u2014</option>
+              <option value={0}>— wybierz —</option>
               {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
             </select>
           </label>
           <label style={{ margin: 0 }}>Target Framework
             <select className="form-control" value={tgtFw} onChange={e => setTgtFw(Number(e.target.value))}>
-              <option value={0}>\u2014 wybierz \u2014</option>
+              <option value={0}>— wybierz —</option>
               {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
             </select>
           </label>
           <button className="btn btn-primary" onClick={loadMatrix} disabled={!srcFw || !tgtFw || loading}>
-            {loading ? "\u0141aduj\u0119..." : "Poka\u017c matryc\u0119"}
+            {loading ? "Ładuję..." : "Pokaż matrycę"}
           </button>
         </div>
       </div>
@@ -565,7 +816,7 @@ function MatrixTab({ frameworks }: { frameworks: Framework[] }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
             <div className="card" style={{ padding: 12, textAlign: "center" }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: "var(--blue)" }}>{matrix.total_mappings}</div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Mapowa\u0144</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Mapowań</div>
             </div>
             <div className="card" style={{ padding: 12, textAlign: "center" }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: "#10b981" }}>{matrix.coverage_percent}%</div>
@@ -582,7 +833,7 @@ function MatrixTab({ frameworks }: { frameworks: Framework[] }) {
               </div>
             </div>
             <div className="card" style={{ padding: 12 }}>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Si\u0142a</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Siła</div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                 {Object.entries(matrix.by_strength || {}).map(([s, c]) => (
                   <span key={s} className="badge" style={{ backgroundColor: `${STRENGTH_COLORS[Number(s)] || "#94a3b8"}18`, color: STRENGTH_COLORS[Number(s)] || "#94a3b8", fontSize: 10 }}>
@@ -597,7 +848,7 @@ function MatrixTab({ frameworks }: { frameworks: Framework[] }) {
           {heatmap && (
             <div className="card" style={{ padding: 16, overflowX: "auto" }}>
               <h4 style={{ margin: "0 0 12px", fontSize: 14 }}>
-                {matrix.source_framework_name} \u2192 {matrix.target_framework_name}
+                {matrix.source_framework_name} → {matrix.target_framework_name}
               </h4>
               {/* Legend */}
               <div style={{ display: "flex", gap: 12, marginBottom: 12, fontSize: 11, flexWrap: "wrap" }}>
@@ -638,7 +889,7 @@ function MatrixTab({ frameworks }: { frameworks: Framework[] }) {
                               background: cell ? `${RELATIONSHIP_COLORS[cell.relationship_type]}${cell.strength === 3 ? 'cc' : cell.strength === 2 ? '80' : '40'}` : "transparent",
                               border: "1px solid var(--border)",
                               cursor: cell ? "pointer" : "default",
-                            }} title={cell ? `${s} \u2194 ${t}: ${RELATIONSHIP_LABELS[cell.relationship_type]} (${STRENGTH_LABELS[cell.strength]})` : ""}>
+                            }} title={cell ? `${s} ↔ ${t}: ${RELATIONSHIP_LABELS[cell.relationship_type]} (${STRENGTH_LABELS[cell.strength]})` : ""}>
                               {cell && <span style={{ fontSize: 8, color: "var(--text-primary)" }}>{cell.strength}</span>}
                             </td>
                           );
@@ -670,9 +921,9 @@ export default function FrameworkMappingsPage() {
     { key: "target_requirement_ref", header: "Target Ref", format: r => r.target_requirement_ref ?? "" },
     { key: "target_requirement_name", header: "Target Wymag.", format: r => r.target_requirement_name ?? "", defaultVisible: false },
     { key: "relationship_type", header: "Relacja", format: r => RELATIONSHIP_PL[r.relationship_type] || r.relationship_type },
-    { key: "strength", header: "Si\u0142a", format: r => STRENGTH_LABELS[r.strength] || String(r.strength) },
+    { key: "strength", header: "Siła", format: r => STRENGTH_LABELS[r.strength] || String(r.strength) },
     { key: "mapping_status", header: "Status", format: r => STATUS_LABELS[r.mapping_status] || r.mapping_status },
-    { key: "mapping_source", header: "\u0179r\u00f3d\u0142o", format: r => SOURCE_LABELS[r.mapping_source] || r.mapping_source, defaultVisible: false },
+    { key: "mapping_source", header: "Źródło", format: r => SOURCE_LABELS[r.mapping_source] || r.mapping_source, defaultVisible: false },
     { key: "rationale_type", header: "Uzasadnienie", format: r => r.rationale_type ? RATIONALE_LABELS[r.rationale_type] || r.rationale_type : "", defaultVisible: false },
     { key: "created_at", header: "Utworzono", format: r => r.created_at?.slice(0, 10) ?? "", defaultVisible: false },
   ];
@@ -757,7 +1008,7 @@ export default function FrameworkMappingsPage() {
       setShowModal(false);
       load();
     } catch {
-      alert("B\u0142\u0105d tworzenia mapowania");
+      alert("Błąd tworzenia mapowania");
     }
   };
 
@@ -765,16 +1016,16 @@ export default function FrameworkMappingsPage() {
     try {
       await api.post(`/api/v1/framework-mappings/${id}/confirm`, { confirmed_by: "admin" });
       load();
-    } catch { alert("B\u0142\u0105d potwierdzania"); }
+    } catch { alert("Błąd potwierdzania"); }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Czy na pewno chcesz usun\u0105\u0107 to mapowanie?")) return;
+    if (!confirm("Czy na pewno chcesz usunąć to mapowanie?")) return;
     try {
       await api.delete(`/api/v1/framework-mappings/${id}`);
       setSelected(null);
       load();
-    } catch { alert("B\u0142\u0105d usuwania"); }
+    } catch { alert("Błąd usuwania"); }
   };
 
   /* ── Stats ── */
@@ -782,19 +1033,17 @@ export default function FrameworkMappingsPage() {
   const equalCount = src.filter(m => m.relationship_type === "equal").length;
   const intersectCount = src.filter(m => m.relationship_type === "intersect").length;
   const confirmedCount = src.filter(m => m.mapping_status === "confirmed").length;
-  const draftCount = src.filter(m => m.mapping_status === "draft").length;
 
   const allEqual = mappings.filter(m => m.relationship_type === "equal").length;
   const allIntersect = mappings.filter(m => m.relationship_type === "intersect").length;
   const allConfirmed = mappings.filter(m => m.mapping_status === "confirmed").length;
-  const allDraft = mappings.filter(m => m.mapping_status === "draft").length;
 
   const isFiltered = table.filteredCount !== table.totalCount;
 
   const statsCards: StatCard[] = [
-    { label: "Mapowania og\u00f3\u0142em", value: src.length, total: mappings.length, color: "var(--blue)" },
+    { label: "Mapowania ogółem", value: src.length, total: mappings.length, color: "var(--blue)" },
     { label: "Equal (=)", value: equalCount, total: allEqual, color: "#10b981" },
-    { label: "Intersect (\u2229)", value: intersectCount, total: allIntersect, color: "#f59e0b" },
+    { label: "Intersect (∩)", value: intersectCount, total: allIntersect, color: "#f59e0b" },
     { label: "Potwierdzone", value: confirmedCount, total: allConfirmed, color: "#6366f1" },
   ];
 
@@ -804,9 +1053,9 @@ export default function FrameworkMappingsPage() {
     <div style={{ padding: "0 0 32px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
-          <h2 style={{ margin: 0 }}>Mapowania Framework\u00f3w</h2>
+          <h2 style={{ margin: 0 }}>Mapowania Frameworków</h2>
           <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-muted)" }}>
-            Mapowanie teoriomnogo\u015bciowe wymaga\u0144 (model CISO Assistant)
+            Mapowanie teoriomnogościowe wymagań (model CISO Assistant)
           </p>
         </div>
         {stats && (
@@ -827,10 +1076,10 @@ export default function FrameworkMappingsPage() {
           <TableToolbar<FrameworkMapping>
             filteredCount={table.filteredCount}
             totalCount={table.totalCount}
-            unitLabel="mapowa\u0144"
+            unitLabel="mapowań"
             search={table.search}
             onSearchChange={table.setSearch}
-            searchPlaceholder="Szukaj mapowa\u0144..."
+            searchPlaceholder="Szukaj mapowań..."
             showFilters={showFilters}
             onToggleFilters={() => setShowFilters(v => !v)}
             hasActiveFilters={table.hasActiveFilters}
@@ -856,7 +1105,7 @@ export default function FrameworkMappingsPage() {
               renderCell={(row, colKey) => {
                 if (colKey === "source_requirement_ref" || colKey === "target_requirement_ref") {
                   const v = colKey === "source_requirement_ref" ? row.source_requirement_ref : row.target_requirement_ref;
-                  if (!v) return <span style={{ color: "var(--text-muted)" }}>\u2014</span>;
+                  if (!v) return <span style={{ color: "var(--text-muted)" }}>—</span>;
                   return <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--text-muted)" }}>{v}</span>;
                 }
                 if (colKey === "relationship_type") return <RelBadge rel={row.relationship_type} />;
@@ -881,7 +1130,7 @@ export default function FrameworkMappingsPage() {
               onPageChange={table.setPage}
               onPageSizeChange={table.setPageSize}
               loading={loading}
-              emptyMessage="Brak mapowa\u0144. Utw\u00f3rz korelacj\u0119 mi\u0119dzy wymaganiami framework\u00f3w."
+              emptyMessage="Brak mapowań. Utwórz korelację między wymaganiami frameworków."
             />
 
             {/* ── Detail panel ── */}
@@ -895,16 +1144,16 @@ export default function FrameworkMappingsPage() {
                       <StatusBadge status={sel.mapping_status} />
                     </div>
                   </div>
-                  <button className="btn btn-xs" onClick={() => setSelected(null)} title="Zamknij">\u2715</button>
+                  <button className="btn btn-xs" onClick={() => setSelected(null)} title="Zamknij">✕</button>
                 </div>
 
                 {/* Strength gauge */}
                 <div style={{ textAlign: "center", margin: "12px 0 16px" }}>
                   <StrengthDots strength={sel.strength} />
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Si\u0142a powi\u0105zania: {sel.strength}/3</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>Siła powiązania: {sel.strength}/3</div>
                 </div>
 
-                <SectionHeader number="1" label="Source (\u017ar\u00f3d\u0142o)" />
+                <SectionHeader number="1" label="Source (źródło)" />
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, marginBottom: 12 }}>
                   <DetailRow label="Framework" value={sel.source_framework_name} />
                   <DetailRow label="Ref ID" value={sel.source_requirement_ref} />
@@ -921,11 +1170,11 @@ export default function FrameworkMappingsPage() {
                 <SectionHeader number="3" label="Metadane" />
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13, marginBottom: 12 }}>
                   <DetailRow label="Relacja" value={<RelBadge rel={sel.relationship_type} />} />
-                  <DetailRow label="Si\u0142a" value={<StrengthDots strength={sel.strength} />} />
+                  <DetailRow label="Siła" value={<StrengthDots strength={sel.strength} />} />
                   <DetailRow label="Uzasadnienie" value={sel.rationale_type ? RATIONALE_LABELS[sel.rationale_type] || sel.rationale_type : null} />
-                  <DetailRow label="\u0179r\u00f3d\u0142o" value={SOURCE_LABELS[sel.mapping_source] || sel.mapping_source} />
+                  <DetailRow label="Źródło" value={SOURCE_LABELS[sel.mapping_source] || sel.mapping_source} />
                   {sel.ai_score != null && <DetailRow label="AI Score" value={`${(sel.ai_score * 100).toFixed(1)}%`} color="#6366f1" />}
-                  {sel.confirmed_by && <DetailRow label="Potwierdzi\u0142" value={sel.confirmed_by} />}
+                  {sel.confirmed_by && <DetailRow label="Potwierdził" value={sel.confirmed_by} />}
                   {sel.confirmed_at && <DetailRow label="Data potwierdzenia" value={sel.confirmed_at.slice(0, 10)} />}
                 </div>
 
@@ -942,11 +1191,11 @@ export default function FrameworkMappingsPage() {
                 <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                   {sel.mapping_status === "draft" && (
                     <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => handleConfirm(sel.id)}>
-                      Potwierd\u017a
+                      Potwierdź
                     </button>
                   )}
                   <button className="btn" style={{ color: "#ef4444" }} onClick={() => handleDelete(sel.id)}>
-                    Usu\u0144
+                    Usuń
                   </button>
                 </div>
               </div>
@@ -965,7 +1214,7 @@ export default function FrameworkMappingsPage() {
       {activeTab === "matrix" && <MatrixTab frameworks={frameworks} />}
 
       {/* ── Create Modal ── */}
-      <Modal open={showModal} title="Nowe mapowanie framework\u00f3w" onClose={() => setShowModal(false)}>
+      <Modal open={showModal} title="Nowe mapowanie frameworków" onClose={() => setShowModal(false)}>
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {/* Relationship legend */}
           <div style={{ padding: 12, borderRadius: 8, background: "var(--bg-secondary)", fontSize: 12 }}>
@@ -974,7 +1223,7 @@ export default function FrameworkMappingsPage() {
               {Object.entries(RELATIONSHIP_LABELS).map(([k, v]) => (
                 <span key={k} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span style={{ width: 8, height: 8, borderRadius: 2, background: RELATIONSHIP_COLORS[k] }} />
-                  <span style={{ color: "var(--text-muted)" }}>{v} \u2014 {RELATIONSHIP_PL[k]}</span>
+                  <span style={{ color: "var(--text-muted)" }}>{v} — {RELATIONSHIP_PL[k]}</span>
                 </span>
               ))}
             </div>
@@ -986,14 +1235,14 @@ export default function FrameworkMappingsPage() {
               setForm({ ...form, source_framework_id: id, source_requirement_id: 0 });
               loadNodes(id, "source");
             }}>
-              <option value={0}>\u2014 wybierz \u2014</option>
+              <option value={0}>— wybierz —</option>
               {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
             </select>
           </label>
           <label>Source wymaganie *
             <select className="form-control" value={form.source_requirement_id} onChange={e => setForm({ ...form, source_requirement_id: Number(e.target.value) })}>
-              <option value={0}>\u2014 wybierz \u2014</option>
-              {sourceNodes.map(n => <option key={n.id} value={n.id}>{n.ref_id ? `${n.ref_id} \u2014 ` : ""}{n.name}</option>)}
+              <option value={0}>— wybierz —</option>
+              {sourceNodes.map(n => <option key={n.id} value={n.id}>{n.ref_id ? `${n.ref_id} — ` : ""}{n.name}</option>)}
             </select>
           </label>
           <label>Target Framework *
@@ -1002,14 +1251,14 @@ export default function FrameworkMappingsPage() {
               setForm({ ...form, target_framework_id: id, target_requirement_id: 0 });
               loadNodes(id, "target");
             }}>
-              <option value={0}>\u2014 wybierz \u2014</option>
+              <option value={0}>— wybierz —</option>
               {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
             </select>
           </label>
           <label>Target wymaganie *
             <select className="form-control" value={form.target_requirement_id} onChange={e => setForm({ ...form, target_requirement_id: Number(e.target.value) })}>
-              <option value={0}>\u2014 wybierz \u2014</option>
-              {targetNodes.map(n => <option key={n.id} value={n.id}>{n.ref_id ? `${n.ref_id} \u2014 ` : ""}{n.name}</option>)}
+              <option value={0}>— wybierz —</option>
+              {targetNodes.map(n => <option key={n.id} value={n.id}>{n.ref_id ? `${n.ref_id} — ` : ""}{n.name}</option>)}
             </select>
           </label>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1018,22 +1267,22 @@ export default function FrameworkMappingsPage() {
                 {Object.entries(RELATIONSHIP_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </label>
-            <label>Si\u0142a (1-3) *
+            <label>Siła (1-3) *
               <select className="form-control" value={form.strength} onChange={e => setForm({ ...form, strength: Number(e.target.value) })}>
-                <option value={1}>1 \u2014 S\u0142abe</option>
-                <option value={2}>2 \u2014 Umiarkowane</option>
-                <option value={3}>3 \u2014 Silne</option>
+                <option value={1}>1 — Słabe</option>
+                <option value={2}>2 — Umiarkowane</option>
+                <option value={3}>3 — Silne</option>
               </select>
             </label>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <label>Uzasadnienie (typ)
               <select className="form-control" value={form.rationale_type} onChange={e => setForm({ ...form, rationale_type: e.target.value })}>
-                <option value="">\u2014 brak \u2014</option>
+                <option value="">— brak —</option>
                 {Object.entries(RATIONALE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </label>
-            <label>\u0179r\u00f3d\u0142o
+            <label>Źródło
               <select className="form-control" value={form.mapping_source} onChange={e => setForm({ ...form, mapping_source: e.target.value })}>
                 {Object.entries(SOURCE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
@@ -1042,7 +1291,7 @@ export default function FrameworkMappingsPage() {
           <label>Uzasadnienie (opis) <textarea className="form-control" value={form.rationale} onChange={e => setForm({ ...form, rationale: e.target.value })} rows={2} /></label>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
             <button className="btn" onClick={() => setShowModal(false)}>Anuluj</button>
-            <button className="btn btn-primary" onClick={handleCreate} disabled={!form.source_requirement_id || !form.target_requirement_id}>Utw\u00f3rz</button>
+            <button className="btn btn-primary" onClick={handleCreate} disabled={!form.source_requirement_id || !form.target_requirement_id}>Utwórz</button>
           </div>
         </div>
       </Modal>

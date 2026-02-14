@@ -348,14 +348,55 @@ def _read_excel_nodes(wb, tab_name: str | None) -> list[dict]:
 # YAML PARSER (CISO Assistant native format)
 # ===================================================
 
+def _build_nodes_from_reference_controls(controls: list[dict]) -> list[dict]:
+    """Convert reference_controls list into requirement_nodes with auto-generated group hierarchy.
+
+    Groups controls by the integer prefix of ref_id (e.g. '1.1' -> group '1').
+    Creates parent group nodes at depth=1 and child controls at depth=2.
+    """
+    from collections import OrderedDict
+
+    groups: OrderedDict[str, list[dict]] = OrderedDict()
+    for ctrl in controls:
+        ref_id = str(ctrl.get("ref_id", ""))
+        parts = ref_id.split(".")
+        group_key = parts[0] if parts else "0"
+        groups.setdefault(group_key, []).append(ctrl)
+
+    nodes: list[dict] = []
+    for group_key, group_controls in groups.items():
+        # Create a synthetic group parent node
+        group_urn = f"urn:auto-group:{group_key}"
+        group_node = {
+            "urn": group_urn,
+            "ref_id": group_key,
+            "name": f"Control {group_key}",
+            "depth": 1,
+            "assessable": False,
+        }
+        nodes.append(group_node)
+
+        for ctrl in group_controls:
+            child = dict(ctrl)
+            child["parent_urn"] = group_urn
+            child["depth"] = 2
+            # reference_controls are assessable by default
+            if "assessable" not in child:
+                child["assessable"] = True
+            nodes.append(child)
+
+    return nodes
+
+
 def _extract_framework_from_yaml(data: dict) -> tuple[dict, dict]:
     """Extract the framework dict and the top-level library metadata from YAML.
 
     Handles multiple CISO Assistant YAML layouts:
       1. objects.framework  (dict -- current format)
       2. objects.frameworks (list)
-      3. objects as list of typed objects (legacy)
-      4. Direct framework at top level (no objects wrapper)
+      3. objects.reference_controls (list -- control library format, e.g. CIS)
+      4. objects as list of typed objects (legacy)
+      5. Direct framework at top level (no objects wrapper)
 
     Returns (fw_data, library_meta) where library_meta is the top-level dict.
     """
@@ -374,6 +415,31 @@ def _extract_framework_from_yaml(data: dict) -> tuple[dict, dict]:
             fws = objects["frameworks"]
             if isinstance(fws, list) and fws:
                 return fws[0], data
+
+        # reference_controls format (e.g. CIS Controls YAML)
+        if "reference_controls" in objects:
+            rc = objects["reference_controls"]
+            if isinstance(rc, list) and rc:
+                log.info(
+                    "Detected reference_controls format (%d controls), converting to requirement_nodes",
+                    len(rc),
+                )
+                fw_synthetic: dict[str, Any] = {}
+                # Copy top-level library metadata into fw_data
+                for key in ("urn", "ref_id", "name", "description", "version",
+                            "provider", "packager", "copyright", "locale",
+                            "publication_date", "implementation_groups_definition"):
+                    if key in data:
+                        fw_synthetic[key] = data[key]
+                fw_synthetic["requirement_nodes"] = _build_nodes_from_reference_controls(rc)
+                # Extract scores_definition from first control that has it
+                for ctrl in rc:
+                    sd = ctrl.get("scores_definition")
+                    if sd and isinstance(sd, list):
+                        fw_synthetic["scores_definition"] = sd
+                        break
+                return fw_synthetic, data
+
         # Fallback: first dict value that has requirement_nodes
         for val in objects.values():
             if isinstance(val, dict) and "requirement_nodes" in val:
@@ -519,6 +585,14 @@ def _flatten_yaml_nodes(nodes: list[dict], depth: int = 1) -> list[dict]:
     """
     result = []
     for node in nodes:
+        # Build annotation from csf_function if present
+        annotation = node.get("annotation")
+        csf_func = node.get("csf_function")
+        if csf_func and not annotation:
+            annotation = f"CSF Function: {csf_func}"
+        elif csf_func and annotation:
+            annotation = f"CSF Function: {csf_func}\n{annotation}"
+
         flat = {
             "urn": node.get("urn"),
             "parent_urn": node.get("parent_urn"),
@@ -528,7 +602,7 @@ def _flatten_yaml_nodes(nodes: list[dict], depth: int = 1) -> list[dict]:
             "depth": node.get("depth", depth),
             "assessable": node.get("assessable", False),
             "implementation_groups": node.get("implementation_groups"),
-            "annotation": node.get("annotation"),
+            "annotation": annotation,
             "typical_evidence": node.get("typical_evidence"),
             "threats": node.get("threats"),
             "reference_controls": node.get("reference_controls"),

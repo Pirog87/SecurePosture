@@ -64,7 +64,7 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
    ═══════════════════════════════════════════════════ */
 export default function FrameworksPage() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [frameworks, setFrameworks] = useState<FrameworkBrief[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
@@ -127,6 +127,7 @@ export default function FrameworksPage() {
       load();
     } catch (e: unknown) {
       setImportError(e instanceof Error ? e.message : "Błąd importu");
+      load(); // Refresh list even on error — framework may have been partially created
     } finally {
       setImporting(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -182,10 +183,6 @@ export default function FrameworksPage() {
     }
     return chips;
   }, [documentTypes, frameworks]);
-
-  /* ── Grouped view data ── */
-  const internalDocs = useMemo(() => frameworks.filter(f => f.document_origin === "internal"), [frameworks]);
-  const externalDocs = useMemo(() => frameworks.filter(f => f.document_origin === "external"), [frameworks]);
 
   /* ── Table columns ── */
   const COLUMNS: ColumnDef<FrameworkBrief>[] = [

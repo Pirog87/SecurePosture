@@ -17,7 +17,7 @@ import AssessmentsPage from "./pages/AssessmentsPage";
 import AssessmentFormPage from "./pages/AssessmentFormPage";
 import VulnerabilitiesPage from "./pages/VulnerabilitiesPage";
 import IncidentsPage from "./pages/IncidentsPage";
-import PoliciesPage from "./pages/PoliciesPage";
+
 import ExceptionsPage from "./pages/ExceptionsPage";
 import AuditsPage from "./pages/AuditsPage";
 import VendorsPage from "./pages/VendorsPage";

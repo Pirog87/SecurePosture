@@ -28,19 +28,6 @@ function lcBg(s: string) { return LIFECYCLE_LABELS[s]?.bg ?? "var(--bg-inset)"; 
 function lcLabel(s: string) { return LIFECYCLE_LABELS[s]?.label ?? s; }
 
 /* ─── Detail panel rows ─── */
-function SectionHeader({ number, label }: { number: number; label: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, marginTop: 14 }}>
-      <div style={{
-        width: 28, height: 28, borderRadius: "50%", background: "var(--blue)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 14, fontWeight: 700, color: "#fff", flexShrink: 0,
-      }}>{number}</div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>{label}</div>
-    </div>
-  );
-}
-
 function DetailRow({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>

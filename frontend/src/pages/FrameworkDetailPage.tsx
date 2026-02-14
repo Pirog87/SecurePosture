@@ -385,15 +385,15 @@ export default function FrameworkDetailPage() {
                 <>
                   <button className="btn btn-sm" onClick={() => setShowBulkAi("interpret")}
                     style={{ fontSize: 10, background: "var(--blue-dim)", color: "var(--blue)", border: "1px solid var(--blue)" }}>
-                    Interpretuj dokument
+                    ✨ Interpretuj dokument
                   </button>
                   <button className="btn btn-sm" onClick={() => setShowBulkAi("translate")}
                     style={{ fontSize: 10, background: "rgba(139,92,246,0.1)", color: "var(--purple, #8b5cf6)", border: "1px solid var(--purple, #8b5cf6)" }}>
-                    Tłumacz dokument
+                    ✨ Tłumacz dokument
                   </button>
                   <button className="btn btn-sm" onClick={() => setShowBulkAi("evidence")}
                     style={{ fontSize: 10, background: "var(--green-dim)", color: "var(--green)", border: "1px solid var(--green)" }}>
-                    Generuj dowody
+                    ✨ Generuj dowody
                   </button>
                 </>
               )}
@@ -841,7 +841,7 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
                   disabled={aiLoading}
                   title="Interpretacja AI"
                 >
-                  <span style={{ fontSize: 14 }}>i</span> Interpretacja
+                  ✨ Interpretacja
                   {interpretResult && <span style={{ fontSize: 9, marginLeft: 2 }}>&#10003;</span>}
                 </button>
                 <button
@@ -856,7 +856,7 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
                   disabled={aiLoading}
                   title="Tłumaczenie AI"
                 >
-                  <span style={{ fontSize: 14 }}>A</span> Tłumaczenie
+                  ✨ Tłumaczenie
                 </button>
                 <button
                   className="btn btn-sm"
@@ -873,7 +873,7 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
                   disabled={aiLoading}
                   title="Dowody audytowe"
                 >
-                  <span style={{ fontSize: 14 }}>E</span> Dowody
+                  ✨ Dowody
                   {evidenceResult && <span style={{ fontSize: 9, marginLeft: 2 }}>&#10003;</span>}
                 </button>
               </div>

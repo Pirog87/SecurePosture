@@ -136,6 +136,7 @@ class AIService:
 
         max_tokens = max_tokens or self.config.max_tokens
         start_time = time.time()
+        llm_resp = None
 
         try:
             llm_resp: LLMResponse = await self.adapter.chat_completion(
@@ -163,7 +164,23 @@ class AIService:
             )
             return result
 
-        except (AIParsingError, AIRateLimitException):
+        except AIParsingError as e:
+            # Log cost even when JSON parsing fails — the API call still cost money
+            duration_ms = int((time.time() - start_time) * 1000)
+            await self._log_call(
+                user_id=user_id,
+                action_type=action_type,
+                duration_ms=duration_ms,
+                success=False,
+                error=str(e),
+                input_summary=user_message[:500],
+                output_summary=llm_resp.text[:500] if llm_resp else None,
+                tokens_input=llm_resp.tokens_input if llm_resp else None,
+                tokens_output=llm_resp.tokens_output if llm_resp else None,
+                cost_usd=llm_resp.cost_usd if llm_resp else None,
+            )
+            raise
+        except AIRateLimitException:
             raise
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
@@ -182,42 +199,52 @@ class AIService:
         import logging
         logger = logging.getLogger(__name__)
 
+        # Strip whitespace
+        stripped = text.strip()
+
         # 1. Direct parse
         try:
-            return json.loads(text)
+            return json.loads(stripped)
         except json.JSONDecodeError:
             pass
 
         # 2. Extract from ```json ... ``` block
-        match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
+        match = re.search(r"```(?:json)?\s*([\[{].*?)\s*```", stripped, re.DOTALL)
         if match:
             try:
                 return json.loads(match.group(1))
             except json.JSONDecodeError:
                 pass
 
-        # 3. Extract any JSON object or array
-        for pattern in [r"\{.*\}", r"\[.*\]"]:
-            match = re.search(pattern, text, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group(0))
-                except json.JSONDecodeError:
-                    pass
-
-        # 4. Try to fix truncated JSON (response cut off at max_tokens)
-        #    Find the start of JSON and attempt to close open brackets/braces
-        json_start = re.search(r'[\[{]', text)
+        # 3. Find JSON that starts with { or [ — take the FIRST occurrence
+        #    and everything after it (handles preamble text before JSON)
+        json_start = re.search(r'[\[{]', stripped)
         if json_start:
-            partial = text[json_start.start():]
-            repaired = self._try_repair_json(partial)
+            candidate = stripped[json_start.start():]
+            # 3a. Try direct parse (complete JSON with possible trailing text)
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
+            # 3b. Try to extract complete JSON object/array
+            for pattern in [r"\{.*\}", r"\[.*\]"]:
+                m = re.search(pattern, candidate, re.DOTALL)
+                if m:
+                    try:
+                        return json.loads(m.group(0))
+                    except json.JSONDecodeError:
+                        pass
+
+            # 3c. Try to repair truncated JSON (response cut off at max_tokens)
+            repaired = self._try_repair_json(candidate)
             if repaired is not None:
-                logger.warning("AI response was truncated — repaired JSON successfully")
+                logger.warning("AI response was truncated — repaired JSON (%d chars)", len(candidate))
                 return repaired
 
         logger.error(
-            "AI returned unparseable response (first 500 chars): %s",
-            text[:500],
+            "AI returned unparseable response (len=%d, first 500 chars): %s",
+            len(text), text[:500],
         )
         raise AIParsingError(
             f"AI zwrocilo nieprawidlowy JSON. "
@@ -226,42 +253,68 @@ class AIService:
 
     @staticmethod
     def _try_repair_json(text: str) -> dict | list | None:
-        """Try to repair truncated JSON by closing open brackets/braces."""
-        # Remove trailing incomplete string/value
-        # Find last complete element by looking for last comma or colon+value
-        for trim in range(min(200, len(text)), 0, -1):
-            candidate = text[:len(text) - trim]
-            # Count open/close brackets
+        """Try to repair truncated JSON by closing open brackets/braces.
+
+        Strategy: find the last valid comma-separated element boundary,
+        trim everything after it, then close all open brackets.
+        """
+        # Find positions of all commas outside strings — these are element boundaries
+        boundaries = []
+        in_string = False
+        escape = False
+        depth = 0
+        for i, ch in enumerate(text):
+            if escape:
+                escape = False
+                continue
+            if ch == '\\' and in_string:
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch in '{[':
+                depth += 1
+            elif ch in '}]':
+                depth -= 1
+                # After a closing bracket at top level or any level, it's a valid boundary
+                boundaries.append(i + 1)
+            elif ch == ',':
+                boundaries.append(i)
+
+        # Try from the last boundary backwards
+        for pos in reversed(boundaries[-500:]):
+            candidate = text[:pos].rstrip().rstrip(',')
+            # Count open brackets to close them
             opens = []
-            in_string = False
-            escape = False
+            in_str = False
+            esc = False
             for ch in candidate:
-                if escape:
-                    escape = False
+                if esc:
+                    esc = False
                     continue
-                if ch == '\\' and in_string:
-                    escape = True
+                if ch == '\\' and in_str:
+                    esc = True
                     continue
-                if ch == '"' and not escape:
-                    in_string = not in_string
+                if ch == '"':
+                    in_str = not in_str
                     continue
-                if in_string:
+                if in_str:
                     continue
                 if ch in '{[':
                     opens.append(ch)
-                elif ch == '}':
-                    if opens and opens[-1] == '{':
-                        opens.pop()
-                elif ch == ']':
-                    if opens and opens[-1] == '[':
-                        opens.pop()
+                elif ch == '}' and opens and opens[-1] == '{':
+                    opens.pop()
+                elif ch == ']' and opens and opens[-1] == '[':
+                    opens.pop()
 
-            # Close any remaining open brackets
-            if in_string:
+            closers = ''.join(']' if o == '[' else '}' for o in reversed(opens))
+            if in_str:
                 candidate += '"'
-            closers = ""
-            for o in reversed(opens):
-                closers += ']' if o == '[' else '}'
+                # Recount after closing the string
+                closers = ''.join(']' if o == '[' else '}' for o in reversed(opens))
             try:
                 return json.loads(candidate + closers)
             except json.JSONDecodeError:

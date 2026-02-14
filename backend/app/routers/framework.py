@@ -992,6 +992,21 @@ async def import_from_github(
 # AI-POWERED DOCUMENT IMPORT (PDF / DOCX)
 # ===================================================
 
+# ── AI Import progress tracking (in-memory) ──
+import uuid as _uuid
+
+_ai_import_progress: dict[str, dict] = {}
+
+
+@router.get("/import/ai/progress/{task_id}")
+async def ai_import_progress(task_id: str):
+    """Poll progress of an AI import task."""
+    p = _ai_import_progress.get(task_id)
+    if not p:
+        raise HTTPException(404, "Brak zadania o podanym ID")
+    return p
+
+
 @router.post("/import/ai", response_model=FrameworkImportResult, summary="AI Import z PDF/DOCX")
 async def import_from_ai(
     file: UploadFile = File(...),
@@ -1003,6 +1018,8 @@ async def import_from_ai(
     - Detects metadata (name, version, provider)
     - Extracts chapters, sections, requirements as tree nodes
     - Marks assessable nodes (concrete requirements/controls)
+
+    Returns X-Import-Task-Id header for progress polling.
     """
     from app.services.ai_service import get_ai_service, AINotConfiguredException, AIParsingError
     from app.services.document_extract import prepare_chunked_document
@@ -1025,8 +1042,29 @@ async def import_from_ai(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    # ── Progress tracking ──
+    task_id = str(_uuid.uuid4())[:8]
+    total_steps = len(chunks) + 1  # chunks + save step
+    progress = {
+        "task_id": task_id,
+        "status": "running",
+        "step": 0,
+        "total_steps": total_steps,
+        "message": "Ekstrakcja tekstu z dokumentu...",
+        "nodes_found": 0,
+        "percent": 0,
+    }
+    _ai_import_progress[task_id] = progress
+
+    def _update_progress(step: int, message: str, nodes: int = 0):
+        progress["step"] = step
+        progress["message"] = message
+        progress["nodes_found"] = nodes
+        progress["percent"] = int(step / total_steps * 100)
+
     try:
         # Pass 1: analyze first chunk — get framework metadata + initial nodes
+        _update_progress(0, f"AI analizuje fragment 1/{len(chunks)}...")
         first_result = await svc.analyze_document_structure(
             user_id=1,  # system import
             document_text=chunks[0],
@@ -1035,9 +1073,12 @@ async def import_from_ai(
 
         fw_meta = first_result.get("framework", {})
         all_nodes = first_result.get("nodes", [])
+        _update_progress(1, f"Fragment 1/{len(chunks)} — znaleziono {len(all_nodes)} węzłów", len(all_nodes))
 
         # Pass 2+: analyze remaining chunks for more nodes
         for i, chunk in enumerate(chunks[1:], start=2):
+            _update_progress(i - 1, f"AI analizuje fragment {i}/{len(chunks)}...", len(all_nodes))
+
             # Build summary of last few nodes for context
             last_nodes = all_nodes[-5:] if all_nodes else []
             summary = "\n".join(
@@ -1052,6 +1093,10 @@ async def import_from_ai(
             )
             extra_nodes = continuation.get("nodes", [])
             all_nodes.extend(extra_nodes)
+            _update_progress(i, f"Fragment {i}/{len(chunks)} — łącznie {len(all_nodes)} węzłów", len(all_nodes))
+
+        # Save to database
+        _update_progress(len(chunks), f"Zapisywanie {len(all_nodes)} węzłów do bazy...", len(all_nodes))
 
         # Create framework
         fw_name = fw_meta.get("name") or file.filename.rsplit(".", 1)[0]
@@ -1154,19 +1199,32 @@ async def import_from_ai(
             .where(AssessmentDimension.framework_id == fw.id)
         )).scalar() or 0
 
-        return FrameworkImportResult(
+        # Mark progress complete
+        progress["status"] = "done"
+        progress["percent"] = 100
+        progress["message"] = f"Import zakończony — {total_nodes} węzłów"
+
+        from starlette.responses import JSONResponse
+        result = FrameworkImportResult(
             framework_id=fw.id,
             name=fw.name,
             total_nodes=fw.total_nodes,
             total_assessable=fw.total_assessable,
             dimensions_created=dims_count,
         )
+        resp = JSONResponse(content=result.model_dump())
+        resp.headers["X-Import-Task-Id"] = task_id
+        return resp
 
     except AINotConfiguredException:
+        progress["status"] = "error"
+        progress["message"] = "AI nie jest skonfigurowane"
         raise HTTPException(503, "AI nie jest skonfigurowane")
     except AIParsingError as e:
         await s.rollback()
         logger.exception("AI import: JSON parsing failed")
+        progress["status"] = "error"
+        progress["message"] = f"AI nie zwróciło poprawnego JSON: {e}"
         raise HTTPException(
             502,
             f"AI nie zwróciło poprawnego JSON. "
@@ -1175,7 +1233,15 @@ async def import_from_ai(
     except Exception as e:
         await s.rollback()
         logger.exception("AI import error")
+        progress["status"] = "error"
+        progress["message"] = f"Błąd: {e}"
         raise HTTPException(500, f"Błąd importu AI: {e}")
+    finally:
+        # Clean up old progress entries (keep last 20)
+        if len(_ai_import_progress) > 20:
+            keys = list(_ai_import_progress.keys())
+            for k in keys[:-20]:
+                _ai_import_progress.pop(k, None)
 
 
 # ===================================================

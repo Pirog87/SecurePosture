@@ -88,6 +88,7 @@ export default function FrameworksPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const aiFileRef = useRef<HTMLInputElement>(null);
   const [aiImporting, setAiImporting] = useState(false);
+  const [aiProgress, setAiProgress] = useState<{ percent: number; message: string; nodes_found: number } | null>(null);
 
   /* ── Load document types from dictionary ── */
   useEffect(() => {
@@ -142,20 +143,55 @@ export default function FrameworksPage() {
     }
   };
 
-  /* ── AI Import handler (PDF/DOCX) ── */
+  /* ── AI Import handler (PDF/DOCX) with progress polling ── */
   const handleAiImport = async (file: File) => {
     setAiImporting(true);
     setImportResult(null);
     setImportError(null);
+    setAiProgress({ percent: 0, message: "Wysyłanie pliku...", nodes_found: 0 });
 
     const formData = new FormData();
     formData.append("file", file);
 
+    const API_BASE = import.meta.env.VITE_API_URL ?? "";
+
+    // Use raw fetch to access response headers for task-id
+    const controller = new AbortController();
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
     try {
-      const res = await api.postFormData<FrameworkImportResult>("/api/v1/frameworks/import/ai", formData);
-      setImportResult(res);
-      setAdoptFrameworkId(res.framework_id);
+      const fetchPromise = fetch(`${API_BASE}/api/v1/frameworks/import/ai`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+
+      // Start polling for progress after a short delay
+      let taskId: string | null = null;
+      pollTimer = setInterval(async () => {
+        if (!taskId) return;
+        try {
+          const pr = await fetch(`${API_BASE}/api/v1/frameworks/import/ai/progress/${taskId}`);
+          if (pr.ok) {
+            const data = await pr.json();
+            setAiProgress({ percent: data.percent ?? 0, message: data.message ?? "", nodes_found: data.nodes_found ?? 0 });
+          }
+        } catch { /* ignore poll errors */ }
+      }, 2000);
+
+      const res = await fetchPromise;
+      taskId = res.headers.get("x-import-task-id");
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`API ${res.status}: ${body}`);
+      }
+
+      const result: FrameworkImportResult = await res.json();
+      setImportResult(result);
+      setAdoptFrameworkId(result.framework_id);
       setShowAdoptModal(true);
+      setAiProgress({ percent: 100, message: `Import zakończony — ${result.total_nodes} węzłów`, nodes_found: result.total_nodes ?? 0 });
       load();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Błąd importu AI";
@@ -166,7 +202,9 @@ export default function FrameworksPage() {
       }
       load();
     } finally {
+      if (pollTimer) clearInterval(pollTimer);
       setAiImporting(false);
+      setTimeout(() => setAiProgress(null), 5000);
       if (aiFileRef.current) aiFileRef.current.value = "";
     }
   };
@@ -280,6 +318,32 @@ export default function FrameworksPage() {
         </div>
       )}
 
+      {/* AI Import progress */}
+      {aiProgress && (
+        <div className="card" style={{ marginBottom: 12, padding: "14px 16px", borderLeft: `3px solid ${aiProgress.percent >= 100 ? "var(--green)" : "var(--blue)"}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
+              {aiProgress.percent >= 100 ? "Import AI zakończony" : "AI analizuje dokument..."}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              {aiProgress.nodes_found > 0 && <span style={{ color: "var(--blue)", fontWeight: 600 }}>{aiProgress.nodes_found} węzłów</span>}
+              {" "}{aiProgress.percent}%
+            </div>
+          </div>
+          <div className="bar-track" style={{ height: 8, marginBottom: 6 }}>
+            <div
+              className="bar-fill"
+              style={{
+                width: `${aiProgress.percent}%`,
+                background: aiProgress.percent >= 100 ? "var(--green)" : "var(--blue)",
+                transition: "width 0.5s ease",
+              }}
+            />
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{aiProgress.message}</div>
+        </div>
+      )}
+
       {/* Stats */}
       <StatsCards cards={statsCards} isFiltered={isFiltered} />
 
@@ -350,7 +414,7 @@ export default function FrameworksPage() {
         secondaryActions={[
           { label: "Import z CISO Assistant", onClick: () => setShowCatalog(true) },
           { label: importing ? "Importowanie..." : "Import z pliku", onClick: () => fileRef.current?.click() },
-          { label: aiImporting ? "AI analizuje..." : "AI Import (PDF/DOCX)", onClick: () => aiFileRef.current?.click() },
+          { label: aiImporting ? "✨ AI analizuje..." : "✨ AI Import (PDF/DOCX)", onClick: () => aiFileRef.current?.click() },
           { label: showArchived ? "Ukryj archiwalne" : "Pokaż archiwalne", onClick: () => setShowArchived(v => !v) },
         ]}
       />

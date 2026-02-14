@@ -1,5 +1,4 @@
 import { useEffect, useState, useCallback } from "react";
-import StatsCards, { type StatCard } from "../components/StatsCards";
 
 const API = import.meta.env.VITE_API_URL ?? "";
 
@@ -60,17 +59,32 @@ const EMPTY_CONFIG: AIConfig = {
 };
 
 const PROVIDER_OPTIONS = [
-  { value: "none", label: "Brak (wylaczone)" },
+  { value: "none", label: "Brak (wyłączone)" },
   { value: "anthropic", label: "Anthropic Claude" },
   { value: "openai_compatible", label: "OpenAI-compatible (OpenAI, vLLM, Ollama)" },
 ];
 
-const FEATURE_LABELS: Record<string, string> = {
-  feature_scenario_generation: "Generowanie scenariuszy ryzyka",
-  feature_correlation_enrichment: "Wzbogacanie korelacji",
-  feature_natural_language_search: "Wyszukiwanie w jezyku naturalnym",
-  feature_gap_analysis: "Analiza luk bezpieczenstwa",
-  feature_entry_assist: "Asystent tworzenia wpisow",
+const FEATURE_TOGGLES: { key: string; label: string; desc: string }[] = [
+  { key: "feature_scenario_generation", label: "Generowanie scenariuszy ryzyka", desc: "AI tworzy scenariusze zagrożeń dla kategorii aktywów" },
+  { key: "feature_correlation_enrichment", label: "Wzbogacanie korelacji", desc: "AI sugeruje brakujące powiązania threat-weakness-control" },
+  { key: "feature_natural_language_search", label: "Wyszukiwanie w języku naturalnym", desc: "Wyszukiwanie w katalogach za pomocą pytań w języku naturalnym" },
+  { key: "feature_gap_analysis", label: "Analiza luk bezpieczeństwa", desc: "AI analizuje pokrycie i identyfikuje luki" },
+  { key: "feature_entry_assist", label: "Asystent tworzenia wpisów", desc: "AI podpowiada klasyfikację i powiązania nowych wpisów" },
+];
+
+const ACTION_LABELS: Record<string, string> = {
+  SCENARIO_GEN: "Scenariusze ryzyka",
+  ENRICHMENT: "Wzbogacanie korelacji",
+  SEARCH: "Wyszukiwanie NLP",
+  GAP_ANALYSIS: "Analiza luk",
+  ASSIST: "Asystent wpisów",
+  INTERPRET: "Interpretacja wymagań",
+  TRANSLATE: "Tłumaczenia",
+  EVIDENCE: "Dowody audytowe",
+  SECURITY_AREA_MAP: "Mapowanie obszarów",
+  CROSS_MAPPING: "Cross-mapping",
+  COVERAGE_REPORT: "Raporty pokrycia",
+  DOCUMENT_IMPORT: "Import dokumentów",
 };
 
 /* ══════════════════════════════════════════════════════════
@@ -82,10 +96,11 @@ export default function AIConfigPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; response_time_ms?: number } | null>(null);
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [days, setDays] = useState(30);
 
   // Form fields (separate from saved config for editing)
   const [form, setForm] = useState({
@@ -137,19 +152,17 @@ export default function AIConfigPage() {
 
   const fetchUsage = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/v1/ai/usage-stats?days=30`);
+      const res = await fetch(`${API}/api/v1/ai/usage-stats?days=${days}`);
       if (res.ok) {
         setUsage(await res.json());
       }
     } catch {
       // Not critical
     }
-  }, []);
+  }, [days]);
 
-  useEffect(() => {
-    fetchConfig();
-    fetchUsage();
-  }, [fetchConfig, fetchUsage]);
+  useEffect(() => { fetchConfig(); }, [fetchConfig]);
+  useEffect(() => { fetchUsage(); }, [fetchUsage]);
 
   const saveConfig = async () => {
     setSaving(true);
@@ -157,7 +170,7 @@ export default function AIConfigPage() {
     setSuccess(null);
     try {
       const payload: Record<string, unknown> = { ...form };
-      if (!form.api_key) delete payload.api_key; // Don't overwrite if empty
+      if (!form.api_key) delete payload.api_key;
 
       const res = await fetch(`${API}/api/v1/admin/ai-config`, {
         method: "PUT",
@@ -167,12 +180,14 @@ export default function AIConfigPage() {
       if (res.ok) {
         setSuccess("Konfiguracja zapisana");
         fetchConfig();
+        fetchUsage();
+        setTimeout(() => setSuccess(null), 3000);
       } else {
         const body = await res.text();
-        setError(`Blad zapisu: ${body}`);
+        setError(`Błąd zapisu: ${body}`);
       }
     } catch (e) {
-      setError(`Blad: ${e}`);
+      setError(`Błąd: ${e}`);
     } finally {
       setSaving(false);
     }
@@ -185,9 +200,9 @@ export default function AIConfigPage() {
       const res = await fetch(`${API}/api/v1/admin/ai-config/test`, { method: "POST" });
       const data = await res.json();
       setTestResult(data);
-      fetchConfig(); // Refresh last_test_* fields
+      fetchConfig();
     } catch (e) {
-      setTestResult({ success: false, message: `Blad polaczenia: ${e}` });
+      setTestResult({ success: false, message: `Błąd połączenia: ${e}` });
     } finally {
       setTesting(false);
     }
@@ -200,280 +215,409 @@ export default function AIConfigPage() {
       if (res.ok) {
         setSuccess(active ? "AI aktywowane" : "AI dezaktywowane");
         fetchConfig();
+        setTimeout(() => setSuccess(null), 3000);
       }
     } catch (e) {
-      setError(`Blad: ${e}`);
+      setError(`Błąd: ${e}`);
     }
   };
 
-  if (loading) return <div className="p-6">Ladowanie konfiguracji AI...</div>;
+  if (loading) {
+    return (
+      <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>
+        Ładowanie konfiguracji AI...
+      </div>
+    );
+  }
 
-  const stats: StatCard[] = [
-    {
-      label: "Status AI",
-      value: config.is_active ? "Aktywne" : "Nieaktywne",
-      color: config.is_active ? "var(--color-success)" : "var(--color-muted)",
-    },
-    {
-      label: "Provider",
-      value: PROVIDER_OPTIONS.find((p) => p.value === config.provider_type)?.label ?? config.provider_type,
-      color: "var(--blue)",
-    },
-    {
-      label: "Zapytan (30d)",
-      value: usage?.requests_count ?? 0,
-      color: "var(--purple, #8b5cf6)",
-    },
-    {
-      label: "Koszt (30d)",
-      value: `$${(usage?.cost_usd ?? 0).toFixed(4)}`,
-      color: "var(--orange, #f59e0b)",
-    },
-  ];
+  const providerLabel = PROVIDER_OPTIONS.find((p) => p.value === config.provider_type)?.label ?? config.provider_type;
+  const totalActions = usage ? Object.values(usage.by_action).reduce((a, b) => a + b, 0) : 0;
 
   return (
-    <div className="p-4" style={{ maxWidth: 900 }}>
-      <h1 style={{ fontSize: "1.5rem", fontWeight: 700, marginBottom: 16 }}>
-        Integracja AI — Konfiguracja
-      </h1>
-      <p style={{ color: "var(--color-muted)", marginBottom: 24, fontSize: "0.9rem" }}>
-        AI jest opcjonalnym pluginem. System dziala w pelni bez AI.
-        Elementy AI w interfejsie pojawiaja sie dopiero po aktywacji.
-      </p>
-
-      <StatsCards cards={stats} />
+    <div style={{ padding: "20px 24px", maxWidth: 1000 }}>
+      {/* ── Page header ── */}
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontSize: "1.4rem", fontWeight: 700, margin: 0 }}>Integracja AI</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 4 }}>
+          AI jest opcjonalnym pluginem. System działa w pełni bez AI — elementy AI pojawiają się dopiero po aktywacji.
+        </p>
+      </div>
 
       {/* ── Alert messages ── */}
       {error && (
-        <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--color-danger)", borderRadius: 8, padding: "12px 16px", marginBottom: 16, color: "var(--color-danger)" }}>
-          {error}
+        <div className="card" style={{ background: "var(--red-dim)", borderColor: "var(--red)", marginBottom: 16, padding: "12px 16px" }}>
+          <span style={{ color: "var(--red)", fontSize: 13 }}>{error}</span>
+          <button onClick={() => setError(null)} className="btn btn-sm" style={{ float: "right", padding: "2px 8px", fontSize: 11 }}>×</button>
         </div>
       )}
       {success && (
-        <div style={{ background: "rgba(34,197,94,0.1)", border: "1px solid var(--color-success)", borderRadius: 8, padding: "12px 16px", marginBottom: 16, color: "var(--color-success)" }}>
-          {success}
+        <div className="card" style={{ background: "var(--green-dim)", borderColor: "var(--green)", marginBottom: 16, padding: "12px 16px" }}>
+          <span style={{ color: "var(--green)", fontSize: 13 }}>{success}</span>
         </div>
       )}
 
-      {/* ── Provider section ── */}
-      <section style={{ background: "var(--color-surface)", borderRadius: 8, padding: 24, marginBottom: 16 }}>
-        <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: 16 }}>Dostawca AI</h2>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>Typ providera</span>
-            <select
-              value={form.provider_type}
-              onChange={(e) => setForm({ ...form, provider_type: e.target.value })}
-              className="input"
-            >
-              {PROVIDER_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </label>
-
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>Model</span>
-            <input
-              className="input"
-              value={form.model_name}
-              onChange={(e) => setForm({ ...form, model_name: e.target.value })}
-              placeholder={form.provider_type === "anthropic" ? "claude-sonnet-4-5-20250929" : "gpt-4o"}
-            />
-          </label>
-        </div>
-
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
-          <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>API Endpoint</span>
-          <input
-            className="input"
-            value={form.api_endpoint}
-            onChange={(e) => setForm({ ...form, api_endpoint: e.target.value })}
-            placeholder={form.provider_type === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com"}
-          />
-        </label>
-
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 16 }}>
-          <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>
-            API Key {config.api_key_masked && `(aktualny: ${config.api_key_masked})`}
-          </span>
-          <input
-            className="input"
-            type="password"
-            value={form.api_key}
-            onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-            placeholder="Zostaw puste aby nie zmieniac"
-          />
-        </label>
-
-        <div style={{ display: "flex", gap: 12 }}>
-          <button className="btn btn-primary" onClick={saveConfig} disabled={saving}>
-            {saving ? "Zapisywanie..." : "Zapisz konfiguracje"}
-          </button>
-          <button className="btn btn-secondary" onClick={testConnection} disabled={testing || form.provider_type === "none"}>
-            {testing ? "Testowanie..." : "Testuj polaczenie"}
-          </button>
-          {config.id > 0 && (
-            <button
-              className={`btn ${config.is_active ? "btn-danger" : "btn-success"}`}
-              onClick={() => toggleActive(!config.is_active)}
-            >
-              {config.is_active ? "Dezaktywuj AI" : "Aktywuj AI"}
-            </button>
-          )}
-        </div>
-
-        {/* Test result */}
-        {testResult && (
+      {/* ── KPI Cards Row ── */}
+      <div className="grid-4" style={{ marginBottom: 20 }}>
+        {/* Status */}
+        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
           <div style={{
-            marginTop: 12,
-            padding: "8px 12px",
-            borderRadius: 6,
-            background: testResult.success ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
-            color: testResult.success ? "var(--color-success)" : "var(--color-danger)",
-            fontSize: "0.85rem",
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "4px 12px", borderRadius: 12,
+            background: config.is_active ? "var(--green-dim)" : "rgba(255,255,255,0.06)",
+            color: config.is_active ? "var(--green)" : "var(--text-muted)",
+            fontSize: 13, fontWeight: 600,
           }}>
-            {testResult.success ? "Polaczenie OK" : "Blad"}: {testResult.message}
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: config.is_active ? "var(--green)" : "var(--text-muted)" }} />
+            {config.is_active ? "Aktywne" : "Nieaktywne"}
           </div>
-        )}
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>Status AI</div>
+        </div>
 
-        {/* Last test info */}
-        {config.last_test_at && (
-          <div style={{ marginTop: 8, fontSize: "0.8rem", color: "var(--color-muted)" }}>
-            Ostatni test: {new Date(config.last_test_at).toLocaleString("pl-PL")}
-            {config.last_test_ok ? " — OK" : ` — Blad: ${config.last_test_error}`}
+        {/* Requests */}
+        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--blue)" }}>
+            {usage?.requests_count ?? 0}
           </div>
-        )}
-      </section>
-
-      {/* ── Parameters section ── */}
-      <section style={{ background: "var(--color-surface)", borderRadius: 8, padding: 24, marginBottom: 16 }}>
-        <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: 16 }}>Parametry</h2>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>Max tokens</span>
-            <input
-              className="input"
-              type="number"
-              value={form.max_tokens}
-              onChange={(e) => setForm({ ...form, max_tokens: parseInt(e.target.value) || 4000 })}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>Temperature</span>
-            <input
-              className="input"
-              type="number"
-              step="0.05"
-              min="0"
-              max="1"
-              value={form.temperature}
-              onChange={(e) => setForm({ ...form, temperature: parseFloat(e.target.value) || 0.3 })}
-            />
-          </label>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Zapytań ({days}d)</div>
         </div>
-      </section>
 
-      {/* ── Rate limits section ── */}
-      <section style={{ background: "var(--color-surface)", borderRadius: 8, padding: 24, marginBottom: 16 }}>
-        <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: 16 }}>Limity</h2>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>Na uzytkownika / godzina</span>
-            <input
-              className="input"
-              type="number"
-              value={form.max_requests_per_user_per_hour}
-              onChange={(e) => setForm({ ...form, max_requests_per_user_per_hour: parseInt(e.target.value) || 20 })}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>Na uzytkownika / dzien</span>
-            <input
-              className="input"
-              type="number"
-              value={form.max_requests_per_user_per_day}
-              onChange={(e) => setForm({ ...form, max_requests_per_user_per_day: parseInt(e.target.value) || 100 })}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-muted)" }}>Na organizacje / dzien</span>
-            <input
-              className="input"
-              type="number"
-              value={form.max_requests_per_org_per_day}
-              onChange={(e) => setForm({ ...form, max_requests_per_org_per_day: parseInt(e.target.value) || 500 })}
-            />
-          </label>
+        {/* Tokens */}
+        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>
+            {(usage?.tokens_used ?? 0).toLocaleString("pl-PL")}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Tokenów ({days}d)</div>
         </div>
-      </section>
 
-      {/* ── Features section ── */}
-      <section style={{ background: "var(--color-surface)", borderRadius: 8, padding: 24, marginBottom: 16 }}>
-        <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: 16 }}>Funkcje AI</h2>
-        <p style={{ fontSize: "0.85rem", color: "var(--color-muted)", marginBottom: 16 }}>
-          Wlacz/wylacz poszczegolne funkcje AI. Wylaczone funkcje nie beda widoczne w interfejsie.
-        </p>
+        {/* Cost */}
+        <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
+          <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--orange)" }}>
+            ${(usage?.cost_usd ?? 0).toFixed(4)}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Koszt USD ({days}d)</div>
+        </div>
+      </div>
 
-        {Object.entries(FEATURE_LABELS).map(([key, label]) => (
-          <label key={key} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={(form as Record<string, unknown>)[key] as boolean}
-              onChange={(e) => setForm({ ...form, [key]: e.target.checked })}
-              style={{ width: 18, height: 18 }}
-            />
-            <span style={{ fontSize: "0.9rem" }}>{label}</span>
-          </label>
-        ))}
+      <div className="grid-2" style={{ alignItems: "start" }}>
+        {/* ════ LEFT COLUMN ════ */}
+        <div>
+          {/* ── Provider ── */}
+          <div className="card">
+            <div className="card-title">Dostawca AI</div>
 
-        <button className="btn btn-primary" onClick={saveConfig} disabled={saving} style={{ marginTop: 8 }}>
-          {saving ? "Zapisywanie..." : "Zapisz zmiany"}
-        </button>
-      </section>
-
-      {/* ── Usage stats section ── */}
-      {usage && usage.requests_count > 0 && (
-        <section style={{ background: "var(--color-surface)", borderRadius: 8, padding: 24 }}>
-          <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginBottom: 16 }}>Statystyki uzycia (30 dni)</h2>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
-            <div>
-              <div style={{ fontSize: "0.8rem", color: "var(--color-muted)" }}>Zapytan</div>
-              <div style={{ fontSize: "1.3rem", fontWeight: 700 }}>{usage.requests_count}</div>
+            <div className="form-group">
+              <label>Typ providera</label>
+              <select
+                className="form-control"
+                value={form.provider_type}
+                onChange={(e) => setForm({ ...form, provider_type: e.target.value })}
+              >
+                {PROVIDER_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
             </div>
-            <div>
-              <div style={{ fontSize: "0.8rem", color: "var(--color-muted)" }}>Tokenow</div>
-              <div style={{ fontSize: "1.3rem", fontWeight: 700 }}>{usage.tokens_used.toLocaleString()}</div>
+
+            <div className="form-group">
+              <label>Model</label>
+              <input
+                className="form-control"
+                value={form.model_name}
+                onChange={(e) => setForm({ ...form, model_name: e.target.value })}
+                placeholder={form.provider_type === "anthropic" ? "claude-sonnet-4-5-20250929" : "gpt-4o"}
+              />
             </div>
-            <div>
-              <div style={{ fontSize: "0.8rem", color: "var(--color-muted)" }}>Koszt</div>
-              <div style={{ fontSize: "1.3rem", fontWeight: 700 }}>${usage.cost_usd.toFixed(4)}</div>
+
+            <div className="form-group">
+              <label>API Endpoint</label>
+              <input
+                className="form-control"
+                value={form.api_endpoint}
+                onChange={(e) => setForm({ ...form, api_endpoint: e.target.value })}
+                placeholder={form.provider_type === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com"}
+              />
             </div>
-            <div>
-              <div style={{ fontSize: "0.8rem", color: "var(--color-muted)" }}>Akceptacja</div>
-              <div style={{ fontSize: "1.3rem", fontWeight: 700 }}>
-                {usage.acceptance_rate != null ? `${usage.acceptance_rate.toFixed(0)}%` : "—"}
+
+            <div className="form-group">
+              <label>
+                API Key
+                {config.api_key_masked && (
+                  <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                    {" "}(aktualny: {config.api_key_masked})
+                  </span>
+                )}
+              </label>
+              <input
+                className="form-control"
+                type="password"
+                value={form.api_key}
+                onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                placeholder="Zostaw puste aby nie zmieniać"
+              />
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn btn-primary" onClick={saveConfig} disabled={saving}>
+                {saving ? "Zapisywanie..." : "Zapisz"}
+              </button>
+              <button
+                className="btn"
+                onClick={testConnection}
+                disabled={testing || form.provider_type === "none"}
+                style={testing ? { opacity: 0.7 } : undefined}
+              >
+                {testing ? "Testowanie..." : "Testuj połączenie"}
+              </button>
+              {config.id > 0 && (
+                <button
+                  className={config.is_active ? "btn btn-danger" : "btn"}
+                  onClick={() => toggleActive(!config.is_active)}
+                  style={!config.is_active ? { color: "var(--green)", borderColor: "rgba(34,197,94,0.3)" } : undefined}
+                >
+                  {config.is_active ? "Dezaktywuj" : "Aktywuj AI"}
+                </button>
+              )}
+            </div>
+
+            {/* Test result */}
+            {testResult && (
+              <div style={{
+                marginTop: 12, padding: "8px 12px", borderRadius: 6, fontSize: 13,
+                background: testResult.success ? "var(--green-dim)" : "var(--red-dim)",
+                color: testResult.success ? "var(--green)" : "var(--red)",
+              }}>
+                {testResult.success ? "OK" : "Błąd"}: {testResult.message}
+                {testResult.response_time_ms != null && (
+                  <span style={{ opacity: 0.7 }}> ({testResult.response_time_ms}ms)</span>
+                )}
+              </div>
+            )}
+
+            {config.last_test_at && (
+              <div style={{ marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+                Ostatni test: {new Date(config.last_test_at).toLocaleString("pl-PL")}
+                {config.last_test_ok ? " — OK" : ` — ${config.last_test_error}`}
+              </div>
+            )}
+          </div>
+
+          {/* ── Parameters & Limits ── */}
+          <div className="card">
+            <div className="card-title">Parametry modelu</div>
+
+            <div className="grid-2" style={{ gap: 12 }}>
+              <div className="form-group">
+                <label>Max tokens</label>
+                <input
+                  className="form-control"
+                  type="number"
+                  value={form.max_tokens}
+                  onChange={(e) => setForm({ ...form, max_tokens: parseInt(e.target.value) || 4000 })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Temperature</label>
+                <input
+                  className="form-control"
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  max="1"
+                  value={form.temperature}
+                  onChange={(e) => setForm({ ...form, temperature: parseFloat(e.target.value) || 0.3 })}
+                />
               </div>
             </div>
+
+            <div className="card-title" style={{ marginTop: 8 }}>Limity zapytań</div>
+
+            <div className="grid-3" style={{ gap: 12 }}>
+              <div className="form-group">
+                <label>Użytkownik / h</label>
+                <input
+                  className="form-control"
+                  type="number"
+                  value={form.max_requests_per_user_per_hour}
+                  onChange={(e) => setForm({ ...form, max_requests_per_user_per_hour: parseInt(e.target.value) || 20 })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Użytkownik / dzień</label>
+                <input
+                  className="form-control"
+                  type="number"
+                  value={form.max_requests_per_user_per_day}
+                  onChange={(e) => setForm({ ...form, max_requests_per_user_per_day: parseInt(e.target.value) || 100 })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Organizacja / dzień</label>
+                <input
+                  className="form-control"
+                  type="number"
+                  value={form.max_requests_per_org_per_day}
+                  onChange={(e) => setForm({ ...form, max_requests_per_org_per_day: parseInt(e.target.value) || 500 })}
+                />
+              </div>
+            </div>
+
+            <button className="btn btn-primary btn-sm" onClick={saveConfig} disabled={saving}>
+              {saving ? "Zapisywanie..." : "Zapisz parametry"}
+            </button>
+          </div>
+        </div>
+
+        {/* ════ RIGHT COLUMN ════ */}
+        <div>
+          {/* ── Features ── */}
+          <div className="card">
+            <div className="card-title">Funkcje AI</div>
+            <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 14px" }}>
+              Włącz/wyłącz poszczególne możliwości AI. Wyłączone nie będą widoczne w UI.
+            </p>
+
+            {FEATURE_TOGGLES.map((ft) => (
+              <label
+                key={ft.key}
+                style={{
+                  display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12,
+                  cursor: "pointer", padding: "8px 10px", borderRadius: 6,
+                  background: (form as Record<string, unknown>)[ft.key] ? "var(--blue-dim)" : "var(--bg-subtle)",
+                  border: "1px solid",
+                  borderColor: (form as Record<string, unknown>)[ft.key] ? "rgba(59,130,246,0.2)" : "transparent",
+                  transition: "all 0.15s",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={(form as Record<string, unknown>)[ft.key] as boolean}
+                  onChange={(e) => setForm({ ...form, [ft.key]: e.target.checked })}
+                  style={{ width: 16, height: 16, marginTop: 1, accentColor: "var(--blue)", flexShrink: 0 }}
+                />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{ft.label}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{ft.desc}</div>
+                </div>
+              </label>
+            ))}
+
+            <button className="btn btn-primary btn-sm" onClick={saveConfig} disabled={saving} style={{ marginTop: 4 }}>
+              {saving ? "Zapisywanie..." : "Zapisz funkcje"}
+            </button>
           </div>
 
-          {Object.keys(usage.by_action).length > 0 && (
-            <div>
-              <div style={{ fontSize: "0.85rem", color: "var(--color-muted)", marginBottom: 8 }}>Wg typu:</div>
-              {Object.entries(usage.by_action).map(([action, count]) => (
-                <div key={action} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "0.85rem" }}>
-                  <span>{action}</span>
-                  <span style={{ fontWeight: 600 }}>{count}</span>
-                </div>
-              ))}
+          {/* ── Connection info ── */}
+          <div className="card">
+            <div className="card-title">Informacje o połączeniu</div>
+            <table style={{ width: "100%", fontSize: 13 }}>
+              <tbody>
+                <InfoRow label="Provider" value={providerLabel} />
+                <InfoRow label="Model" value={config.model_name ?? "—"} />
+                <InfoRow label="Endpoint" value={config.api_endpoint ?? "—"} />
+                <InfoRow label="API Key" value={config.api_key_masked ?? "nie ustawiony"} />
+                <InfoRow label="Status" value={
+                  config.is_active
+                    ? <span className="score-badge badge-green">Aktywne</span>
+                    : <span className="score-badge badge-red">Nieaktywne</span>
+                } />
+                <InfoRow label="Ostatni test" value={
+                  config.last_test_at
+                    ? <>{new Date(config.last_test_at).toLocaleString("pl-PL")} {config.last_test_ok
+                        ? <span className="score-badge badge-green" style={{ marginLeft: 6 }}>OK</span>
+                        : <span className="score-badge badge-red" style={{ marginLeft: 6 }}>Błąd</span>
+                      }</>
+                    : "—"
+                } />
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Usage Stats ── */}
+      <div className="card" style={{ marginTop: 4 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div className="card-title" style={{ margin: 0 }}>Statystyki użycia</div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[7, 30, 90].map((d) => (
+              <button
+                key={d}
+                className={`btn btn-sm ${d === days ? "btn-primary" : ""}`}
+                onClick={() => setDays(d)}
+                style={{ padding: "3px 10px", fontSize: 11 }}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {(!usage || usage.requests_count === 0) ? (
+          <div style={{ textAlign: "center", padding: "20px 0", color: "var(--text-muted)", fontSize: 13 }}>
+            Brak danych o użyciu AI w wybranym okresie.
+          </div>
+        ) : (
+          <>
+            {/* Summary row */}
+            <div className="grid-4" style={{ marginBottom: 16, gap: 10 }}>
+              <StatBox label="Zapytań" value={String(usage.requests_count)} color="var(--blue)" />
+              <StatBox label="Tokenów" value={usage.tokens_used.toLocaleString("pl-PL")} color="var(--purple)" />
+              <StatBox label="Koszt" value={`$${usage.cost_usd.toFixed(4)}`} color="var(--orange)" />
+              <StatBox label="Akceptacja" value={usage.acceptance_rate != null ? `${usage.acceptance_rate.toFixed(0)}%` : "—"} color="var(--green)" />
             </div>
-          )}
-        </section>
-      )}
+
+            {/* Usage by action — bar chart */}
+            {totalActions > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 10 }}>
+                  Rozkład wg typu
+                </div>
+                {Object.entries(usage.by_action)
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([action, count]) => {
+                    const pct = totalActions > 0 ? (count / totalActions * 100) : 0;
+                    return (
+                      <div key={action} className="bar-row">
+                        <div className="bar-label">{ACTION_LABELS[action] ?? action}</div>
+                        <div className="bar-track">
+                          <div
+                            className="bar-fill"
+                            data-value={count}
+                            style={{ width: `${Math.max(pct, 3)}%`, background: "var(--blue)" }}
+                          />
+                        </div>
+                        <div className="bar-score">{count}</div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Helper components ── */
+
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <tr>
+      <td style={{ padding: "6px 0", color: "var(--text-muted)", fontSize: 12, width: 110, verticalAlign: "top" }}>{label}</td>
+      <td style={{ padding: "6px 0", fontWeight: 500, wordBreak: "break-all" }}>{value}</td>
+    </tr>
+  );
+}
+
+function StatBox({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{
+      padding: "10px 12px", borderRadius: 8,
+      background: "var(--bg-subtle)", textAlign: "center",
+    }}>
+      <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color }}>{value}</div>
+      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{label}</div>
     </div>
   );
 }

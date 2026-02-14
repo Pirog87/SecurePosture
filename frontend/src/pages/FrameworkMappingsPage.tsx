@@ -241,7 +241,7 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
   const tabs: { id: TabId; label: string; icon: string }[] = [
     { id: "mappings", label: "Mapowania", icon: "🔗" },
     { id: "sets", label: "Zestawy", icon: "📦" },
-    { id: "ai_suggest", label: "AI Suggest", icon: "🤖" },
+    { id: "ai_suggest", label: "✨ AI Suggest", icon: "✨" },
     { id: "coverage", label: "Pokrycie", icon: "📊" },
     { id: "matrix", label: "Matryca", icon: "🗓" },
     { id: "transitive", label: "Tranzytywne", icon: "🔀" },

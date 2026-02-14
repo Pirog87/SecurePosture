@@ -392,6 +392,82 @@ class NodeAiCacheOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AIEvidenceRequest(BaseModel):
+    framework_name: str = Field(..., min_length=1, max_length=300)
+    node_ref_id: str | None = None
+    node_name: str = Field(..., min_length=1, max_length=500)
+    node_description: str | None = None
+    node_id: int | None = None
+    force: bool = False
+
+
+class EvidenceItem(BaseModel):
+    name: str
+    description: str = ""
+    type: str = "document"
+    priority: str = "recommended"
+
+
+class AIEvidenceOut(BaseModel):
+    evidence_items: list[EvidenceItem] = []
+    audit_tips: list[str] = []
+    cached: bool = False
+    cached_at: datetime | None = None
+
+
+class AISecurityAreaMapRequest(BaseModel):
+    framework_name: str = Field(..., min_length=1, max_length=300)
+    node_ref_id: str | None = None
+    node_name: str = Field(..., min_length=1, max_length=500)
+    node_description: str | None = None
+    node_id: int
+
+
+class SecurityAreaSuggestion(BaseModel):
+    area_id: int
+    area_name: str = ""
+    confidence: str = "medium"
+    rationale: str = ""
+
+
+class AISecurityAreaMapOut(BaseModel):
+    suggested_areas: list[SecurityAreaSuggestion] = []
+
+
+class AICrossMappingRequest(BaseModel):
+    source_framework_id: int
+    target_framework_id: int
+    source_node_id: int
+    auto_create: bool = False  # directly create the mappings
+
+
+class CrossMappingSuggestion(BaseModel):
+    target_ref_id: str
+    target_node_id: int | None = None
+    relationship_type: str = "intersect"
+    strength: int = 2
+    rationale: str = ""
+
+
+class AICrossMappingOut(BaseModel):
+    source_node_ref_id: str | None = None
+    source_node_name: str = ""
+    suggestions: list[CrossMappingSuggestion] = []
+
+
+class AICoverageReportRequest(BaseModel):
+    source_framework_id: int
+    target_framework_id: int
+
+
+class AICoverageReportOut(BaseModel):
+    executive_summary: str = ""
+    strengths: list[str] = []
+    gaps: list[str] = []
+    recommendations: list[dict] = []
+    risk_level: str = "medium"
+
+
 class AIUsageStatsOut(BaseModel):
     requests_count: int = 0
     tokens_used: int = 0

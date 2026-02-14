@@ -944,3 +944,159 @@ async def mapping_statistics(s: AsyncSession = Depends(get_session)):
         "by_relationship": by_rel,
         "by_source": by_src,
     }
+
+
+# ═══ Transitive Mapping Inference ═══════════════════════════════
+
+
+@router.post("/transitive")
+async def infer_transitive_mappings(
+    framework_a_id: int = Query(..., description="Framework A"),
+    framework_b_id: int = Query(..., description="Intermediate framework B"),
+    framework_c_id: int = Query(..., description="Target framework C"),
+    min_strength: int = Query(2, ge=1, le=3, description="Minimum combined strength"),
+    auto_create: bool = Query(False, description="Create mappings automatically"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Infer transitive mappings: if A→B and B→C exist, suggest A→C.
+
+    Computes all possible A→C paths through B, using the weaker strength
+    and the more general relationship type from each chain.
+    """
+    if not await _tables_exist(s):
+        raise HTTPException(503, "Mapping tables not yet created.")
+
+    fa = await s.get(Framework, framework_a_id)
+    fb = await s.get(Framework, framework_b_id)
+    fc = await s.get(Framework, framework_c_id)
+    if not fa or not fb or not fc:
+        raise HTTPException(404, "Framework not found")
+
+    # Get A→B mappings
+    ab_q = select(FrameworkMapping).where(
+        FrameworkMapping.source_framework_id == framework_a_id,
+        FrameworkMapping.target_framework_id == framework_b_id,
+    )
+    ab_mappings = (await s.execute(ab_q)).scalars().all()
+
+    # Get B→C mappings
+    bc_q = select(FrameworkMapping).where(
+        FrameworkMapping.source_framework_id == framework_b_id,
+        FrameworkMapping.target_framework_id == framework_c_id,
+    )
+    bc_mappings = (await s.execute(bc_q)).scalars().all()
+
+    # Index B→C by source_requirement_id (B side)
+    bc_by_b = {}
+    for m in bc_mappings:
+        bc_by_b.setdefault(m.source_requirement_id, []).append(m)
+
+    # Get existing A→C mappings to skip duplicates
+    existing_ac_q = select(FrameworkMapping).where(
+        FrameworkMapping.source_framework_id == framework_a_id,
+        FrameworkMapping.target_framework_id == framework_c_id,
+    )
+    existing_ac = (await s.execute(existing_ac_q)).scalars().all()
+    existing_pairs = {(m.source_requirement_id, m.target_requirement_id) for m in existing_ac}
+
+    # Compute transitive chains
+    suggestions = []
+    RELATIONSHIP_PRIORITY = {"equal": 3, "subset": 2, "superset": 2, "intersect": 1, "not_related": 0}
+
+    for ab in ab_mappings:
+        b_node_id = ab.target_requirement_id
+        bc_list = bc_by_b.get(b_node_id, [])
+
+        for bc in bc_list:
+            a_node = ab.source_requirement_id
+            c_node = bc.target_requirement_id
+
+            if (a_node, c_node) in existing_pairs:
+                continue
+
+            # Combined strength = min of both
+            combined_strength = min(ab.strength, bc.strength)
+            if combined_strength < min_strength:
+                continue
+
+            # Combined relationship = weaker of the two
+            ab_prio = RELATIONSHIP_PRIORITY.get(ab.relationship_type, 0)
+            bc_prio = RELATIONSHIP_PRIORITY.get(bc.relationship_type, 0)
+            if ab_prio <= bc_prio:
+                combined_rel = ab.relationship_type
+            else:
+                combined_rel = bc.relationship_type
+
+            if combined_rel == "not_related":
+                continue
+
+            # Get node details
+            a_req = await s.get(FrameworkNode, a_node)
+            c_req = await s.get(FrameworkNode, c_node)
+            b_req = await s.get(FrameworkNode, b_node_id)
+
+            suggestions.append({
+                "source_node_id": a_node,
+                "source_ref_id": a_req.ref_id if a_req else None,
+                "source_name": a_req.name if a_req else None,
+                "target_node_id": c_node,
+                "target_ref_id": c_req.ref_id if c_req else None,
+                "target_name": c_req.name if c_req else None,
+                "via_node_id": b_node_id,
+                "via_ref_id": b_req.ref_id if b_req else None,
+                "via_name": b_req.name if b_req else None,
+                "relationship_type": combined_rel,
+                "strength": combined_strength,
+                "chain": f"{ab.relationship_type}({ab.strength}) → {bc.relationship_type}({bc.strength})",
+            })
+            existing_pairs.add((a_node, c_node))  # prevent duplicates within results
+
+    # Auto-create if requested
+    created = 0
+    if auto_create and suggestions:
+        ms_q = select(MappingSet).where(
+            MappingSet.source_framework_id == framework_a_id,
+            MappingSet.target_framework_id == framework_c_id,
+        )
+        ms = (await s.execute(ms_q)).scalar_one_or_none()
+        if not ms:
+            ms = MappingSet(
+                source_framework_id=framework_a_id,
+                target_framework_id=framework_c_id,
+                name=f"{fa.name} → {fc.name} (tranzytywne przez {fb.name})",
+            )
+            s.add(ms)
+            await s.flush()
+
+        for sug in suggestions:
+            m = FrameworkMapping(
+                mapping_set_id=ms.id,
+                source_framework_id=framework_a_id,
+                source_requirement_id=sug["source_node_id"],
+                target_framework_id=framework_c_id,
+                target_requirement_id=sug["target_node_id"],
+                relationship_type=sug["relationship_type"],
+                strength=sug["strength"],
+                rationale=f"Tranzytywne przez {fb.name}: {sug['chain']}",
+                rationale_type="semantic",
+                mapping_source="ai_assisted",
+                mapping_status="draft",
+            )
+            s.add(m)
+            created += 1
+
+        await _recalc_set_stats(s, ms.id)
+
+    await s.commit()
+
+    return {
+        "framework_a": fa.name,
+        "framework_b": fb.name,
+        "framework_c": fc.name,
+        "ab_mappings_count": len(ab_mappings),
+        "bc_mappings_count": len(bc_mappings),
+        "existing_ac_count": len(existing_ac),
+        "transitive_suggestions": len(suggestions),
+        "created": created,
+        "suggestions": suggestions,
+    }

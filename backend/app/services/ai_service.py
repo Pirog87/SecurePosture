@@ -25,12 +25,18 @@ from app.models.smart_catalog import (
 from app.services.ai_adapters import get_ai_adapter
 from app.services.ai_prompts import (
     SYSTEM_PROMPT_ASSIST,
+    SYSTEM_PROMPT_COVERAGE_REPORT,
+    SYSTEM_PROMPT_CROSS_MAPPING,
     SYSTEM_PROMPT_ENRICHMENT,
+    SYSTEM_PROMPT_EVIDENCE,
     SYSTEM_PROMPT_GAP_ANALYSIS,
     SYSTEM_PROMPT_INTERPRET,
     SYSTEM_PROMPT_SCENARIO_GEN,
     SYSTEM_PROMPT_SEARCH,
+    SYSTEM_PROMPT_SECURITY_AREA_MAP,
     SYSTEM_PROMPT_TRANSLATE,
+    SYSTEM_PROMPT_DOCUMENT_IMPORT,
+    SYSTEM_PROMPT_DOCUMENT_IMPORT_CONTINUATION,
 )
 
 
@@ -538,6 +544,217 @@ class AIService:
             max_tokens=2000,
         )
         return result if isinstance(result, dict) else {"translated_name": str(result)}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 8: Evidence checklist generation
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def generate_evidence(
+        self,
+        user_id: int,
+        framework_name: str,
+        node_ref_id: str | None,
+        node_name: str,
+        node_description: str | None,
+    ) -> dict:
+        """Generate audit evidence checklist for a framework requirement."""
+        self._require_ai()
+
+        prompt = (
+            f"Framework: {framework_name}\n"
+            f"Ref ID: {node_ref_id or 'brak'}\n"
+            f"Nazwa wymagania: {node_name}\n"
+        )
+        if node_description:
+            prompt += f"Opis: {node_description}\n"
+        prompt += "\nWygeneruj liste dowodow audytowych dla tego wymagania."
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_EVIDENCE,
+            user_message=prompt,
+            action_type="EVIDENCE",
+            user_id=user_id,
+            max_tokens=2000,
+        )
+        return result if isinstance(result, dict) else {"evidence_items": []}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 9: Auto-map node to security areas
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def suggest_security_areas(
+        self,
+        user_id: int,
+        framework_name: str,
+        node_ref_id: str | None,
+        node_name: str,
+        node_description: str | None,
+        available_areas: list[dict],
+    ) -> dict:
+        """Suggest security areas for a framework node."""
+        self._require_ai()
+
+        areas_text = "\n".join(
+            f"- ID={a['id']}: {a['name']}" + (f" ({a['description']})" if a.get('description') else "")
+            for a in available_areas
+        )
+
+        prompt = (
+            f"Framework: {framework_name}\n"
+            f"Ref ID: {node_ref_id or 'brak'}\n"
+            f"Nazwa wymagania: {node_name}\n"
+        )
+        if node_description:
+            prompt += f"Opis: {node_description}\n"
+        prompt += f"\nDostepne obszary bezpieczenstwa:\n{areas_text}\n"
+        prompt += "\nDo ktorych obszarow pasuje to wymaganie?"
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_SECURITY_AREA_MAP,
+            user_message=prompt,
+            action_type="SECURITY_AREA_MAP",
+            user_id=user_id,
+            max_tokens=1000,
+        )
+        return result if isinstance(result, dict) else {"suggested_areas": []}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 10: AI-assisted cross-framework mapping
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def suggest_cross_mapping(
+        self,
+        user_id: int,
+        source_framework_name: str,
+        source_node_ref_id: str | None,
+        source_node_name: str,
+        source_node_description: str | None,
+        target_framework_name: str,
+        target_nodes: list[dict],
+    ) -> dict:
+        """Suggest mappings from a source node to target framework nodes."""
+        self._require_ai()
+
+        target_text = "\n".join(
+            f"- {t.get('ref_id', '?')}: {t['name']}"
+            + (f" — {t['description'][:100]}" if t.get('description') else "")
+            for t in target_nodes[:50]  # limit context
+        )
+
+        prompt = (
+            f"Framework zrodlowy: {source_framework_name}\n"
+            f"Wymaganie zrodlowe:\n"
+            f"  Ref ID: {source_node_ref_id or 'brak'}\n"
+            f"  Nazwa: {source_node_name}\n"
+        )
+        if source_node_description:
+            prompt += f"  Opis: {source_node_description}\n"
+        prompt += (
+            f"\nFramework docelowy: {target_framework_name}\n"
+            f"Wymagania docelowe:\n{target_text}\n"
+            f"\nZaproponuj mapowania z wymagania zrodlowego na wymagania docelowe."
+        )
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_CROSS_MAPPING,
+            user_message=prompt,
+            action_type="CROSS_MAPPING",
+            user_id=user_id,
+            max_tokens=2000,
+        )
+        return result if isinstance(result, dict) else {"mappings": []}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 11: Coverage report generation
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def generate_coverage_report(
+        self,
+        user_id: int,
+        source_framework_name: str,
+        target_framework_name: str,
+        coverage_data: dict,
+    ) -> dict:
+        """Generate AI-powered coverage analysis report."""
+        self._require_ai()
+
+        prompt = (
+            f"Framework zrodlowy: {source_framework_name}\n"
+            f"Framework docelowy: {target_framework_name}\n"
+            f"Pokrycie: {coverage_data.get('coverage_percent', 0)}%\n"
+            f"Wymagania ogolem: {coverage_data.get('total_requirements', 0)}\n"
+            f"Pokryte: {coverage_data.get('covered', 0)}\n"
+            f"Niepokryte: {coverage_data.get('uncovered', 0)}\n"
+            f"Rozkad relacji: {json.dumps(coverage_data.get('by_relationship', {}))}\n"
+        )
+        uncovered = coverage_data.get("uncovered_requirements", [])
+        if uncovered:
+            prompt += "Niepokryte wymagania:\n"
+            for u in uncovered[:20]:
+                prompt += f"- {u.get('ref_id', '?')}: {u.get('name', '?')}\n"
+
+        prompt += "\nWygeneruj raport zarzadczy z rekomendacjami."
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_COVERAGE_REPORT,
+            user_message=prompt,
+            action_type="COVERAGE_REPORT",
+            user_id=user_id,
+            max_tokens=2000,
+        )
+        return result if isinstance(result, dict) else {"executive_summary": str(result)}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 12: AI-powered document import
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def analyze_document_structure(
+        self,
+        user_id: int,
+        document_text: str,
+        filename: str,
+    ) -> dict:
+        """Analyze first chunk of document to extract framework metadata + nodes."""
+        self._require_ai()
+
+        prompt = (
+            f"Plik: {filename}\n\n"
+            f"Tekst dokumentu:\n{document_text}\n\n"
+            f"Przeanalizuj ten dokument i wyodrebnij pelna strukture."
+        )
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_DOCUMENT_IMPORT,
+            user_message=prompt,
+            action_type="DOCUMENT_IMPORT",
+            user_id=user_id,
+            max_tokens=4000,
+        )
+        return result if isinstance(result, dict) else {"framework": {}, "nodes": []}
+
+    async def analyze_document_continuation(
+        self,
+        user_id: int,
+        document_text: str,
+        previous_nodes_summary: str,
+    ) -> dict:
+        """Analyze continuation chunk of document."""
+        self._require_ai()
+
+        prompt = (
+            f"Dotychczas wyodrebnione wezly (ostatnie):\n{previous_nodes_summary}\n\n"
+            f"Kontynuacja tekstu dokumentu:\n{document_text}\n\n"
+            f"Kontynuuj wyodrebnianie struktury."
+        )
+
+        result = await self._call_llm(
+            system=SYSTEM_PROMPT_DOCUMENT_IMPORT_CONTINUATION,
+            user_message=prompt,
+            action_type="DOCUMENT_IMPORT",
+            user_id=user_id,
+            max_tokens=4000,
+        )
+        return result if isinstance(result, dict) else {"nodes": []}
 
 
 async def get_ai_service(session: AsyncSession) -> AIService:

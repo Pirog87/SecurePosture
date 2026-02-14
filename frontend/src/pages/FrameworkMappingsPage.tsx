@@ -233,12 +233,13 @@ function RelationshipChart({ data }: { data: Record<string, number> }) {
 /* ═══════════════════════════════════════════════════════════
    Tabs
    ═══════════════════════════════════════════════════════════ */
-type TabId = "mappings" | "sets" | "coverage" | "matrix";
+type TabId = "mappings" | "sets" | "ai_suggest" | "coverage" | "matrix";
 
 function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => void }) {
   const tabs: { id: TabId; label: string; icon: string }[] = [
     { id: "mappings", label: "Mapowania", icon: "🔗" },
     { id: "sets", label: "Zestawy", icon: "📦" },
+    { id: "ai_suggest", label: "AI Suggest", icon: "🤖" },
     { id: "coverage", label: "Pokrycie", icon: "📊" },
     { id: "matrix", label: "Matryca", icon: "🗓" },
   ];
@@ -351,12 +352,17 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
 
   const GITHUB_MAPPING_FILES = [
     "mapping-nist-sp-800-53-rev5-to-iso27001-2022.yaml",
-    "mapping-iso27001-2022-to-nist-sp-800-53-rev5.yaml",
     "mapping-nist-csf-2.0-to-iso27001-2022.yaml",
-    "mapping-iso27001-2022-to-nist-csf-2.0.yaml",
-    "mapping-cis-controls-v8-to-iso27001-2022.yaml",
-    "mapping-iso27001-2022-to-cis-controls-v8.yaml",
-    "mapping-nist-sp-800-53-rev5-to-nist-csf-2.0.yaml",
+    "mapping-cis-controls-v8-and-iso27001-2022.yaml",
+    "mapping-iso27001-2013-to-iso27001-2022.yaml",
+    "mapping-iso27001-2022-to-secnumcloud-3.2.yaml",
+    "mapping-soc2-2017-rev-2022-to-iso27001-2022.yaml",
+    "mapping-ccb-cff-2023-03-01-to-iso27001-2022.yaml",
+    "mapping-iso27001-2022-and-scf-2025.2.2.yaml",
+    "mapping-nist-csf-2.0-and-scf-2025.2.2.yaml",
+    "mapping-pcidss-4_0-and-scf-2025.2.2.yaml",
+    "mapping-nist-sp-800-66-rev2-to-nist-csf-2.0.yaml",
+    "mapping-nist-sp-800-66-rev2-to-nist-sp-800-53-rev5.yaml",
   ];
 
   return (
@@ -607,6 +613,332 @@ function MappingSetsTab({ sets, frameworks, onRefresh }: {
           </div>
         </div>
       </Modal>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════
+   AISuggestTab — SBERT-based mapping suggestions
+   ═══════════════════════════════════════════════════════════ */
+interface AISuggestion {
+  source_node_id: number;
+  source_ref_id: string | null;
+  source_name: string;
+  target_node_id: number;
+  target_ref_id: string | null;
+  target_name: string;
+  score: number;
+  relationship_type: string;
+  strength: number;
+}
+
+interface AISuggestResult {
+  source_framework_id: number;
+  source_framework_name: string;
+  target_framework_id: number;
+  target_framework_name: string;
+  model_name: string;
+  source_nodes_count: number;
+  target_nodes_count: number;
+  total_suggestions: number;
+  suggestions: AISuggestion[];
+}
+
+function AISuggestTab({ frameworks, onRefresh }: { frameworks: Framework[]; onRefresh: () => void }) {
+  const [srcFw, setSrcFw] = useState(0);
+  const [tgtFw, setTgtFw] = useState(0);
+  const [topK, setTopK] = useState(3);
+  const [minScore, setMinScore] = useState(0.45);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<AISuggestResult | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [accepting, setAccepting] = useState(false);
+  const [acceptResult, setAcceptResult] = useState<{ created: number; revert_created: number; skipped: number } | null>(null);
+
+  const handleGenerate = async () => {
+    if (!srcFw || !tgtFw) return;
+    setLoading(true);
+    setResult(null);
+    setSelected(new Set());
+    setAcceptResult(null);
+    try {
+      const params = new URLSearchParams({
+        source_framework_id: String(srcFw),
+        target_framework_id: String(tgtFw),
+        top_k: String(topK),
+        min_score: String(minScore),
+      });
+      const data = await api.post<AISuggestResult>(`/api/v1/framework-mappings/ai-suggest?${params}`, {});
+      setResult(data);
+      // Pre-select high-confidence suggestions
+      const preselected = new Set<number>();
+      data.suggestions.forEach((s, i) => {
+        if (s.score >= 0.60) preselected.add(i);
+      });
+      setSelected(preselected);
+    } catch (e: any) {
+      alert(e?.message || "B\u0142\u0105d generowania sugestii AI");
+    }
+    setLoading(false);
+  };
+
+  const toggleSelect = (idx: number) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (!result) return;
+    if (selected.size === result.suggestions.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(result.suggestions.map((_, i) => i)));
+    }
+  };
+
+  const handleAccept = async () => {
+    if (!result || selected.size === 0) return;
+    setAccepting(true);
+    setAcceptResult(null);
+    try {
+      const suggestions = [...selected].map(i => result.suggestions[i]).map(s => ({
+        source_node_id: s.source_node_id,
+        target_node_id: s.target_node_id,
+        relationship_type: s.relationship_type,
+        strength: s.strength,
+        score: s.score,
+        model_name: result.model_name,
+      }));
+      const params = new URLSearchParams({
+        source_framework_id: String(result.source_framework_id),
+        target_framework_id: String(result.target_framework_id),
+        auto_revert: "true",
+      });
+      const res = await api.post<{ created: number; revert_created: number; skipped: number }>(
+        `/api/v1/framework-mappings/ai-suggest/accept?${params}`, suggestions
+      );
+      setAcceptResult(res);
+      onRefresh();
+    } catch (e: any) {
+      alert(e?.message || "B\u0142\u0105d akceptowania sugestii");
+    }
+    setAccepting(false);
+  };
+
+  const scoreColor = (score: number) => {
+    if (score >= 0.85) return "#10b981";
+    if (score >= 0.70) return "#6366f1";
+    if (score >= 0.55) return "#f59e0b";
+    return "#94a3b8";
+  };
+
+  return (
+    <div>
+      <h3 style={{ margin: "0 0 4px", fontSize: 16 }}>AI-Suggest Mapowania (SBERT)</h3>
+      <p style={{ margin: "0 0 16px", fontSize: 13, color: "var(--text-muted)" }}>
+        Automatyczne sugestie mapowa{'\u0144'} na podstawie podobie{'\u0144'}stwa semantycznego tekst{'\u00f3'}w wymaga{'\u0144'} (sentence-transformers)
+      </p>
+
+      {/* Configuration */}
+      <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <label style={{ fontSize: 13 }}>Source Framework *
+            <select className="form-control" value={srcFw} onChange={e => setSrcFw(Number(e.target.value))}>
+              <option value={0}>— wybierz —</option>
+              {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: 13 }}>Target Framework *
+            <select className="form-control" value={tgtFw} onChange={e => setTgtFw(Number(e.target.value))}>
+              <option value={0}>— wybierz —</option>
+              {frameworks.map(fw => <option key={fw.id} value={fw.id}>{fw.name}</option>)}
+            </select>
+          </label>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <label style={{ fontSize: 13 }}>Top-K (maks. wynik{'\u00f3'}w na wymaganie)
+            <select className="form-control" value={topK} onChange={e => setTopK(Number(e.target.value))}>
+              {[1, 2, 3, 5, 10].map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: 13 }}>Min. score (pr{'\u00f3'}g podobie{'\u0144'}stwa)
+            <select className="form-control" value={minScore} onChange={e => setMinScore(Number(e.target.value))}>
+              {[0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.70].map(s => (
+                <option key={s} value={s}>{(s * 100).toFixed(0)}%</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {/* Info box */}
+        <div style={{ padding: 10, borderRadius: 6, background: "var(--bg-secondary)", fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, marginBottom: 12 }}>
+          Model: <strong>all-MiniLM-L6-v2</strong> — szybki, wieloj{'\u0119'}zyczny model sentence-transformers.
+          Oblicza cosine similarity mi{'\u0119'}dzy tekstami wymaga{'\u0144'} i sugeruje mapowania powy{'\u017c'}ej progu.
+          Wyniki s{'\u0105'} w statusie <em>draft</em> — wymagaj{'\u0105'} potwierdzenia.
+        </div>
+
+        <button
+          className="btn btn-primary"
+          onClick={handleGenerate}
+          disabled={loading || !srcFw || !tgtFw || srcFw === tgtFw}
+          style={{ width: "100%" }}
+        >
+          {loading ? "Generowanie sugestii AI..." : "Generuj sugestie SBERT"}
+        </button>
+      </div>
+
+      {/* Results */}
+      {result && (
+        <div>
+          {/* Summary */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "var(--blue)" }}>{result.total_suggestions}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Sugestii</div>
+            </div>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "#10b981" }}>{result.source_nodes_count}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Source nodes</div>
+            </div>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "#6366f1" }}>{result.target_nodes_count}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Target nodes</div>
+            </div>
+            <div className="card" style={{ padding: 12, textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "#f59e0b" }}>{selected.size}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Zaznaczonych</div>
+            </div>
+          </div>
+
+          {/* Accept bar */}
+          {!acceptResult && result.suggestions.length > 0 && (
+            <div style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              padding: "10px 14px", borderRadius: 8, background: "var(--bg-secondary)", marginBottom: 12,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={selected.size === result.suggestions.length}
+                    onChange={toggleAll}
+                  />
+                  Zaznacz wszystkie
+                </label>
+                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                  {selected.size} z {result.suggestions.length} zaznaczonych
+                </span>
+              </div>
+              <button
+                className="btn btn-primary"
+                onClick={handleAccept}
+                disabled={accepting || selected.size === 0}
+              >
+                {accepting ? "Akceptowanie..." : `Akceptuj ${selected.size} sugestii`}
+              </button>
+            </div>
+          )}
+
+          {/* Accept result */}
+          {acceptResult && (
+            <div style={{
+              padding: 12, borderRadius: 8, marginBottom: 12, fontSize: 13, lineHeight: 1.6,
+              background: "#10b98118", border: "1px solid #10b98140",
+            }}>
+              <div style={{ fontWeight: 600, color: "#10b981", marginBottom: 4 }}>
+                Sugestie zaakceptowane
+              </div>
+              <div>Utworzono: <strong>{acceptResult.created}</strong> mapowa{'\u0144'}</div>
+              {acceptResult.revert_created > 0 && (
+                <div>Odwrotne: <strong>{acceptResult.revert_created}</strong> mapowa{'\u0144'}</div>
+              )}
+              {acceptResult.skipped > 0 && (
+                <div>Pomini{'\u0119'}to (duplikaty): <strong>{acceptResult.skipped}</strong></div>
+              )}
+            </div>
+          )}
+
+          {/* Suggestions table */}
+          {result.suggestions.length > 0 ? (
+            <div className="card" style={{ overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: "2px solid var(--border)", textAlign: "left" }}>
+                    <th style={{ padding: "8px 10px", width: 36 }}></th>
+                    <th style={{ padding: "8px 10px" }}>Source</th>
+                    <th style={{ padding: "8px 10px" }}>Target</th>
+                    <th style={{ padding: "8px 10px", width: 80 }}>Score</th>
+                    <th style={{ padding: "8px 10px", width: 100 }}>Relacja</th>
+                    <th style={{ padding: "8px 10px", width: 60 }}>Si{'\u0142'}a</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.suggestions.map((s, i) => (
+                    <tr
+                      key={i}
+                      onClick={() => toggleSelect(i)}
+                      style={{
+                        borderBottom: "1px solid var(--border)", cursor: "pointer",
+                        background: selected.has(i) ? "var(--bg-secondary)" : "transparent",
+                        opacity: acceptResult ? 0.6 : 1,
+                      }}
+                    >
+                      <td style={{ padding: "6px 10px", textAlign: "center" }}>
+                        <input type="checkbox" checked={selected.has(i)} readOnly />
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--text-muted)" }}>
+                          {s.source_ref_id || "—"}
+                        </div>
+                        <div style={{ fontSize: 12, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.source_name}
+                        </div>
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11, color: "var(--text-muted)" }}>
+                          {s.target_ref_id || "—"}
+                        </div>
+                        <div style={{ fontSize: 12, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.target_name}
+                        </div>
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{
+                            width: 40, height: 6, borderRadius: 3, background: "var(--border)", overflow: "hidden",
+                          }}>
+                            <div style={{
+                              width: `${s.score * 100}%`, height: "100%", borderRadius: 3,
+                              background: scoreColor(s.score),
+                            }} />
+                          </div>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: scoreColor(s.score) }}>
+                            {(s.score * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <RelBadge rel={s.relationship_type} />
+                      </td>
+                      <td style={{ padding: "6px 10px" }}>
+                        <StrengthDots strength={s.strength} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="card" style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+              Brak sugestii powy{'\u017c'}ej progu podobie{'\u0144'}stwa. Spr{'\u00f3'}buj obni{'\u017c'}y{'\u0107'} pr{'\u00f3'}g min. score.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1206,6 +1538,9 @@ export default function FrameworkMappingsPage() {
 
       {/* ── Sets Tab ── */}
       {activeTab === "sets" && <MappingSetsTab sets={sets} frameworks={frameworks} onRefresh={load} />}
+
+      {/* ── AI Suggest Tab ── */}
+      {activeTab === "ai_suggest" && <AISuggestTab frameworks={frameworks} onRefresh={load} />}
 
       {/* ── Coverage Tab ── */}
       {activeTab === "coverage" && <CoverageTab frameworks={frameworks} />}

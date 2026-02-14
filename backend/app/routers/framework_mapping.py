@@ -663,6 +663,199 @@ async def mapping_matrix(
     )
 
 
+# ═══ AI-Suggest (SBERT) ════════════════════════════════════════
+
+
+@router.post("/ai-suggest")
+async def ai_suggest_mappings(
+    source_framework_id: int = Query(...),
+    target_framework_id: int = Query(...),
+    model_name: str = Query("all-MiniLM-L6-v2", description="SBERT model name"),
+    top_k: int = Query(5, ge=1, le=20, description="Top-K matches per source node"),
+    min_score: float = Query(0.40, ge=0.0, le=1.0, description="Minimum similarity score"),
+    s: AsyncSession = Depends(get_session),
+):
+    """Generate AI-suggested mappings using SBERT semantic similarity.
+
+    Uses sentence-transformers to encode framework requirement texts and compute
+    cosine similarity. Returns ranked suggestions for human review.
+    """
+    from app.services.sbert_mapper import suggest_mappings
+
+    try:
+        result = await suggest_mappings(
+            s,
+            source_framework_id,
+            target_framework_id,
+            model_name=model_name,
+            top_k=top_k,
+            min_score=min_score,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(500, f"AI suggest error: {e}")
+
+    return {
+        "source_framework_id": result.source_framework_id,
+        "source_framework_name": result.source_framework_name,
+        "target_framework_id": result.target_framework_id,
+        "target_framework_name": result.target_framework_name,
+        "model_name": result.model_name,
+        "source_nodes_count": result.source_nodes_count,
+        "target_nodes_count": result.target_nodes_count,
+        "total_suggestions": len(result.suggestions),
+        "suggestions": [
+            {
+                "source_node_id": sg.source_node_id,
+                "source_ref_id": sg.source_ref_id,
+                "source_name": sg.source_name,
+                "target_node_id": sg.target_node_id,
+                "target_ref_id": sg.target_ref_id,
+                "target_name": sg.target_name,
+                "score": sg.score,
+                "relationship_type": sg.relationship_type,
+                "strength": sg.strength,
+            }
+            for sg in result.suggestions
+        ],
+    }
+
+
+@router.post("/ai-suggest/accept")
+async def accept_ai_suggestions(
+    suggestions: list[dict],
+    mapping_set_id: int | None = Query(None),
+    source_framework_id: int = Query(...),
+    target_framework_id: int = Query(...),
+    auto_revert: bool = Query(True),
+    s: AsyncSession = Depends(get_session),
+):
+    """Accept selected AI suggestions and create actual framework mappings.
+
+    Each suggestion dict should have: source_node_id, target_node_id,
+    relationship_type, strength, score.
+    """
+    sf = await s.get(Framework, source_framework_id)
+    tf = await s.get(Framework, target_framework_id)
+    if not sf or not tf:
+        raise HTTPException(404, "Framework not found")
+
+    # Find or create mapping set
+    if not mapping_set_id:
+        ms_q = select(MappingSet).where(
+            MappingSet.source_framework_id == source_framework_id,
+            MappingSet.target_framework_id == target_framework_id,
+        )
+        ms = (await s.execute(ms_q)).scalar_one_or_none()
+        if not ms:
+            ms = MappingSet(
+                source_framework_id=source_framework_id,
+                target_framework_id=target_framework_id,
+                name=f"{sf.name} <-> {tf.name}",
+            )
+            s.add(ms)
+            await s.flush()
+        mapping_set_id = ms.id
+
+    created = 0
+    skipped = 0
+
+    for sug in suggestions:
+        src_id = sug.get("source_node_id")
+        tgt_id = sug.get("target_node_id")
+        if not src_id or not tgt_id:
+            continue
+
+        # Skip duplicates
+        dup_q = select(FrameworkMapping).where(
+            FrameworkMapping.source_requirement_id == src_id,
+            FrameworkMapping.target_requirement_id == tgt_id,
+        )
+        if (await s.execute(dup_q)).scalar_one_or_none():
+            skipped += 1
+            continue
+
+        m = FrameworkMapping(
+            mapping_set_id=mapping_set_id,
+            source_framework_id=source_framework_id,
+            source_requirement_id=src_id,
+            target_framework_id=target_framework_id,
+            target_requirement_id=tgt_id,
+            relationship_type=sug.get("relationship_type", "intersect"),
+            strength=sug.get("strength", 2),
+            mapping_source="ai_assisted",
+            mapping_status="draft",
+            ai_score=sug.get("score"),
+            ai_model=sug.get("model_name", "all-MiniLM-L6-v2"),
+        )
+        s.add(m)
+        created += 1
+
+    await s.flush()
+
+    # Auto-revert
+    revert_created = 0
+    if auto_revert and created > 0:
+        rev_q = select(MappingSet).where(
+            MappingSet.source_framework_id == target_framework_id,
+            MappingSet.target_framework_id == source_framework_id,
+        )
+        rev_ms = (await s.execute(rev_q)).scalar_one_or_none()
+        if not rev_ms:
+            rev_ms = MappingSet(
+                source_framework_id=target_framework_id,
+                target_framework_id=source_framework_id,
+                name=f"{tf.name} <-> {sf.name} (revert)",
+            )
+            s.add(rev_ms)
+            await s.flush()
+
+        # Get the newly created mappings
+        new_q = select(FrameworkMapping).where(
+            FrameworkMapping.mapping_set_id == mapping_set_id,
+            FrameworkMapping.mapping_source == "ai_assisted",
+        )
+        new_mappings = (await s.execute(new_q)).scalars().all()
+
+        for fm in new_mappings:
+            rev_dup = select(FrameworkMapping).where(
+                FrameworkMapping.source_requirement_id == fm.target_requirement_id,
+                FrameworkMapping.target_requirement_id == fm.source_requirement_id,
+            )
+            if (await s.execute(rev_dup)).scalar_one_or_none():
+                continue
+
+            rev_m = FrameworkMapping(
+                mapping_set_id=rev_ms.id,
+                source_framework_id=fm.target_framework_id,
+                source_requirement_id=fm.target_requirement_id,
+                target_framework_id=fm.source_framework_id,
+                target_requirement_id=fm.source_requirement_id,
+                relationship_type=revert_relationship(fm.relationship_type),
+                strength=fm.strength,
+                mapping_source="ai_assisted",
+                mapping_status="draft",
+                ai_score=fm.ai_score,
+                ai_model=fm.ai_model,
+            )
+            s.add(rev_m)
+            revert_created += 1
+
+        await s.flush()
+        await _recalc_set_stats(s, rev_ms.id)
+
+    await _recalc_set_stats(s, mapping_set_id)
+    await s.commit()
+
+    return {
+        "created": created,
+        "revert_created": revert_created,
+        "skipped": skipped,
+        "mapping_set_id": mapping_set_id,
+    }
+
+
 # ═══ Statistics ═════════════════════════════════════════════════
 
 

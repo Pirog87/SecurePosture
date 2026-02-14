@@ -8,18 +8,37 @@ Covers:
 - Confirmation workflow (single + bulk)
 - Bulk import with auto-revert
 - YAML mapping import (CISO Assistant format)
+- SBERT AI-suggest (mocked model)
 - Coverage analysis
 - Matrix endpoint
 - Statistics endpoint
 - Validation (invalid relationship_type)
 """
 import io
+from unittest.mock import patch
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.compliance import revert_relationship
 from app.models.framework import Framework, FrameworkNode
+
+
+def _mock_compute_suggestions(source_texts, target_texts, model_name="all-MiniLM-L6-v2", top_k=5, min_score=0.0):
+    """Mock compute_suggestions that returns deterministic results without loading a model."""
+    results = []
+    n_tgt = len(target_texts)
+    actual_k = min(top_k, n_tgt)
+    for i in range(len(source_texts)):
+        pairs = []
+        for j in range(actual_k):
+            score = max(0.9 - j * 0.15 - abs(i - j) * 0.05, 0.1)
+            if score >= min_score:
+                pairs.append((j, score))
+        pairs.sort(key=lambda x: x[1], reverse=True)
+        results.append(pairs)
+    return results
 
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -840,3 +859,239 @@ objects:
     assert data["created"] == 1
     assert data["skipped"] == 1
     assert len(data["errors"]) >= 1
+
+
+# ─── SBERT Mapper Tests ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_sbert_node_text():
+    """_node_text builds correct text representation."""
+    from app.services.sbert_mapper import _node_text
+
+    class FakeNode:
+        ref_id = "A.5.1"
+        name = "Information security policies"
+        description = "Policies for information security"
+
+    txt = _node_text(FakeNode())
+    assert "A.5.1" in txt
+    assert "Information security policies" in txt
+    assert "Policies for information security" in txt
+
+
+@pytest.mark.asyncio
+async def test_sbert_node_text_no_description():
+    """_node_text works without description."""
+    from app.services.sbert_mapper import _node_text
+
+    class FakeNode:
+        ref_id = "GV.PO-01"
+        name = "Policy"
+        description = None
+
+    txt = _node_text(FakeNode())
+    assert "GV.PO-01" in txt
+    assert "Policy" in txt
+
+
+@pytest.mark.asyncio
+async def test_sbert_classify_score():
+    """Score classification returns correct relationship types."""
+    from app.services.sbert_mapper import _classify_score
+
+    rel, strength = _classify_score(0.90)
+    assert rel == "equal"
+    assert strength == 3
+
+    rel, strength = _classify_score(0.75)
+    assert rel == "subset"
+    assert strength == 3
+
+    rel, strength = _classify_score(0.60)
+    assert rel == "intersect"
+    assert strength == 2
+
+    rel, strength = _classify_score(0.42)
+    assert rel == "intersect"
+    assert strength == 1
+
+
+@pytest.mark.asyncio
+async def test_sbert_compute_suggestions():
+    """compute_suggestions (mocked) returns scored matches above threshold."""
+    results = _mock_compute_suggestions(
+        ["Information security policies and procedures"],
+        ["Organizational security policy management", "Physical access control", "Network firewall"],
+        top_k=3, min_score=0.0,
+    )
+    assert len(results) == 1
+    assert len(results[0]) > 0
+    scores = [score for _, score in results[0]]
+    assert scores == sorted(scores, reverse=True)
+
+
+@pytest.mark.asyncio
+@patch("app.services.sbert_mapper.compute_suggestions", side_effect=_mock_compute_suggestions)
+async def test_sbert_suggest_mappings(mock_cs, db: AsyncSession):
+    """suggest_mappings returns suggestions for two frameworks."""
+    from app.services.sbert_mapper import suggest_mappings
+
+    fw1, fw2, _, _ = await _seed_two_frameworks(db)
+
+    result = await suggest_mappings(
+        db,
+        fw1.id,
+        fw2.id,
+        top_k=2,
+        min_score=0.0,
+    )
+
+    assert result.source_framework_id == fw1.id
+    assert result.target_framework_id == fw2.id
+    assert result.source_framework_name == "ISO 27001"
+    assert result.target_framework_name == "NIST CSF 2.0"
+    assert result.source_nodes_count == 3
+    assert result.target_nodes_count == 3
+    assert len(result.suggestions) > 0
+
+    for s in result.suggestions:
+        assert s.source_node_id > 0
+        assert s.target_node_id > 0
+        assert 0.0 <= s.score <= 1.0
+        assert s.relationship_type in ("equal", "subset", "superset", "intersect", "not_related")
+        assert s.strength in (1, 2, 3)
+
+
+@pytest.mark.asyncio
+async def test_sbert_suggest_missing_framework(db: AsyncSession):
+    """suggest_mappings raises ValueError for missing framework."""
+    from app.services.sbert_mapper import suggest_mappings
+
+    with pytest.raises(ValueError, match="not found"):
+        await suggest_mappings(db, 9999, 9998)
+
+
+@pytest.mark.asyncio
+async def test_sbert_suggest_empty_framework(db: AsyncSession):
+    """suggest_mappings returns empty for framework with no nodes."""
+    from app.services.sbert_mapper import suggest_mappings
+
+    fw1 = Framework(name="Empty FW", urn="urn:empty1")
+    fw2 = Framework(name="Empty FW 2", urn="urn:empty2")
+    db.add_all([fw1, fw2])
+    await db.commit()
+    await db.refresh(fw1)
+    await db.refresh(fw2)
+
+    result = await suggest_mappings(db, fw1.id, fw2.id)
+    assert len(result.suggestions) == 0
+
+
+@pytest.mark.asyncio
+@patch("app.services.sbert_mapper.compute_suggestions", side_effect=_mock_compute_suggestions)
+async def test_ai_suggest_endpoint(mock_cs, client: AsyncClient, db: AsyncSession):
+    """POST /ai-suggest returns suggestions via API."""
+    fw1, fw2, _, _ = await _seed_two_frameworks(db)
+
+    r = await client.post(
+        "/api/v1/framework-mappings/ai-suggest",
+        params={
+            "source_framework_id": fw1.id,
+            "target_framework_id": fw2.id,
+            "top_k": 2,
+            "min_score": 0.0,
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["source_framework_name"] == "ISO 27001"
+    assert data["target_framework_name"] == "NIST CSF 2.0"
+    assert data["total_suggestions"] > 0
+    assert len(data["suggestions"]) > 0
+
+    s = data["suggestions"][0]
+    assert "source_node_id" in s
+    assert "target_node_id" in s
+    assert "score" in s
+    assert "relationship_type" in s
+    assert "strength" in s
+
+
+@pytest.mark.asyncio
+async def test_ai_suggest_accept(client: AsyncClient, db: AsyncSession):
+    """POST /ai-suggest/accept creates mappings from suggestions."""
+    fw1, fw2, nodes1, nodes2 = await _seed_two_frameworks(db)
+
+    # Accept some suggestions directly
+    suggestions = [
+        {
+            "source_node_id": nodes1[0].id,
+            "target_node_id": nodes2[0].id,
+            "relationship_type": "equal",
+            "strength": 3,
+            "score": 0.92,
+            "model_name": "all-MiniLM-L6-v2",
+        },
+        {
+            "source_node_id": nodes1[1].id,
+            "target_node_id": nodes2[1].id,
+            "relationship_type": "intersect",
+            "strength": 2,
+            "score": 0.65,
+            "model_name": "all-MiniLM-L6-v2",
+        },
+    ]
+
+    r = await client.post(
+        "/api/v1/framework-mappings/ai-suggest/accept",
+        params={
+            "source_framework_id": fw1.id,
+            "target_framework_id": fw2.id,
+            "auto_revert": "true",
+        },
+        json=suggestions,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["created"] == 2
+    assert data["revert_created"] == 2  # auto-revert creates inverse
+    assert data["mapping_set_id"] > 0
+
+    # Verify mappings were actually created
+    r2 = await client.get("/api/v1/framework-mappings/")
+    mappings = r2.json()
+    assert len(mappings) >= 4  # 2 forward + 2 reverse
+    ai_mappings = [m for m in mappings if m["mapping_source"] == "ai_assisted"]
+    assert len(ai_mappings) >= 2
+
+
+@pytest.mark.asyncio
+async def test_ai_suggest_accept_skip_duplicates(client: AsyncClient, db: AsyncSession):
+    """Accept endpoint skips duplicate mappings."""
+    fw1, fw2, nodes1, nodes2 = await _seed_two_frameworks(db)
+
+    suggestions = [{
+        "source_node_id": nodes1[0].id,
+        "target_node_id": nodes2[0].id,
+        "relationship_type": "equal",
+        "strength": 3,
+        "score": 0.90,
+    }]
+
+    # First accept
+    r1 = await client.post(
+        "/api/v1/framework-mappings/ai-suggest/accept",
+        params={"source_framework_id": fw1.id, "target_framework_id": fw2.id, "auto_revert": "false"},
+        json=suggestions,
+    )
+    assert r1.json()["created"] == 1
+
+    # Second accept — should skip
+    r2 = await client.post(
+        "/api/v1/framework-mappings/ai-suggest/accept",
+        params={"source_framework_id": fw1.id, "target_framework_id": fw2.id, "auto_revert": "false"},
+        json=suggestions,
+    )
+    assert r2.json()["created"] == 0
+    assert r2.json()["skipped"] == 1

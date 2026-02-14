@@ -98,8 +98,8 @@ def prepare_document_text(
 def prepare_chunked_document(
     filename: str,
     file: BinaryIO,
-    chunk_size: int = 25_000,
-    max_chunks: int = 6,
+    chunk_size: int = 10_000,
+    max_chunks: int = 10,
 ) -> tuple[list[str], dict]:
     """Extract text and split into chunks for multi-pass AI analysis.
 

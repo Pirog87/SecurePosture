@@ -998,6 +998,88 @@ import uuid as _uuid
 _ai_import_progress: dict[str, dict] = {}
 
 
+@router.post("/import/ai/debug", summary="Debug AI Import — test parsing without saving")
+async def debug_ai_import(
+    file: UploadFile = File(...),
+    s: AsyncSession = Depends(get_session),
+):
+    """Debug endpoint: runs AI import but returns raw AI response + parse result without saving.
+
+    Use to diagnose JSON parsing issues.
+    """
+    from app.services.ai_service import get_ai_service, AINotConfiguredException
+    from app.services.document_extract import prepare_chunked_document
+
+    if not file.filename:
+        raise HTTPException(400, "Brak nazwy pliku")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in ("pdf", "docx", "doc"):
+        raise HTTPException(400, "Obsługiwane formaty: .pdf, .docx")
+
+    svc = await get_ai_service(s)
+    if not svc.config:
+        raise HTTPException(503, "AI nie jest skonfigurowane.")
+
+    try:
+        chunks, meta = prepare_chunked_document(file.filename, file.file)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    # Call LLM but catch everything and return raw response
+    from app.services.ai_adapters import LLMResponse
+    from app.services.ai_prompts import SYSTEM_PROMPT_DOCUMENT_IMPORT
+
+    prompt = (
+        f"Plik: {file.filename}\n\n"
+        f"Tekst dokumentu:\n{chunks[0][:5000]}\n\n"  # Only first 5000 chars for debug
+        f"Przeanalizuj ten dokument i wyodrebnij pelna strukture."
+    )
+
+    try:
+        llm_resp: LLMResponse = await svc.adapter.chat_completion(
+            system=SYSTEM_PROMPT_DOCUMENT_IMPORT,
+            user_message=prompt,
+            max_tokens=svc.config.max_tokens,
+            temperature=float(svc.config.temperature),
+            timeout=120,
+        )
+    except Exception as e:
+        return {
+            "status": "llm_call_failed",
+            "error": str(e),
+            "chunks_count": len(chunks),
+            "first_chunk_length": len(chunks[0]),
+            "meta": meta,
+        }
+
+    # Try to parse
+    parse_error = None
+    parsed = None
+    try:
+        parsed = svc._parse_json(llm_resp.text)
+    except Exception as e:
+        parse_error = str(e)
+
+    return {
+        "status": "ok" if parsed else "parse_failed",
+        "raw_response_length": len(llm_resp.text),
+        "raw_response_first_500": llm_resp.text[:500],
+        "raw_response_last_200": llm_resp.text[-200:] if len(llm_resp.text) > 200 else llm_resp.text,
+        "tokens_input": llm_resp.tokens_input,
+        "tokens_output": llm_resp.tokens_output,
+        "cost_usd": float(llm_resp.cost_usd),
+        "model": llm_resp.model,
+        "parsed_ok": parsed is not None,
+        "parse_error": parse_error,
+        "parsed_keys": list(parsed.keys()) if isinstance(parsed, dict) else None,
+        "nodes_count": len(parsed.get("nodes", [])) if isinstance(parsed, dict) else None,
+        "chunks_count": len(chunks),
+        "first_chunk_length": len(chunks[0]),
+        "meta": meta,
+    }
+
+
 @router.get("/import/ai/progress/{task_id}")
 async def ai_import_progress(task_id: str):
     """Poll progress of an AI import task."""

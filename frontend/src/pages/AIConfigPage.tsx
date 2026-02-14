@@ -31,9 +31,12 @@ interface AIConfig {
 interface UsageStats {
   requests_count: number;
   tokens_used: number;
+  tokens_input: number;
+  tokens_output: number;
   cost_usd: number;
   acceptance_rate: number | null;
   by_action: Record<string, number>;
+  requests_with_tracking: number;
 }
 
 const EMPTY_CONFIG: AIConfig = {
@@ -284,7 +287,7 @@ export default function AIConfigPage() {
         {/* Tokens */}
         <div className="card" style={{ textAlign: "center", padding: "16px 12px" }}>
           <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color: "var(--purple)" }}>
-            {(usage?.tokens_used ?? 0).toLocaleString("pl-PL")}
+            {((usage?.tokens_input ?? 0) + (usage?.tokens_output ?? 0)).toLocaleString("pl-PL")}
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Tokenów ({days}d)</div>
         </div>
@@ -559,12 +562,21 @@ export default function AIConfigPage() {
         ) : (
           <>
             {/* Summary row */}
-            <div className="grid-4" style={{ marginBottom: 16, gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
               <StatBox label="Zapytań" value={String(usage.requests_count)} color="var(--blue)" />
-              <StatBox label="Tokenów" value={usage.tokens_used.toLocaleString("pl-PL")} color="var(--purple)" />
+              <StatBox label="Tokeny IN" value={(usage.tokens_input ?? 0).toLocaleString("pl-PL")} color="var(--cyan, #06b6d4)" />
+              <StatBox label="Tokeny OUT" value={(usage.tokens_output ?? 0).toLocaleString("pl-PL")} color="var(--purple)" />
               <StatBox label="Koszt" value={`$${usage.cost_usd.toFixed(4)}`} color="var(--orange)" />
               <StatBox label="Akceptacja" value={usage.acceptance_rate != null ? `${usage.acceptance_rate.toFixed(0)}%` : "—"} color="var(--green)" />
             </div>
+
+            {/* Tracking coverage note */}
+            {usage.requests_with_tracking < usage.requests_count && (
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12, padding: "6px 10px", background: "var(--bg-subtle)", borderRadius: 4 }}>
+                Śledzenie tokenów/kosztów dostępne dla {usage.requests_with_tracking} z {usage.requests_count} zapytań.
+                {usage.requests_with_tracking === 0 && " Koszty pojawią się po pierwszym udanym zapytaniu AI z nowym kodem."}
+              </div>
+            )}
 
             {/* Usage by action — bar chart */}
             {totalActions > 0 && (

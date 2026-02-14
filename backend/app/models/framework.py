@@ -419,6 +419,34 @@ class FrameworkReview(Base):
     framework: Mapped["Framework"] = relationship(back_populates="reviews")
 
 
+class FrameworkNodeAiCache(Base):
+    """Persists AI interpretation/translation results for framework nodes."""
+    __tablename__ = "framework_node_ai_cache"
+    __table_args__ = (
+        UniqueConstraint("node_id", "action_type", "language", name="uq_node_ai_cache"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    node_id: Mapped[int] = mapped_column(
+        ForeignKey("framework_nodes.id", ondelete="CASCADE"), nullable=False,
+    )
+    action_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="interpret or translate",
+    )
+    language: Mapped[str | None] = mapped_column(
+        String(10), nullable=True,
+        comment="Target language code for translations, NULL for interpret",
+    )
+    result_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False,
+    )
+
+    # relationships
+    node: Mapped["FrameworkNode"] = relationship()
+
+
 # Avoid circular import — SecurityArea is referenced by string above.
 # The actual import is resolved at mapper configuration time by SQLAlchemy.
 from .security_area import SecurityArea  # noqa: F401, E402

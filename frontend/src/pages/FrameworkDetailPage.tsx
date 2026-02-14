@@ -1,9 +1,24 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import Modal from "../components/Modal";
 import { useFeatureFlags } from "../hooks/useFeatureFlags";
 import type { FrameworkDetail, FrameworkNodeTree, Dimension, FrameworkVersionHistory, FrameworkOrgUnitLink, FrameworkReviewRecord, DictionaryEntry } from "../types";
+
+/* ─── AI Cache types ─── */
+interface NodeAiCacheEntry {
+  node_id: number;
+  action_type: "interpret" | "translate";
+  language: string | null;
+  result_json: Record<string, unknown>;
+  updated_at: string;
+}
+
+type AiCacheMap = Map<string, NodeAiCacheEntry>; // key: `${node_id}:${action_type}:${language||''}`
+
+function cacheKey(nodeId: number, action: string, lang?: string | null): string {
+  return `${nodeId}:${action}:${lang || ""}`;
+}
 
 /* ─── Lifecycle helpers ─── */
 const LIFECYCLE_LABELS: Record<string, { label: string; color: string; bg: string }> = {
@@ -58,6 +73,20 @@ export default function FrameworkDetailPage() {
   const [selectedNode, setSelectedNode] = useState<FrameworkNodeTree | null>(null);
   const [showAddNode, setShowAddNode] = useState<{ parentId: number | null } | null>(null);
   const { aiEnabled } = useFeatureFlags();
+  const [aiCache, setAiCache] = useState<AiCacheMap>(new Map());
+  const [showBulkAi, setShowBulkAi] = useState<"interpret" | "translate" | null>(null);
+
+  const loadAiCache = useCallback((frameworkId: number) => {
+    api.get<NodeAiCacheEntry[]>(`/api/v1/ai/node-cache/${frameworkId}`)
+      .then(entries => {
+        const map = new Map<string, NodeAiCacheEntry>();
+        for (const e of entries) {
+          map.set(cacheKey(e.node_id, e.action_type, e.language), e);
+        }
+        setAiCache(map);
+      })
+      .catch(() => {});
+  }, []);
 
   const loadData = () => {
     if (!fwId) return;
@@ -95,6 +124,13 @@ export default function FrameworkDetailPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [fwId]);
+
+  // Load AI cache when framework data is available and AI is enabled
+  useEffect(() => {
+    if (fw && aiEnabled) {
+      loadAiCache(fw.id);
+    }
+  }, [fw?.id, aiEnabled, loadAiCache]);
 
   const toggleNode = (id: number) => {
     setExpandedNodes(prev => {
@@ -345,6 +381,18 @@ export default function FrameworkDetailPage() {
                 {treeStats.total} węzłów | {treeStats.assessable} ocenialnych | głęb. {treeStats.maxDepth}
               </span>
               <div style={{ flex: 1 }} />
+              {aiEnabled && (
+                <>
+                  <button className="btn btn-sm" onClick={() => setShowBulkAi("interpret")}
+                    style={{ fontSize: 10, background: "var(--blue-dim)", color: "var(--blue)", border: "1px solid var(--blue)" }}>
+                    Interpretuj dokument
+                  </button>
+                  <button className="btn btn-sm" onClick={() => setShowBulkAi("translate")}
+                    style={{ fontSize: 10, background: "rgba(139,92,246,0.1)", color: "var(--purple, #8b5cf6)", border: "1px solid var(--purple, #8b5cf6)" }}>
+                    Tłumacz dokument
+                  </button>
+                </>
+              )}
               <button className="btn btn-sm btn-primary" onClick={() => setShowAddNode({ parentId: null })}>
                 + Dodaj węzeł główny
               </button>
@@ -361,7 +409,8 @@ export default function FrameworkDetailPage() {
                             selectedId={selectedNode?.id ?? null}
                             onSelect={setSelectedNode}
                             onAddChild={(parentId) => setShowAddNode({ parentId })}
-                            pointTypes={pointTypes} />
+                            pointTypes={pointTypes}
+                            aiCache={aiEnabled ? aiCache : undefined} />
                 ))}
               </div>
             )}
@@ -379,6 +428,8 @@ export default function FrameworkDetailPage() {
                 onAddChild={() => setShowAddNode({ parentId: selectedNode.id })}
                 frameworkName={fw.name}
                 aiEnabled={aiEnabled}
+                aiCache={aiCache}
+                onCacheUpdate={() => fw && loadAiCache(fw.id)}
               />
             </div>
           )}
@@ -412,6 +463,18 @@ export default function FrameworkDetailPage() {
           />
         )}
       </Modal>
+
+      {/* Bulk AI Modal */}
+      {showBulkAi && fw && (
+        <BulkAiModal
+          action={showBulkAi}
+          tree={tree}
+          frameworkName={fw.name}
+          aiCache={aiCache}
+          onClose={() => setShowBulkAi(null)}
+          onDone={() => { loadAiCache(fw.id); setShowBulkAi(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -419,7 +482,7 @@ export default function FrameworkDetailPage() {
 /* ═══════════════════════════════════════════════════
    TreeNode Component
    ═══════════════════════════════════════════════════ */
-function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, pointTypes }: {
+function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, pointTypes, aiCache }: {
   node: FrameworkNodeTree;
   expanded: Set<number>;
   onToggle: (id: number) => void;
@@ -427,12 +490,15 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, 
   onSelect: (node: FrameworkNodeTree) => void;
   onAddChild: (parentId: number) => void;
   pointTypes: DictionaryEntry[];
+  aiCache?: AiCacheMap;
 }) {
   const hasChildren = node.children.length > 0;
   const isExpanded = expanded.has(node.id);
   const isSelected = selectedId === node.id;
   const indent = (node.depth - 1) * 24;
   const ptLabel = node.point_type_id ? pointTypes.find(p => p.id === node.point_type_id)?.label : null;
+  const hasInterpret = aiCache?.has(cacheKey(node.id, "interpret"));
+  const hasTranslate = aiCache ? Array.from(aiCache.keys()).some(k => k.startsWith(`${node.id}:translate:`)) : false;
 
   return (
     <>
@@ -478,6 +544,12 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, 
             {node.implementation_groups && (
               <span className="score-badge" style={{ background: "var(--bg-inset)", color: "var(--text-muted)", fontSize: 8, padding: "1px 5px" }}>{node.implementation_groups}</span>
             )}
+            {hasInterpret && (
+              <span title="Zinterpretowany (AI)" style={{ fontSize: 10, color: "var(--blue)", fontWeight: 700, cursor: "default" }}>i</span>
+            )}
+            {hasTranslate && (
+              <span title="Przetłumaczony (AI)" style={{ fontSize: 10, color: "var(--purple, #8b5cf6)", fontWeight: 700, cursor: "default" }}>A</span>
+            )}
           </div>
           {node.description && (isExpanded || !hasChildren) && (
             <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2, lineHeight: 1.3, maxHeight: 40, overflow: "hidden" }}>
@@ -498,7 +570,8 @@ function TreeNode({ node, expanded, onToggle, selectedId, onSelect, onAddChild, 
 
       {isExpanded && node.children.map(child => (
         <TreeNode key={child.id} node={child} expanded={expanded} onToggle={onToggle}
-                  selectedId={selectedId} onSelect={onSelect} onAddChild={onAddChild} pointTypes={pointTypes} />
+                  selectedId={selectedId} onSelect={onSelect} onAddChild={onAddChild} pointTypes={pointTypes}
+                  aiCache={aiCache} />
       ))}
     </>
   );
@@ -517,7 +590,7 @@ const TRANSLATE_LANGUAGES = [
   { code: "uk", label: "Українська" },
 ];
 
-function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChild, frameworkName, aiEnabled }: {
+function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChild, frameworkName, aiEnabled, aiCache, onCacheUpdate }: {
   node: FrameworkNodeTree;
   pointTypes: DictionaryEntry[];
   onClose: () => void;
@@ -526,6 +599,8 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
   onAddChild: () => void;
   frameworkName: string;
   aiEnabled: boolean;
+  aiCache?: AiCacheMap;
+  onCacheUpdate?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(node.name);
@@ -554,21 +629,47 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
     setPointTypeId(node.point_type_id ?? null);
     setEditing(false);
     setAiPanel("none");
-    setInterpretResult(null);
-    setTranslateResult(null);
     setAiError(null);
-  }, [node.id]);
 
-  const handleInterpret = async () => {
+    // Load cached results
+    const cachedInterpret = aiCache?.get(cacheKey(node.id, "interpret"));
+    if (cachedInterpret) {
+      const r = cachedInterpret.result_json as Record<string, unknown>;
+      setInterpretResult({
+        interpretation: (r.interpretation as string) || "",
+        practical_examples: (r.practical_examples as string[]) || [],
+        common_pitfalls: (r.common_pitfalls as string[]) || [],
+        related_standards: (r.related_standards as string[]) || [],
+      });
+    } else {
+      setInterpretResult(null);
+    }
+
+    // For translate, check if there's a cached result for current language
+    const cachedTranslate = aiCache?.get(cacheKey(node.id, "translate", translateLang));
+    if (cachedTranslate) {
+      const r = cachedTranslate.result_json as Record<string, unknown>;
+      setTranslateResult({
+        translated_name: (r.translated_name as string) || "",
+        translated_description: (r.translated_description as string | null) ?? null,
+        terminology_notes: (r.terminology_notes as string[]) || [],
+      });
+    } else {
+      setTranslateResult(null);
+    }
+  }, [node.id, aiCache]);
+
+  const handleInterpret = async (force = false) => {
     setAiLoading(true);
     setAiError(null);
-    setInterpretResult(null);
+    if (force) setInterpretResult(null);
     try {
-      const res = await api.post<{ interpretation: string; practical_examples: string[]; common_pitfalls: string[]; related_standards: string[] }>(
+      const res = await api.post<{ interpretation: string; practical_examples: string[]; common_pitfalls: string[]; related_standards: string[]; cached?: boolean }>(
         "/api/v1/ai/interpret-node",
-        { framework_name: frameworkName, node_ref_id: node.ref_id, node_name: node.name, node_description: node.description }
+        { framework_name: frameworkName, node_ref_id: node.ref_id, node_name: node.name, node_description: node.description, node_id: node.id, force }
       );
       setInterpretResult(res);
+      onCacheUpdate?.();
     } catch (e: unknown) {
       setAiError(e instanceof Error ? e.message : "Błąd AI");
     } finally {
@@ -576,16 +677,17 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
     }
   };
 
-  const handleTranslate = async () => {
+  const handleTranslate = async (force = false) => {
     setAiLoading(true);
     setAiError(null);
-    setTranslateResult(null);
+    if (force) setTranslateResult(null);
     try {
-      const res = await api.post<{ translated_name: string; translated_description: string | null; terminology_notes: string[] }>(
+      const res = await api.post<{ translated_name: string; translated_description: string | null; terminology_notes: string[]; cached?: boolean }>(
         "/api/v1/ai/translate-node",
-        { framework_name: frameworkName, node_ref_id: node.ref_id, node_name: node.name, node_description: node.description, target_language: translateLang }
+        { framework_name: frameworkName, node_ref_id: node.ref_id, node_name: node.name, node_description: node.description, target_language: translateLang, node_id: node.id, force }
       );
       setTranslateResult(res);
+      onCacheUpdate?.();
     } catch (e: unknown) {
       setAiError(e instanceof Error ? e.message : "Błąd AI");
     } finally {
@@ -661,12 +763,13 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
                   }}
                   onClick={() => {
                     if (aiPanel === "interpret") { setAiPanel("none"); }
-                    else { setAiPanel("interpret"); if (!interpretResult) handleInterpret(); }
+                    else { setAiPanel("interpret"); if (!interpretResult) handleInterpret(false); }
                   }}
                   disabled={aiLoading}
                   title="Interpretacja AI"
                 >
                   <span style={{ fontSize: 14 }}>i</span> Interpretacja
+                  {interpretResult && <span style={{ fontSize: 9, marginLeft: 2 }}>&#10003;</span>}
                 </button>
                 <button
                   className="btn btn-sm"
@@ -699,7 +802,11 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
               {/* Interpretation result */}
               {aiPanel === "interpret" && interpretResult && !aiLoading && (
                 <div style={{ background: "var(--bg-inset)", borderRadius: 8, padding: 10, fontSize: 11, lineHeight: 1.6 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6, color: "var(--blue)" }}>Interpretacja</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontWeight: 600, color: "var(--blue)" }}>Interpretacja</span>
+                    <button className="btn btn-sm" style={{ fontSize: 9, padding: "1px 6px" }}
+                      onClick={() => handleInterpret(true)} disabled={aiLoading}>Ponów</button>
+                  </div>
                   <div style={{ marginBottom: 8 }}>{interpretResult.interpretation}</div>
 
                   {interpretResult.practical_examples.length > 0 && (
@@ -743,10 +850,14 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
                         <option key={l.code} value={l.code}>{l.label}</option>
                       ))}
                     </select>
-                    <button className="btn btn-sm" onClick={handleTranslate} disabled={aiLoading}
+                    <button className="btn btn-sm" onClick={() => handleTranslate(false)} disabled={aiLoading}
                       style={{ fontSize: 10, background: "var(--purple, #8b5cf6)", color: "#fff", border: "none" }}>
                       Tłumacz
                     </button>
+                    {translateResult && (
+                      <button className="btn btn-sm" onClick={() => handleTranslate(true)} disabled={aiLoading}
+                        style={{ fontSize: 9, padding: "2px 6px" }}>Ponów</button>
+                    )}
                   </div>
 
                   {translateResult && !aiLoading && (
@@ -1346,5 +1457,259 @@ function EditMetadataPanel({ fw, onSaved }: { fw: FrameworkDetail; onSaved: () =
         </div>
       </div>
     </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════
+   BulkAiModal — bulk interpret / translate with progress
+   ═══════════════════════════════════════════════════ */
+type BulkScope = "all" | "chapters" | "selection";
+
+function flattenNodes(nodes: FrameworkNodeTree[]): FrameworkNodeTree[] {
+  const result: FrameworkNodeTree[] = [];
+  const walk = (list: FrameworkNodeTree[]) => {
+    for (const n of list) { result.push(n); walk(n.children); }
+  };
+  walk(nodes);
+  return result;
+}
+
+function getTopLevelNodes(tree: FrameworkNodeTree[]): FrameworkNodeTree[] {
+  return tree; // depth-1 nodes
+}
+
+function getNodesUnderChapters(tree: FrameworkNodeTree[], chapterIds: Set<number>): FrameworkNodeTree[] {
+  const result: FrameworkNodeTree[] = [];
+  const walk = (nodes: FrameworkNodeTree[], include: boolean) => {
+    for (const n of nodes) {
+      const shouldInclude = include || chapterIds.has(n.id);
+      if (shouldInclude) result.push(n);
+      walk(n.children, shouldInclude);
+    }
+  };
+  walk(tree, false);
+  return result;
+}
+
+function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: {
+  action: "interpret" | "translate";
+  tree: FrameworkNodeTree[];
+  frameworkName: string;
+  aiCache: AiCacheMap;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [scope, setScope] = useState<BulkScope>("all");
+  const [selectedChapters, setSelectedChapters] = useState<Set<number>>(new Set());
+  const [translateLang, setTranslateLang] = useState("pl");
+  const [skipCached, setSkipCached] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0, errors: 0, skipped: 0 });
+  const [currentNode, setCurrentNode] = useState<string | null>(null);
+  const stopRef = useRef(false);
+
+  const allNodes = useMemo(() => flattenNodes(tree), [tree]);
+  const chapters = useMemo(() => getTopLevelNodes(tree), [tree]);
+
+  const targetNodes = useMemo(() => {
+    if (scope === "all") return allNodes;
+    if (scope === "chapters") return getNodesUnderChapters(tree, selectedChapters);
+    return allNodes; // 'selection' uses the same as 'all' for now
+  }, [scope, allNodes, tree, selectedChapters]);
+
+  const alreadyCached = useMemo(() => {
+    let count = 0;
+    for (const n of targetNodes) {
+      const key = action === "interpret"
+        ? cacheKey(n.id, "interpret")
+        : cacheKey(n.id, "translate", translateLang);
+      if (aiCache.has(key)) count++;
+    }
+    return count;
+  }, [targetNodes, action, translateLang, aiCache]);
+
+  const toggleChapter = (id: number) => {
+    setSelectedChapters(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleStart = async () => {
+    stopRef.current = false;
+    setRunning(true);
+    const nodes = targetNodes;
+    const total = nodes.length;
+    let done = 0, errors = 0, skipped = 0;
+    setProgress({ done: 0, total, errors: 0, skipped: 0 });
+
+    for (const node of nodes) {
+      if (stopRef.current) break;
+
+      // Check if already cached
+      if (skipCached) {
+        const key = action === "interpret"
+          ? cacheKey(node.id, "interpret")
+          : cacheKey(node.id, "translate", translateLang);
+        if (aiCache.has(key)) {
+          skipped++;
+          done++;
+          setProgress({ done, total, errors, skipped });
+          continue;
+        }
+      }
+
+      setCurrentNode(node.ref_id ? `${node.ref_id} — ${node.name}` : node.name);
+
+      try {
+        if (action === "interpret") {
+          await api.post("/api/v1/ai/interpret-node", {
+            framework_name: frameworkName,
+            node_ref_id: node.ref_id,
+            node_name: node.name,
+            node_description: node.description,
+            node_id: node.id,
+            force: !skipCached,
+          });
+        } else {
+          await api.post("/api/v1/ai/translate-node", {
+            framework_name: frameworkName,
+            node_ref_id: node.ref_id,
+            node_name: node.name,
+            node_description: node.description,
+            target_language: translateLang,
+            node_id: node.id,
+            force: !skipCached,
+          });
+        }
+      } catch {
+        errors++;
+      }
+
+      done++;
+      setProgress({ done, total, errors, skipped });
+    }
+
+    setCurrentNode(null);
+    setRunning(false);
+  };
+
+  const handleStop = () => { stopRef.current = true; };
+
+  const isInterpret = action === "interpret";
+  const title = isInterpret ? "Interpretacja dokumentu (AI)" : "Tłumaczenie dokumentu (AI)";
+  const pct = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
+
+  return (
+    <Modal open onClose={running ? () => {} : onClose} title={title}>
+      <div style={{ minWidth: 400, maxWidth: 600 }}>
+        {!running ? (
+          <>
+            {/* Scope selection */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Zakres</div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 4, cursor: "pointer" }}>
+                <input type="radio" name="scope" checked={scope === "all"} onChange={() => setScope("all")} />
+                Cały dokument ({allNodes.length} węzłów)
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 4, cursor: "pointer" }}>
+                <input type="radio" name="scope" checked={scope === "chapters"} onChange={() => setScope("chapters")} />
+                Wybrane rozdziały
+              </label>
+            </div>
+
+            {/* Chapter selection */}
+            {scope === "chapters" && (
+              <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: 8, marginBottom: 12 }}>
+                {chapters.length === 0 ? (
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Brak rozdziałów.</div>
+                ) : chapters.map(ch => (
+                  <label key={ch.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, padding: "3px 0", cursor: "pointer" }}>
+                    <input type="checkbox" checked={selectedChapters.has(ch.id)} onChange={() => toggleChapter(ch.id)} />
+                    {ch.ref_id && <span style={{ fontFamily: "monospace", color: "var(--blue)", fontSize: 10 }}>{ch.ref_id}</span>}
+                    {ch.name}
+                    <span style={{ color: "var(--text-muted)", fontSize: 10 }}>({flattenNodes([ch]).length} węzłów)</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {/* Language (translate only) */}
+            {!isInterpret && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>Język docelowy</div>
+                <select className="form-control" value={translateLang} onChange={e => setTranslateLang(e.target.value)} style={{ fontSize: 12 }}>
+                  {TRANSLATE_LANGUAGES.map(l => (
+                    <option key={l.code} value={l.code}>{l.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Skip cached option */}
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 12, cursor: "pointer" }}>
+              <input type="checkbox" checked={skipCached} onChange={e => setSkipCached(e.target.checked)} />
+              Pomiń już przetworzone ({alreadyCached} z {targetNodes.length} w cache)
+            </label>
+
+            {/* Summary */}
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12, padding: 8, background: "var(--bg-inset)", borderRadius: 6 }}>
+              {isInterpret ? "Interpretacja" : "Tłumaczenie"} obejmie <strong>{targetNodes.length}</strong> węzłów.
+              {skipCached && alreadyCached > 0 && <> Z tego <strong>{alreadyCached}</strong> zostanie pominiętych (cache).</>}
+              {" "}Szacowany czas: ~{Math.max(1, Math.ceil((targetNodes.length - (skipCached ? alreadyCached : 0)) * 3 / 60))} min.
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn" onClick={onClose}>Anuluj</button>
+              <button className="btn btn-primary"
+                disabled={scope === "chapters" && selectedChapters.size === 0}
+                onClick={handleStart}>
+                Rozpocznij {isInterpret ? "interpretację" : "tłumaczenie"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Progress */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                <span>{isInterpret ? "Interpretacja" : "Tłumaczenie"} w toku...</span>
+                <span style={{ fontWeight: 600 }}>{pct}%</span>
+              </div>
+              <div style={{ height: 6, background: "var(--bg-inset)", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{
+                  height: "100%",
+                  width: `${pct}%`,
+                  background: isInterpret ? "var(--blue)" : "var(--purple, #8b5cf6)",
+                  borderRadius: 3,
+                  transition: "width 0.3s",
+                }} />
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                {progress.done} / {progress.total}
+                {progress.skipped > 0 && <> (pominięte: {progress.skipped})</>}
+                {progress.errors > 0 && <span style={{ color: "var(--red)" }}> | Błędy: {progress.errors}</span>}
+              </div>
+            </div>
+
+            {currentNode && (
+              <div style={{ fontSize: 11, color: "var(--text-secondary)", padding: 8, background: "var(--bg-inset)", borderRadius: 6, marginBottom: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                Przetwarzanie: {currentNode}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              {progress.done < progress.total ? (
+                <button className="btn" style={{ color: "var(--red)" }} onClick={handleStop}>Zatrzymaj</button>
+              ) : (
+                <button className="btn btn-primary" onClick={onDone}>Zamknij</button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }

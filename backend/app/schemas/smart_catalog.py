@@ -471,6 +471,9 @@ class AICoverageReportOut(BaseModel):
 class AIUsageStatsOut(BaseModel):
     requests_count: int = 0
     tokens_used: int = 0
+    tokens_input: int = 0
+    tokens_output: int = 0
     cost_usd: float = 0.0
     acceptance_rate: float | None = None
     by_action: dict = {}
+    requests_with_tracking: int = 0  # how many requests have token data

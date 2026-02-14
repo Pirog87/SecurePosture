@@ -1607,15 +1607,25 @@ async def ai_usage_stats(
     total = (await s.execute(q_total)).scalar() or 0
 
     q_tokens = select(
-        sa_func.coalesce(sa_func.sum(AIAuditLog.tokens_input), 0)
-        + sa_func.coalesce(sa_func.sum(AIAuditLog.tokens_output), 0)
+        sa_func.coalesce(sa_func.sum(AIAuditLog.tokens_input), 0),
+        sa_func.coalesce(sa_func.sum(AIAuditLog.tokens_output), 0),
     ).where(AIAuditLog.created_at >= since)
-    tokens = (await s.execute(q_tokens)).scalar() or 0
+    tok_row = (await s.execute(q_tokens)).one()
+    tokens_in = tok_row[0] or 0
+    tokens_out = tok_row[1] or 0
+    tokens = tokens_in + tokens_out
 
     q_cost = select(
         sa_func.coalesce(sa_func.sum(AIAuditLog.cost_usd), 0)
     ).where(AIAuditLog.created_at >= since)
     cost = float((await s.execute(q_cost)).scalar() or 0)
+
+    # Count records with token tracking data
+    q_tracked = select(sa_func.count()).select_from(AIAuditLog).where(
+        AIAuditLog.created_at >= since,
+        AIAuditLog.tokens_input.isnot(None),
+    )
+    tracked = (await s.execute(q_tracked)).scalar() or 0
 
     # Acceptance rate
     q_accepted = select(sa_func.count()).select_from(AIAuditLog).where(
@@ -1641,7 +1651,10 @@ async def ai_usage_stats(
     return AIUsageStatsOut(
         requests_count=total,
         tokens_used=tokens,
+        tokens_input=tokens_in,
+        tokens_output=tokens_out,
         cost_usd=cost,
         acceptance_rate=acceptance_rate,
         by_action=by_action,
+        requests_with_tracking=tracked,
     )

@@ -4,9 +4,12 @@ Returns None / raises AINotConfiguredException when AI is not available.
 Works with graceful degradation: if AI API fails, system reverts to rule-based.
 """
 import json
+import logging
 import re
 import time
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,12 +142,21 @@ class AIService:
         llm_resp = None
 
         try:
-            llm_resp: LLMResponse = await self.adapter.chat_completion(
+            logger.info(
+                "LLM call: action=%s max_tokens=%d timeout=%d input_len=%d",
+                action_type, max_tokens, timeout, len(user_message),
+            )
+            llm_resp = await self.adapter.chat_completion(
                 system=system,
                 user_message=user_message,
                 max_tokens=max_tokens,
                 temperature=float(self.config.temperature),
                 timeout=timeout,
+            )
+            logger.info(
+                "LLM response: tokens_in=%d tokens_out=%d cost=$%s response_len=%d",
+                llm_resp.tokens_input, llm_resp.tokens_output,
+                llm_resp.cost_usd, len(llm_resp.text),
             )
 
             # Parse JSON from response
@@ -167,88 +179,127 @@ class AIService:
         except AIParsingError as e:
             # Log cost even when JSON parsing fails — the API call still cost money
             duration_ms = int((time.time() - start_time) * 1000)
-            await self._log_call(
-                user_id=user_id,
-                action_type=action_type,
-                duration_ms=duration_ms,
-                success=False,
-                error=str(e),
-                input_summary=user_message[:500],
-                output_summary=llm_resp.text[:500] if llm_resp else None,
-                tokens_input=llm_resp.tokens_input if llm_resp else None,
-                tokens_output=llm_resp.tokens_output if llm_resp else None,
-                cost_usd=llm_resp.cost_usd if llm_resp else None,
+            logger.error(
+                "LLM JSON parse failed for %s (tokens_in=%s, tokens_out=%s, resp_len=%s): %s",
+                action_type,
+                llm_resp.tokens_input if llm_resp else "?",
+                llm_resp.tokens_output if llm_resp else "?",
+                len(llm_resp.text) if llm_resp else "?",
+                e,
             )
+            try:
+                await self._log_call(
+                    user_id=user_id,
+                    action_type=action_type,
+                    duration_ms=duration_ms,
+                    success=False,
+                    error=str(e)[:500],
+                    input_summary=user_message[:500],
+                    output_summary=llm_resp.text[:500] if llm_resp else None,
+                    tokens_input=llm_resp.tokens_input if llm_resp else None,
+                    tokens_output=llm_resp.tokens_output if llm_resp else None,
+                    cost_usd=llm_resp.cost_usd if llm_resp else None,
+                )
+            except Exception as log_err:
+                logger.error("Failed to log AI call: %s", log_err)
             raise
         except AIRateLimitException:
             raise
         except Exception as e:
             duration_ms = int((time.time() - start_time) * 1000)
-            await self._log_call(
-                user_id=user_id,
-                action_type=action_type,
-                duration_ms=duration_ms,
-                success=False,
-                error=str(e),
-                input_summary=user_message[:500],
-            )
+            logger.error("LLM call failed for %s: %s", action_type, e)
+            try:
+                await self._log_call(
+                    user_id=user_id,
+                    action_type=action_type,
+                    duration_ms=duration_ms,
+                    success=False,
+                    error=str(e)[:500],
+                    input_summary=user_message[:500],
+                )
+            except Exception as log_err:
+                logger.error("Failed to log AI call: %s", log_err)
             raise
 
     def _parse_json(self, text: str) -> dict | list:
         """Parse JSON from LLM response, handling markdown code blocks and truncation."""
-        import logging
-        logger = logging.getLogger(__name__)
-
-        # Strip whitespace
         stripped = text.strip()
+        text_len = len(stripped)
 
-        # 1. Direct parse
+        logger.info("_parse_json: response length=%d, starts with: %.80s", text_len, stripped[:80])
+
+        # 1. Direct parse (ideal case — model returned pure JSON)
         try:
-            return json.loads(stripped)
-        except json.JSONDecodeError:
-            pass
+            result = json.loads(stripped)
+            logger.info("_parse_json: direct parse OK")
+            return result
+        except json.JSONDecodeError as e:
+            logger.debug("_parse_json: direct parse failed: %s", e)
 
-        # 2. Extract from ```json ... ``` block
+        # 2. Extract from ```json ... ``` block (common model behavior)
         match = re.search(r"```(?:json)?\s*([\[{].*?)\s*```", stripped, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
+                result = json.loads(match.group(1))
+                logger.info("_parse_json: extracted from markdown code block OK")
+                return result
+            except json.JSONDecodeError as e:
+                logger.debug("_parse_json: markdown block parse failed: %s", e)
 
-        # 3. Find JSON that starts with { or [ — take the FIRST occurrence
-        #    and everything after it (handles preamble text before JSON)
-        json_start = re.search(r'[\[{]', stripped)
-        if json_start:
-            candidate = stripped[json_start.start():]
-            # 3a. Try direct parse (complete JSON with possible trailing text)
+        # Also try non-lazy match for markdown (in case ``` appears at end)
+        match = re.search(r"```(?:json)?\s*([\[{].*)\s*```", stripped, re.DOTALL)
+        if match:
             try:
-                return json.loads(candidate)
+                result = json.loads(match.group(1).rstrip().rstrip('`'))
+                logger.info("_parse_json: extracted from markdown block (greedy) OK")
+                return result
             except json.JSONDecodeError:
                 pass
 
-            # 3b. Try to extract complete JSON object/array
-            for pattern in [r"\{.*\}", r"\[.*\]"]:
-                m = re.search(pattern, candidate, re.DOTALL)
-                if m:
-                    try:
-                        return json.loads(m.group(0))
-                    except json.JSONDecodeError:
-                        pass
+        # 3. Find first { or [ and try to parse from there
+        json_start = re.search(r'[\[{]', stripped)
+        if not json_start:
+            logger.error("_parse_json: NO JSON-like content found in response (len=%d): %.500s", text_len, stripped[:500])
+            raise AIParsingError(f"AI nie zwrocilo JSON — odpowiedz nie zawiera {{ ani [. Poczatek: {stripped[:200]}")
 
-            # 3c. Try to repair truncated JSON (response cut off at max_tokens)
-            repaired = self._try_repair_json(candidate)
-            if repaired is not None:
-                logger.warning("AI response was truncated — repaired JSON (%d chars)", len(candidate))
-                return repaired
+        candidate = stripped[json_start.start():]
+        logger.debug("_parse_json: found JSON start at position %d, candidate length=%d", json_start.start(), len(candidate))
 
+        # 3a. Direct parse of candidate
+        try:
+            result = json.loads(candidate)
+            logger.info("_parse_json: parsed from offset %d OK", json_start.start())
+            return result
+        except json.JSONDecodeError:
+            pass
+
+        # 3b. Try trimming trailing non-JSON text
+        # Find last } or ] and try parsing up to there
+        for end_char in ['}', ']']:
+            last_pos = candidate.rfind(end_char)
+            if last_pos > 0:
+                try:
+                    result = json.loads(candidate[:last_pos + 1])
+                    logger.info("_parse_json: parsed by trimming after last '%s' at position %d", end_char, last_pos)
+                    return result
+                except json.JSONDecodeError:
+                    pass
+
+        # 3c. Try to repair truncated JSON (response cut off at max_tokens)
+        logger.info("_parse_json: attempting JSON repair on %d chars...", len(candidate))
+        repaired = self._try_repair_json(candidate)
+        if repaired is not None:
+            logger.warning("_parse_json: repaired truncated JSON (%d chars) — some data may be lost", len(candidate))
+            return repaired
+
+        # All methods failed
         logger.error(
-            "AI returned unparseable response (len=%d, first 500 chars): %s",
-            len(text), text[:500],
+            "_parse_json: ALL methods failed. Response length=%d, first 1000 chars:\n%s",
+            text_len, stripped[:1000],
         )
         raise AIParsingError(
-            f"AI zwrocilo nieprawidlowy JSON. "
-            f"Odpowiedz zaczyna sie od: {text[:200]}"
+            f"AI zwrocilo nieprawidlowy JSON (dlugosc odpowiedzi: {text_len} znakow). "
+            f"Poczatek: {stripped[:300]}"
         )
 
     @staticmethod

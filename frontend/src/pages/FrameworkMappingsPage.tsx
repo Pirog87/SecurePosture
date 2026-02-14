@@ -1297,7 +1297,7 @@ export default function FrameworkMappingsPage() {
     setLoading(true);
     Promise.allSettled([
       api.get<FrameworkMapping[]>("/api/v1/framework-mappings/"),
-      api.get<Framework[]>("/api/v1/frameworks/"),
+      api.get<Framework[]>("/api/v1/frameworks"),
       api.get<MappingSet[]>("/api/v1/framework-mappings/sets"),
       api.get<MappingStats>("/api/v1/framework-mappings/stats"),
     ])

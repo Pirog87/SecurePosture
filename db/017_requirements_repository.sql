@@ -74,13 +74,13 @@ ALTER TABLE frameworks ADD COLUMN IF NOT EXISTS updates_document_id INT DEFAULT 
 
 
 -- ── 2. Foreign keys on frameworks ──
--- MariaDB 10.2.1+ supports ADD CONSTRAINT IF NOT EXISTS (uses ALTER IGNORE as fallback)
+-- MariaDB syntax: ADD CONSTRAINT name FOREIGN KEY IF NOT EXISTS (col) REFERENCES ...
 
-ALTER TABLE frameworks ADD CONSTRAINT IF NOT EXISTS fk_fw_document_type
-  FOREIGN KEY (document_type_id) REFERENCES dictionary_entries(id) ON DELETE SET NULL;
+ALTER TABLE frameworks ADD CONSTRAINT fk_fw_document_type
+  FOREIGN KEY IF NOT EXISTS (document_type_id) REFERENCES dictionary_entries(id) ON DELETE SET NULL;
 
-ALTER TABLE frameworks ADD CONSTRAINT IF NOT EXISTS fk_fw_updates_document
-  FOREIGN KEY (updates_document_id) REFERENCES frameworks(id) ON DELETE SET NULL;
+ALTER TABLE frameworks ADD CONSTRAINT fk_fw_updates_document
+  FOREIGN KEY IF NOT EXISTS (updates_document_id) REFERENCES frameworks(id) ON DELETE SET NULL;
 
 
 -- ── 3. Indexes on frameworks ──
@@ -96,8 +96,8 @@ CREATE INDEX IF NOT EXISTS ix_fw_updates_doc ON frameworks(updates_document_id);
 ALTER TABLE framework_nodes ADD COLUMN IF NOT EXISTS point_type_id INT DEFAULT NULL
   COMMENT 'Node type from dictionary: Rozdział, Pkt, Ppkt, Art., Rekomendacja';
 
-ALTER TABLE framework_nodes ADD CONSTRAINT IF NOT EXISTS fk_fwnode_point_type
-  FOREIGN KEY (point_type_id) REFERENCES dictionary_entries(id) ON DELETE SET NULL;
+ALTER TABLE framework_nodes ADD CONSTRAINT fk_fwnode_point_type
+  FOREIGN KEY IF NOT EXISTS (point_type_id) REFERENCES dictionary_entries(id) ON DELETE SET NULL;
 
 
 -- ── 5. Create framework_org_units table (M2M) ──

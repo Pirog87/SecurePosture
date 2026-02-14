@@ -882,8 +882,10 @@ async def import_yaml_endpoint(
             dimensions_created=dims_count,
         )
     except ValueError as e:
+        await s.rollback()
         raise HTTPException(400, str(e))
     except Exception as e:
+        await s.rollback()
         raise HTTPException(500, f"Blad importu: {e}")
 
 

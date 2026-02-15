@@ -371,30 +371,43 @@ textarea.form-control { resize:vertical; min-height:70px; }
 
 /* ═══ Print — AI Report ═══ */
 @media print {
-  body { background:#fff !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-  .sidebar, .topbar, .main-wrapper>.topbar,
-  .no-print, [class*="topbar"] { display:none !important; }
-  .main-wrapper { margin-left:0 !important; padding:0 !important; }
+  /* reset viewport-locked layout so content flows across pages */
+  html, body, #root, .main-wrapper, .content {
+    height:auto !important; overflow:visible !important;
+    display:block !important; position:static !important;
+  }
+  body { background:#fff !important; margin:0 !important; padding:0 !important;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  #root { display:block !important; }
+
+  /* hide chrome: sidebar, topbar, non-report UI */
+  .sidebar, .topbar, .no-print { display:none !important; }
+  .main-wrapper { margin:0 !important; padding:0 !important; }
   .content { padding:0 !important; }
 
-  /* hide everything except the AI report card */
-  body > *:not(#root) { display:none !important; }
-  .grid-3, h2, .score-badge, .card:not(#ai-report),
-  .btn:not(.no-hide) { display:none !important; }
-  #ai-report { box-shadow:none !important; border:none !important; margin:0 !important; padding:16px 0 !important; }
+  /* hide all cards/headings except the AI report */
+  .grid-3, h2, .score-badge, .card:not(#ai-report) { display:none !important; }
+  #ai-report { box-shadow:none !important; border:none !important; margin:0 !important; padding:16px 0 !important;
+    background:#fff !important; }
   #ai-report .btn { display:none !important; }
 
-  /* page breaks */
+  /* page breaks — each section avoids splitting */
   #ai-report > div > div { break-inside:avoid; page-break-inside:avoid; }
   table { break-inside:auto; }
   tr { break-inside:avoid; page-break-inside:avoid; }
   thead { display:table-header-group; }
 
   /* typography */
-  #ai-report h3 { font-size:18pt !important; }
-  #ai-report h4 { font-size:13pt !important; }
-  #ai-report p, #ai-report li, #ai-report td { font-size:10pt !important; }
-  #ai-report { color:#000 !important; }
+  #ai-report h3 { font-size:18pt !important; color:#4c1d95 !important; }
+  #ai-report h4 { font-size:13pt !important; color:#1f2937 !important; }
+  #ai-report p, #ai-report li, #ai-report td, #ai-report th { font-size:10pt !important; }
+  #ai-report, #ai-report * { color:#000 !important; }
+  #ai-report span[style], #ai-report div[style] { color:inherit; }
+  #ai-report h3, #ai-report h3 * { color:#4c1d95 !important; }
+  #ai-report [style*="borderLeft"] { border-left-color:inherit; print-color-adjust:exact; }
+
+  /* colored badges/ratings keep their colors in print */
+  #ai-report span[style*="background"] { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 
   @page { margin:18mm 15mm; size:A4; }
 }

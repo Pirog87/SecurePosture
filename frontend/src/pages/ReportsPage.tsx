@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -48,8 +48,10 @@ export default function ReportsPage() {
   const [aiReport, setAiReport] = useState<AIReportData | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiProgress, setAiProgress] = useState<{ percent: number; message: string } | null>(null);
   const [aiHistory, setAiHistory] = useState<AIReportHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const aiLoadingRef = useRef(false);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -59,6 +61,20 @@ export default function ReportsPage() {
   }, []);
 
   useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  // Block browser back/forward during AI generation
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (aiLoadingRef.current) {
+        if (!confirm("Generowanie raportu AI jest w toku. Cofniecie przerwie proces.\n\nCzy na pewno chcesz przerwac?")) {
+          e.preventDefault();
+          window.history.pushState(null, "", window.location.href);
+        }
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   const handleGenerate = async (report: ReportDef, formData?: Record<string, string>) => {
     setGenerating(report.id);
@@ -91,8 +107,36 @@ export default function ReportsPage() {
 
   const handleGenerateAI = async () => {
     setAiLoading(true);
+    aiLoadingRef.current = true;
     setAiError(null);
     setAiReport(null);
+    setAiProgress({ percent: 0, message: "Laczenie z modelem AI..." });
+
+    // beforeunload protection
+    const beforeUnloadHandler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "Generowanie raportu AI jest w toku. Przeladowanie strony przerwie proces. Kontynuowac?";
+      return e.returnValue;
+    };
+    window.addEventListener("beforeunload", beforeUnloadHandler);
+
+    // simulated progress (no server-side polling available)
+    const steps = [
+      { at: 800, percent: 5, message: "Zbieranie danych z systemu..." },
+      { at: 2500, percent: 12, message: "Analiza rejestru ryzyk..." },
+      { at: 5000, percent: 22, message: "Analiza aktywow i podatnosci..." },
+      { at: 8000, percent: 35, message: "Analiza incydentow i compliance..." },
+      { at: 12000, percent: 48, message: "AI generuje raport zarzadczy..." },
+      { at: 20000, percent: 60, message: "AI analizuje korelacje i trendy..." },
+      { at: 30000, percent: 72, message: "AI przygotowuje rekomendacje..." },
+      { at: 45000, percent: 82, message: "AI finalizuje sekcje raportu..." },
+      { at: 60000, percent: 88, message: "Oczekiwanie na odpowiedz AI..." },
+      { at: 90000, percent: 92, message: "Wciaz czekam na AI — dluzszy raport..." },
+    ];
+    const timers = steps.map(s =>
+      setTimeout(() => setAiProgress({ percent: s.percent, message: s.message }), s.at)
+    );
+
     try {
       const res = await fetch(`${API_BASE}/api/v1/reports/ai-management`);
       if (!res.ok) {
@@ -100,12 +144,18 @@ export default function ReportsPage() {
         throw new Error(body?.detail || `HTTP ${res.status}`);
       }
       const data = await res.json();
+      setAiProgress({ percent: 100, message: "Raport wygenerowany pomyslnie" });
       setAiReport(data);
       fetchHistory();
     } catch (err: unknown) {
       setAiError(err instanceof Error ? err.message : String(err));
+      setAiProgress(null);
     } finally {
+      window.removeEventListener("beforeunload", beforeUnloadHandler);
+      timers.forEach(t => clearTimeout(t));
       setAiLoading(false);
+      aiLoadingRef.current = false;
+      setTimeout(() => setAiProgress(null), 4000);
     }
   };
 
@@ -145,26 +195,19 @@ export default function ReportsPage() {
 
       {/* AI Management Report Section */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 32, marginBottom: 20 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Raport Zarzadczy AI</h2>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>✨ Raport Zarzadczy AI</h2>
         <span className="score-badge" style={{ background: "rgba(139,92,246,0.15)", color: "#8b5cf6", fontSize: 11 }}>
-          AI / LLM
+          AI
         </span>
       </div>
 
       <div className="grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
         <div className="card" style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
-            <div style={{ width: 32, height: 32, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: "rgba(124,58,237,0.12)" }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="#7c3aed" stroke="none">
-                <path d="M12 2L14.09 8.26L20 9.27L15.55 13.97L16.91 20L12 16.9L7.09 20L8.45 13.97L4 9.27L9.91 8.26L12 2Z" />
-                <path d="M5 3L5.5 5L7 5.5L5.5 6L5 8L4.5 6L3 5.5L4.5 5L5 3Z" opacity="0.7" />
-                <path d="M19 14L19.5 16L21 16.5L19.5 17L19 19L18.5 17L17 16.5L18.5 16L19 14Z" opacity="0.7" />
-              </svg>
-            </div>
+            <span style={{ fontSize: 28 }}>✨</span>
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
                 Raport Zarzadczy AI
-                <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 4, background: "rgba(124,58,237,0.15)", color: "#7c3aed" }}>AI</span>
               </div>
               <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.4 }}>
                 Kompleksowy raport dla zarzadu generowany przez AI na podstawie aktualnych danych:
@@ -179,32 +222,69 @@ export default function ReportsPage() {
               disabled={aiLoading}
               onClick={handleGenerateAI}
             >
-              {aiLoading ? "Generowanie raportu AI..." : "Generuj raport AI"}
+              {aiLoading ? "✨ Generowanie raportu AI..." : "✨ Generuj raport AI"}
             </button>
           </div>
         </div>
+
+        {/* Report History */}
+        <div className="card" style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 18 }}>📂</span>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
+              Historia raportow
+            </div>
+          </div>
+          {aiHistory.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--text-muted)", padding: "12px 0" }}>
+              Brak zapisanych raportow. Wygeneruj pierwszy raport AI.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 240, overflowY: "auto" }}>
+              {aiHistory.map(h => (
+                <button
+                  key={h.id}
+                  className="btn btn-sm"
+                  style={{ textAlign: "left", fontSize: 12, padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", opacity: historyLoading ? 0.6 : 1 }}
+                  disabled={historyLoading}
+                  onClick={() => handleLoadReport(h.id)}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginRight: 8 }}>{h.title}</span>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>{new Date(h.generated_at).toLocaleString("pl-PL")}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Report History */}
-      {aiHistory.length > 0 && (
-        <div className="card no-print" style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
-            Zapisane raporty ({aiHistory.length})
+      {/* Progress bar */}
+      {aiProgress && (
+        <div className="card no-print" style={{ marginTop: 12, padding: "14px 16px", borderLeft: `3px solid ${aiProgress.percent >= 100 ? "var(--green)" : "#7c3aed"}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
+              {aiProgress.percent >= 100 ? "✨ Raport wygenerowany" : "✨ Generowanie raportu AI..."}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              {aiProgress.percent}%
+            </div>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {aiHistory.map(h => (
-              <button
-                key={h.id}
-                className="btn btn-sm"
-                style={{ textAlign: "left", fontSize: 12, padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", opacity: historyLoading ? 0.6 : 1 }}
-                disabled={historyLoading}
-                onClick={() => handleLoadReport(h.id)}
-              >
-                <span>{h.title}</span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{new Date(h.generated_at).toLocaleString("pl-PL")}</span>
-              </button>
-            ))}
+          <div className="bar-track" style={{ height: 8, marginBottom: 6 }}>
+            <div
+              className="bar-fill"
+              style={{
+                width: `${aiProgress.percent}%`,
+                background: aiProgress.percent >= 100 ? "var(--green)" : "#7c3aed",
+                transition: "width 0.5s ease",
+              }}
+            />
           </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{aiProgress.message}</div>
+          {aiProgress.percent < 100 && (
+            <div style={{ fontSize: 11, color: "var(--orange)", marginTop: 6, fontWeight: 500 }}>
+              Nie zamykaj ani nie przeladowuj strony — generowanie zostanie przerwane.
+            </div>
+          )}
         </div>
       )}
 
@@ -330,11 +410,7 @@ function AIReportView({ data }: { data: AIReportData }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, borderBottom: "2px solid var(--border)", paddingBottom: 16 }}>
         <div>
           <h3 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#7c3aed", display: "flex", alignItems: "center", gap: 10 }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="#7c3aed" stroke="none">
-              <path d="M12 2L14.09 8.26L20 9.27L15.55 13.97L16.91 20L12 16.9L7.09 20L8.45 13.97L4 9.27L9.91 8.26L12 2Z" />
-              <path d="M5 3L5.5 5L7 5.5L5.5 6L5 8L4.5 6L3 5.5L4.5 5L5 3Z" opacity="0.7" />
-              <path d="M19 14L19.5 16L21 16.5L19.5 17L19 19L18.5 17L17 16.5L18.5 16L19 14Z" opacity="0.7" />
-            </svg>
+            <span style={{ fontSize: 24 }}>✨</span>
             Raport Zarzadczy — SecurePosture
           </h3>
           <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>

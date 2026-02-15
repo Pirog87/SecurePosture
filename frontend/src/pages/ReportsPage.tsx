@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+interface AIReportHistoryItem {
+  id: number;
+  title: string;
+  generated_at: string;
+}
 
 interface ReportDef {
   id: string;
@@ -42,6 +48,17 @@ export default function ReportsPage() {
   const [aiReport, setAiReport] = useState<AIReportData | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiHistory, setAiHistory] = useState<AIReportHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/reports/ai-management/history`);
+      if (res.ok) setAiHistory(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
   const handleGenerate = async (report: ReportDef, formData?: Record<string, string>) => {
     setGenerating(report.id);
@@ -84,10 +101,25 @@ export default function ReportsPage() {
       }
       const data = await res.json();
       setAiReport(data);
+      fetchHistory();
     } catch (err: unknown) {
       setAiError(err instanceof Error ? err.message : String(err));
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const handleLoadReport = async (id: number) => {
+    setHistoryLoading(true);
+    setAiError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/reports/ai-management/${id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setAiReport(await res.json());
+    } catch (err: unknown) {
+      setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -152,6 +184,29 @@ export default function ReportsPage() {
           </div>
         </div>
       </div>
+
+      {/* Report History */}
+      {aiHistory.length > 0 && (
+        <div className="card no-print" style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
+            Zapisane raporty ({aiHistory.length})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {aiHistory.map(h => (
+              <button
+                key={h.id}
+                className="btn btn-sm"
+                style={{ textAlign: "left", fontSize: 12, padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", opacity: historyLoading ? 0.6 : 1 }}
+                disabled={historyLoading}
+                onClick={() => handleLoadReport(h.id)}
+              >
+                <span>{h.title}</span>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{new Date(h.generated_at).toLocaleString("pl-PL")}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {aiError && (
         <div className="card" style={{ marginTop: 16, borderLeft: "4px solid #ef4444", background: "rgba(239,68,68,0.05)" }}>

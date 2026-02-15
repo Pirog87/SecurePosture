@@ -72,6 +72,7 @@ from .smart_catalog import (
     AIProviderConfig,
     AIPromptTemplate,
     AIAuditLog,
+    AIManagementReport,
 )
 
 __all__ = [
@@ -106,7 +107,7 @@ __all__ = [
     "ThreatCatalog", "WeaknessCatalog", "ControlCatalog",
     "ThreatAssetCategory", "WeaknessAssetCategory", "ControlAssetCategory",
     "ThreatWeaknessLink", "ThreatControlLink", "WeaknessControlLink",
-    "AIProviderConfig", "AIPromptTemplate", "AIAuditLog",
+    "AIProviderConfig", "AIPromptTemplate", "AIAuditLog", "AIManagementReport",
     "ControlImplementation", "ControlEffectivenessTest",
     "ComplianceAssessment", "RequirementAssessment",
     "Evidence", "RequirementAssessmentEvidence", "ComplianceAssessmentHistory",

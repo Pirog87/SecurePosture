@@ -1,13 +1,13 @@
 """Audit Programs V2 — full versioning, items, CR, history, diffs, suppliers, locations.
 
-Revision ID: 024
-Revises: 023
+Revision ID: 024_audit_programs_v2
+Revises: 023_ai_report_history
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "024"
-down_revision = "023"
+revision = "024_audit_programs_v2"
+down_revision = "023_ai_report_history"
 branch_labels = None
 depends_on = None
 

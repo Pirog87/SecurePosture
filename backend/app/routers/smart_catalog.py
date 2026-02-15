@@ -1775,3 +1775,206 @@ async def reset_ai_prompt(function_key: str, s: AsyncSession = Depends(get_sessi
     row.updated_at = datetime.utcnow()
     await s.commit()
     return {"status": "ok", "function_key": function_key, "restored": True}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DATABASE ADMINISTRATION
+# ═══════════════════════════════════════════════════════════════════
+
+def _parse_database_url(url: str) -> dict:
+    """Parse DATABASE_URL into components."""
+    import re
+    # mysql+asyncmy://user:pass@host:port/dbname
+    m = re.match(
+        r"(?P<driver>[^:]+)://(?P<user>[^:]*):(?P<password>[^@]*)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<database>\w+)",
+        url,
+    )
+    if not m:
+        return {"driver": "", "host": "", "port": 3306, "database": "", "user": "", "raw": url}
+    return {
+        "driver": m.group("driver"),
+        "host": m.group("host"),
+        "port": int(m.group("port") or 3306),
+        "database": m.group("database"),
+        "user": m.group("user"),
+    }
+
+
+def _build_database_url(host: str, port: int, database: str, user: str, password: str,
+                         driver: str = "mysql+asyncmy") -> str:
+    """Build DATABASE_URL from components."""
+    from urllib.parse import quote_plus
+    return f"{driver}://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
+
+
+@router.get("/admin/db-config", summary="Aktualna konfiguracja bazy danych")
+async def get_db_config():
+    """Return current DB connection info (password masked)."""
+    from app.config import settings
+    parsed = _parse_database_url(settings.DATABASE_URL)
+    return {
+        "host": parsed.get("host", ""),
+        "port": parsed.get("port", 3306),
+        "database": parsed.get("database", ""),
+        "user": parsed.get("user", ""),
+        "driver": parsed.get("driver", "mysql+asyncmy"),
+        "connected": True,
+    }
+
+
+@router.post("/admin/db-config/test", summary="Testuj połączenie z bazą danych")
+async def test_db_connection(body: dict):
+    """Test connection to a database with given params. Does NOT save anything."""
+    from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
+    from sqlalchemy import text as _text
+
+    host = body.get("host", "").strip()
+    port = int(body.get("port", 3306))
+    database = body.get("database", "").strip()
+    user = body.get("user", "").strip()
+    password = body.get("password", "")
+    driver = body.get("driver", "mysql+asyncmy").strip()
+
+    if not host or not database or not user:
+        raise HTTPException(400, "Host, nazwa bazy i użytkownik są wymagane")
+
+    url = _build_database_url(host, port, database, user, password, driver)
+
+    try:
+        eng = _create_engine(url, pool_pre_ping=True, pool_size=1, max_overflow=0)
+        async with eng.connect() as conn:
+            result = await conn.execute(_text("SELECT 1"))
+            result.fetchone()
+
+            # Check if schema exists (any tables?)
+            if "mysql" in driver:
+                rows = (await conn.execute(
+                    _text("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = :db"),
+                    {"db": database},
+                )).scalar()
+            else:
+                rows = 0
+
+        await eng.dispose()
+        return {
+            "status": "ok",
+            "message": f"Połączenie z {host}:{port}/{database} udane",
+            "tables_found": rows or 0,
+            "schema_initialized": (rows or 0) > 0,
+        }
+    except Exception as e:
+        err = str(e)
+        # Provide helpful error messages
+        if "Access denied" in err:
+            msg = "Odmowa dostępu — sprawdź użytkownika i hasło"
+        elif "Unknown database" in err:
+            msg = f"Baza danych '{database}' nie istnieje — utwórz ją najpierw (CREATE DATABASE)"
+        elif "Can't connect" in err or "Connection refused" in err:
+            msg = f"Nie można połączyć się z {host}:{port} — sprawdź adres i port"
+        else:
+            msg = f"Błąd połączenia: {err[:200]}"
+        return {"status": "error", "message": msg}
+
+
+@router.post("/admin/db-config/init-schema", summary="Zainicjalizuj schemat bazy danych")
+async def init_db_schema(body: dict):
+    """Run Alembic migrations on target database to create full schema."""
+    import subprocess
+    import os
+
+    host = body.get("host", "").strip()
+    port = int(body.get("port", 3306))
+    database = body.get("database", "").strip()
+    user = body.get("user", "").strip()
+    password = body.get("password", "")
+    driver = body.get("driver", "mysql+asyncmy").strip()
+
+    if not host or not database or not user:
+        raise HTTPException(400, "Host, nazwa bazy i użytkownik są wymagane")
+
+    url = _build_database_url(host, port, database, user, password, driver)
+    backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+    env = {**os.environ, "DATABASE_URL": url}
+
+    try:
+        result = subprocess.run(
+            ["python", "-m", "alembic", "upgrade", "head"],
+            cwd=backend_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() or result.stdout.strip()
+            # Clean up error message
+            if "already exists" in error_msg.lower():
+                return {
+                    "status": "ok",
+                    "message": "Schemat już istnieje — baza jest aktualna",
+                    "details": error_msg[-500:],
+                }
+            return {
+                "status": "error",
+                "message": "Błąd podczas migracji",
+                "details": error_msg[-500:],
+            }
+
+        return {
+            "status": "ok",
+            "message": "Schemat bazy danych został utworzony pomyślnie",
+            "details": result.stdout.strip()[-500:] if result.stdout else "Migracje zastosowane",
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "message": "Timeout — migracja trwała zbyt długo (>120s)"}
+    except Exception as e:
+        return {"status": "error", "message": f"Błąd: {e}"}
+
+
+@router.put("/admin/db-config", summary="Zapisz konfigurację bazy danych")
+async def save_db_config(body: dict):
+    """Save new database connection to .env and signal that restart is needed."""
+    import os
+    from pathlib import Path
+
+    host = body.get("host", "").strip()
+    port = int(body.get("port", 3306))
+    database = body.get("database", "").strip()
+    user = body.get("user", "").strip()
+    password = body.get("password", "")
+    driver = body.get("driver", "mysql+asyncmy").strip()
+
+    if not host or not database or not user:
+        raise HTTPException(400, "Host, nazwa bazy i użytkownik są wymagane")
+
+    new_url = _build_database_url(host, port, database, user, password, driver)
+
+    # Read current .env
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    if env_path.exists():
+        content = env_path.read_text(encoding="utf-8")
+    else:
+        content = ""
+
+    # Replace or add DATABASE_URL
+    lines = content.splitlines()
+    new_lines = []
+    found = False
+    for line in lines:
+        if line.startswith("DATABASE_URL="):
+            new_lines.append(f"DATABASE_URL={new_url}")
+            found = True
+        else:
+            new_lines.append(line)
+    if not found:
+        new_lines.insert(0, f"DATABASE_URL={new_url}")
+
+    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    return {
+        "status": "ok",
+        "message": "Konfiguracja zapisana. Wymagany restart aplikacji aby połączyć się z nową bazą.",
+        "restart_required": True,
+    }

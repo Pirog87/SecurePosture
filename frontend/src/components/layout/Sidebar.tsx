@@ -83,6 +83,7 @@ const sections: { title: string; items: NavItem[] }[] = [
     items: [
       { to: "/assets/admin", icon: "⚙️", label: "CMDB Admin" },
       { to: "/ai-config", icon: "✨", label: "Integracja AI" },
+      { to: "/db-admin", icon: "🗄️", label: "Baza danych" },
       { to: "/dictionaries", icon: "📖", label: "Słowniki" },
       { to: "/audit", icon: "📝", label: "Audit Trail" },
     ],

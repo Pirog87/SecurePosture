@@ -40,6 +40,7 @@ from app.routers.test_template import router as test_template_router
 from app.routers.audit_program import (
     programs_router as audit_programs_v2_router,
     items_router as audit_items_router,
+    cr_router as change_requests_router,
     suppliers_router,
     locations_router,
 )
@@ -108,6 +109,7 @@ app.include_router(control_effectiveness_router)
 app.include_router(compliance_router)
 app.include_router(audit_programs_v2_router)
 app.include_router(audit_items_router)
+app.include_router(change_requests_router)
 app.include_router(suppliers_router)
 app.include_router(locations_router)
 app.include_router(audit_engagements_router)

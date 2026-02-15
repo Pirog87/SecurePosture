@@ -310,3 +310,68 @@ class CancelItemPayload(BaseModel):
 class DeferItemPayload(BaseModel):
     deferral_reason: str = Field(..., min_length=3)
     deferred_to_program_id: int | None = None
+
+
+# ─── Change Requests ────────────────────────────────────────
+
+
+class ChangeRequestCreate(BaseModel):
+    title: str = Field(..., min_length=3, max_length=300)
+    change_type: str = Field(..., pattern=r"^(add_audit|remove_audit|modify_audit|modify_schedule|modify_scope|modify_budget|modify_team|other)$")
+    justification: str = Field(..., min_length=5)
+    change_description: str = Field(..., min_length=5)
+    impact_assessment: str | None = None
+    affected_item_id: int | None = None
+    proposed_changes: dict | None = None
+
+
+class ChangeRequestUpdate(BaseModel):
+    title: str | None = Field(None, min_length=3, max_length=300)
+    change_type: str | None = None
+    justification: str | None = None
+    change_description: str | None = None
+    impact_assessment: str | None = None
+    affected_item_id: int | None = None
+    proposed_changes: dict | None = None
+
+
+class ChangeRequestOut(BaseModel):
+    id: int
+    audit_program_id: int
+    ref_id: str
+    title: str
+    change_type: str
+    justification: str
+    change_description: str
+    impact_assessment: str | None = None
+    affected_item_id: int | None = None
+    proposed_changes: dict | None = None
+    status: str
+    status_changed_at: datetime | None = None
+    requested_by: int
+    requested_at: datetime
+    submitted_at: datetime | None = None
+    reviewed_by: int | None = None
+    reviewed_at: datetime | None = None
+    review_comment: str | None = None
+    resulting_version_id: int | None = None
+    implemented_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    # Computed
+    requested_by_name: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class CRReviewPayload(BaseModel):
+    review_comment: str | None = None
+
+
+class CRRejectPayload(BaseModel):
+    review_comment: str = Field(..., min_length=3)
+
+
+class CRImplementPayload(BaseModel):
+    change_request_ids: list[int] | None = None

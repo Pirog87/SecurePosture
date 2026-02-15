@@ -1,6 +1,6 @@
 """
-Audit Program CRUD + lifecycle + items + suppliers + locations + version diffs + audit trail.
-Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1-5
+Audit Program CRUD + lifecycle + items + suppliers + locations + version diffs + audit trail + CR.
+Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1-6
 """
 from datetime import datetime, date as date_type
 
@@ -12,6 +12,7 @@ from app.database import get_session
 from app.models.audit_program import (
     AuditProgramV2,
     AuditProgramItem,
+    AuditProgramChangeRequest,
     AuditProgramHistory,
     AuditProgramVersionDiff,
     Supplier,
@@ -31,6 +32,12 @@ from app.schemas.audit_program import (
     CorrectionPayload,
     CancelItemPayload,
     DeferItemPayload,
+    ChangeRequestCreate,
+    ChangeRequestUpdate,
+    ChangeRequestOut,
+    CRReviewPayload,
+    CRRejectPayload,
+    CRImplementPayload,
     SupplierCreate,
     SupplierUpdate,
     SupplierOut,
@@ -41,6 +48,7 @@ from app.schemas.audit_program import (
 
 programs_router = APIRouter(prefix="/api/v1/audit-programs", tags=["Program Audytow"])
 items_router = APIRouter(prefix="/api/v1/audit-program-items", tags=["Pozycje programu"])
+cr_router = APIRouter(prefix="/api/v1/change-requests", tags=["Change Requests"])
 suppliers_router = APIRouter(prefix="/api/v1/suppliers", tags=["Dostawcy"])
 locations_router = APIRouter(prefix="/api/v1/locations", tags=["Lokalizacje"])
 
@@ -1036,6 +1044,356 @@ async def defer_item(
                user_id=p.owner_id)
     await s.commit()
     return {"status": "deferred"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Change Requests (Krok 6)
+# ═══════════════════════════════════════════════════════════════
+
+
+async def _next_cr_ref(s: AsyncSession) -> str:
+    """Generate next CR ref like CR-2026-001."""
+    year = datetime.utcnow().year
+    pat = f"CR-{year}-%"
+    q = select(func.count()).select_from(AuditProgramChangeRequest).where(
+        AuditProgramChangeRequest.ref_id.like(pat),
+    )
+    cnt = (await s.execute(q)).scalar() or 0
+    return f"CR-{year}-{cnt + 1:03d}"
+
+
+async def _enrich_cr(s: AsyncSession, cr: AuditProgramChangeRequest) -> ChangeRequestOut:
+    out = ChangeRequestOut.model_validate(cr)
+    out.requested_by_name = await _user_name(s, cr.requested_by)
+    return out
+
+
+# ── CR list for a program ──
+@programs_router.get("/{program_id}/change-requests", response_model=list[ChangeRequestOut])
+async def list_change_requests(
+    program_id: int,
+    status: str | None = Query(None),
+    s: AsyncSession = Depends(get_session),
+):
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+    q = select(AuditProgramChangeRequest).where(
+        AuditProgramChangeRequest.audit_program_id == program_id,
+    )
+    if status:
+        q = q.where(AuditProgramChangeRequest.status == status)
+    q = q.order_by(AuditProgramChangeRequest.created_at.desc())
+    rows = (await s.execute(q)).scalars().all()
+    return [await _enrich_cr(s, cr) for cr in rows]
+
+
+# ── CR create ──
+@programs_router.post("/{program_id}/change-requests", response_model=ChangeRequestOut, status_code=201)
+async def create_change_request(
+    program_id: int,
+    body: ChangeRequestCreate,
+    s: AsyncSession = Depends(get_session),
+):
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+    if p.status not in ("approved", "in_execution"):
+        raise HTTPException(400, "Change Request mozliwy tylko dla programu 'approved' lub 'in_execution'")
+
+    ref_id = await _next_cr_ref(s)
+    cr = AuditProgramChangeRequest(
+        audit_program_id=program_id,
+        ref_id=ref_id,
+        title=body.title,
+        change_type=body.change_type,
+        justification=body.justification,
+        change_description=body.change_description,
+        impact_assessment=body.impact_assessment,
+        affected_item_id=body.affected_item_id,
+        proposed_changes=body.proposed_changes or {},
+        status="draft",
+        requested_by=p.owner_id,
+    )
+    s.add(cr)
+    await s.flush()
+    await _log(s, program_id, "change_request", cr.id, "created",
+               f"Utworzono CR '{cr.title}' ({cr.ref_id})", user_id=p.owner_id)
+    await s.commit()
+    await s.refresh(cr)
+    return await _enrich_cr(s, cr)
+
+
+# ── CR get ──
+@cr_router.get("/{cr_id}", response_model=ChangeRequestOut)
+async def get_change_request(cr_id: int, s: AsyncSession = Depends(get_session)):
+    cr = await s.get(AuditProgramChangeRequest, cr_id)
+    if not cr:
+        raise HTTPException(404, "Change Request nie znaleziony")
+    return await _enrich_cr(s, cr)
+
+
+# ── CR update ──
+@cr_router.put("/{cr_id}", response_model=ChangeRequestOut)
+async def update_change_request(
+    cr_id: int,
+    body: ChangeRequestUpdate,
+    s: AsyncSession = Depends(get_session),
+):
+    cr = await s.get(AuditProgramChangeRequest, cr_id)
+    if not cr:
+        raise HTTPException(404, "Change Request nie znaleziony")
+    if cr.status != "draft":
+        raise HTTPException(400, "Edycja CR mozliwa tylko w statusie 'draft'")
+
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(cr, k, v)
+    await s.commit()
+    await s.refresh(cr)
+    return await _enrich_cr(s, cr)
+
+
+# ── CR delete ──
+@cr_router.delete("/{cr_id}")
+async def delete_change_request(cr_id: int, s: AsyncSession = Depends(get_session)):
+    cr = await s.get(AuditProgramChangeRequest, cr_id)
+    if not cr:
+        raise HTTPException(404, "Change Request nie znaleziony")
+    if cr.status != "draft":
+        raise HTTPException(400, "Usuwanie CR mozliwe tylko w statusie 'draft'")
+    await s.delete(cr)
+    await s.commit()
+    return {"status": "deleted"}
+
+
+# ── CR submit ──
+@cr_router.post("/{cr_id}/submit", response_model=ChangeRequestOut)
+async def submit_change_request(cr_id: int, s: AsyncSession = Depends(get_session)):
+    cr = await s.get(AuditProgramChangeRequest, cr_id)
+    if not cr:
+        raise HTTPException(404, "Change Request nie znaleziony")
+    if cr.status != "draft":
+        raise HTTPException(400, "Zlozenie mozliwe tylko w statusie 'draft'")
+
+    cr.status = "submitted"
+    cr.submitted_at = datetime.utcnow()
+    cr.status_changed_at = datetime.utcnow()
+    await _log(s, cr.audit_program_id, "change_request", cr.id, "cr_submitted",
+               f"Zlozono CR '{cr.title}' ({cr.ref_id})", user_id=cr.requested_by)
+    await s.commit()
+    await s.refresh(cr)
+    return await _enrich_cr(s, cr)
+
+
+# ── CR approve ──
+@cr_router.post("/{cr_id}/approve", response_model=ChangeRequestOut)
+async def approve_change_request(
+    cr_id: int,
+    body: CRReviewPayload,
+    s: AsyncSession = Depends(get_session),
+):
+    cr = await s.get(AuditProgramChangeRequest, cr_id)
+    if not cr:
+        raise HTTPException(404, "Change Request nie znaleziony")
+    if cr.status != "submitted":
+        raise HTTPException(400, "Zatwierdzanie mozliwe tylko w statusie 'submitted'")
+
+    p = await s.get(AuditProgramV2, cr.audit_program_id)
+    cr.status = "approved"
+    cr.reviewed_by = p.approver_id if p else 1
+    cr.reviewed_at = datetime.utcnow()
+    cr.review_comment = body.review_comment
+    cr.status_changed_at = datetime.utcnow()
+    await _log(s, cr.audit_program_id, "change_request", cr.id, "cr_approved",
+               f"Zatwierdzono CR '{cr.title}' ({cr.ref_id})",
+               user_id=cr.reviewed_by, justification=body.review_comment)
+    await s.commit()
+    await s.refresh(cr)
+    return await _enrich_cr(s, cr)
+
+
+# ── CR reject ──
+@cr_router.post("/{cr_id}/reject", response_model=ChangeRequestOut)
+async def reject_change_request(
+    cr_id: int,
+    body: CRRejectPayload,
+    s: AsyncSession = Depends(get_session),
+):
+    cr = await s.get(AuditProgramChangeRequest, cr_id)
+    if not cr:
+        raise HTTPException(404, "Change Request nie znaleziony")
+    if cr.status != "submitted":
+        raise HTTPException(400, "Odrzucenie mozliwe tylko w statusie 'submitted'")
+
+    p = await s.get(AuditProgramV2, cr.audit_program_id)
+    cr.status = "rejected"
+    cr.reviewed_by = p.approver_id if p else 1
+    cr.reviewed_at = datetime.utcnow()
+    cr.review_comment = body.review_comment
+    cr.status_changed_at = datetime.utcnow()
+    await _log(s, cr.audit_program_id, "change_request", cr.id, "cr_rejected",
+               f"Odrzucono CR '{cr.title}' ({cr.ref_id}): {body.review_comment}",
+               user_id=cr.reviewed_by, justification=body.review_comment)
+    await s.commit()
+    await s.refresh(cr)
+    return await _enrich_cr(s, cr)
+
+
+# ── CR implement (creates correction + applies changes) ──
+@cr_router.post("/{cr_id}/implement", response_model=AuditProgramOut)
+async def implement_change_request(
+    cr_id: int,
+    s: AsyncSession = Depends(get_session),
+):
+    cr = await s.get(AuditProgramChangeRequest, cr_id)
+    if not cr:
+        raise HTTPException(404, "Change Request nie znaleziony")
+    if cr.status != "approved":
+        raise HTTPException(400, "Implementacja mozliwa tylko dla zatwierdzonych CR")
+
+    original = await s.get(AuditProgramV2, cr.audit_program_id)
+    if not original:
+        raise HTTPException(404, "Powiazany program nie znaleziony")
+    if original.status not in ("approved", "in_execution"):
+        raise HTTPException(400, "Program musi byc 'approved' lub 'in_execution'")
+
+    # 1. Supersede original
+    old_status = original.status
+    _set_status(original, "superseded")
+    original.is_current_version = False
+    original.correction_reason = f"CR {cr.ref_id}: {cr.justification}"
+    original.correction_initiated_at = datetime.utcnow()
+
+    # 2. Create new version (copy)
+    new_p = AuditProgramV2(
+        ref_id=original.ref_id,
+        name=original.name,
+        description=original.description,
+        version=original.version + 1,
+        version_group_id=original.version_group_id,
+        is_current_version=True,
+        previous_version_id=original.id,
+        period_type=original.period_type,
+        period_start=original.period_start,
+        period_end=original.period_end,
+        year=original.year,
+        strategic_objectives=original.strategic_objectives,
+        risks_and_opportunities=original.risks_and_opportunities,
+        scope_description=original.scope_description,
+        audit_criteria=original.audit_criteria,
+        methods=original.methods,
+        risk_assessment_ref=original.risk_assessment_ref,
+        budget_planned_days=original.budget_planned_days,
+        budget_actual_days=original.budget_actual_days,
+        budget_planned_cost=original.budget_planned_cost,
+        budget_actual_cost=original.budget_actual_cost,
+        budget_currency=original.budget_currency,
+        kpis=original.kpis,
+        previous_program_id=original.previous_program_id,
+        status="draft",
+        owner_id=original.owner_id,
+        approver_id=original.approver_id,
+        org_unit_id=original.org_unit_id,
+        created_by=original.owner_id,
+    )
+    s.add(new_p)
+    await s.flush()
+
+    # 3. Copy items
+    items_q = select(AuditProgramItem).where(
+        AuditProgramItem.audit_program_id == original.id,
+    ).order_by(AuditProgramItem.display_order)
+    old_items = (await s.execute(items_q)).scalars().all()
+
+    for idx, oi in enumerate(old_items):
+        new_item = AuditProgramItem(
+            audit_program_id=new_p.id,
+            ref_id=oi.ref_id, name=oi.name, description=oi.description,
+            audit_type=oi.audit_type, planned_quarter=oi.planned_quarter,
+            planned_month=oi.planned_month, planned_start=oi.planned_start,
+            planned_end=oi.planned_end, scope_type=oi.scope_type,
+            scope_id=oi.scope_id, scope_name=oi.scope_name,
+            framework_ids=oi.framework_ids, criteria_description=oi.criteria_description,
+            planned_days=oi.planned_days, planned_cost=oi.planned_cost,
+            priority=oi.priority, risk_rating=oi.risk_rating,
+            risk_justification=oi.risk_justification,
+            lead_auditor_id=oi.lead_auditor_id, auditor_ids=oi.auditor_ids,
+            audit_engagement_id=oi.audit_engagement_id,
+            item_status="planned", audit_method=oi.audit_method,
+            display_order=idx,
+        )
+        s.add(new_item)
+
+    await s.flush()
+
+    # 4. Apply CR changes
+    changes = cr.proposed_changes or {}
+    action = changes.get("action")
+
+    if action == "add":
+        item_data = changes.get("item", {})
+        new_ref = await _next_item_ref(s, new_p.id)
+        added = AuditProgramItem(
+            audit_program_id=new_p.id,
+            ref_id=new_ref,
+            name=item_data.get("name", cr.title),
+            audit_type=item_data.get("audit_type", "compliance"),
+            planned_quarter=item_data.get("planned_quarter"),
+            scope_type=item_data.get("scope_type"),
+            scope_name=item_data.get("scope_name"),
+            priority=item_data.get("priority", "medium"),
+            planned_days=item_data.get("planned_days"),
+            audit_method=item_data.get("audit_method", "on_site"),
+        )
+        s.add(added)
+    elif action == "remove":
+        item_ref = changes.get("item_ref_id")
+        if item_ref:
+            q = select(AuditProgramItem).where(
+                AuditProgramItem.audit_program_id == new_p.id,
+                AuditProgramItem.ref_id == item_ref,
+            )
+            target = (await s.execute(q)).scalar_one_or_none()
+            if target:
+                target.item_status = "cancelled"
+                target.cancellation_reason = changes.get("cancel_reason", cr.justification)
+    elif action == "modify":
+        item_ref = changes.get("item_ref_id")
+        field_changes = changes.get("changes", {})
+        if item_ref and field_changes:
+            q = select(AuditProgramItem).where(
+                AuditProgramItem.audit_program_id == new_p.id,
+                AuditProgramItem.ref_id == item_ref,
+            )
+            target = (await s.execute(q)).scalar_one_or_none()
+            if target:
+                for field, vals in field_changes.items():
+                    new_val = vals.get("to") if isinstance(vals, dict) else vals
+                    if hasattr(target, field):
+                        setattr(target, field, new_val)
+    elif action == "modify_program":
+        field_changes = changes.get("changes", {})
+        for field, vals in field_changes.items():
+            new_val = vals.get("to") if isinstance(vals, dict) else vals
+            if hasattr(new_p, field):
+                setattr(new_p, field, new_val)
+
+    # 5. Mark CR as implemented
+    cr.status = "implemented"
+    cr.resulting_version_id = new_p.id
+    cr.implemented_at = datetime.utcnow()
+    cr.status_changed_at = datetime.utcnow()
+
+    await _log(s, new_p.id, "change_request", cr.id, "cr_implemented",
+               f"CR {cr.ref_id} zaimplementowany → Program v{new_p.version}",
+               user_id=original.owner_id, justification=cr.justification)
+    await _log(s, new_p.id, "program", new_p.id, "version_created",
+               f"Utworzono korekta v{new_p.version} z CR {cr.ref_id}",
+               user_id=original.owner_id, justification=cr.justification)
+
+    await s.commit()
+    await s.refresh(new_p)
+    return await _enrich_program(s, new_p)
 
 
 # ═══════════════════════════════════════════════════════════════

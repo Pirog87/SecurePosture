@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../services/api";
 import type { FrameworkBrief, FrameworkImportResult, DictionaryEntry } from "../types";
@@ -68,7 +68,7 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
    FrameworksPage — Repozytorium Wymagań
    ═══════════════════════════════════════════════════ */
 export default function FrameworksPage() {
-  const navigate = useNavigate();
+  const rawNavigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [frameworks, setFrameworks] = useState<FrameworkBrief[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,6 +89,32 @@ export default function FrameworksPage() {
   const aiFileRef = useRef<HTMLInputElement>(null);
   const [aiImporting, setAiImporting] = useState(false);
   const [aiProgress, setAiProgress] = useState<{ percent: number; message: string; nodes_found: number } | null>(null);
+  const aiImportingRef = useRef(false);
+
+  // Safe navigate — blocks navigation during AI import
+  const navigate = useCallback((...args: Parameters<typeof rawNavigate>) => {
+    if (aiImportingRef.current) {
+      if (!confirm("Import AI jest w toku. Przejście na inną stronę przerwie proces importu.\n\nCzy na pewno chcesz przerwać?")) {
+        return;
+      }
+    }
+    rawNavigate(...args);
+  }, [rawNavigate]);
+
+  // Block browser back/forward during import
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      if (aiImportingRef.current) {
+        if (!confirm("Import AI jest w toku. Cofnięcie przerwie proces importu.\n\nCzy na pewno chcesz przerwać?")) {
+          e.preventDefault();
+          // Push state back to prevent navigation
+          window.history.pushState(null, "", window.location.href);
+        }
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   /* ── Load document types from dictionary ── */
   useEffect(() => {
@@ -146,6 +172,7 @@ export default function FrameworksPage() {
   /* ── AI Import handler (PDF/DOCX) with progress polling ── */
   const handleAiImport = async (file: File) => {
     setAiImporting(true);
+    aiImportingRef.current = true;
     setImportResult(null);
     setImportError(null);
     setAiProgress({ percent: 0, message: "Wysyłanie pliku...", nodes_found: 0 });
@@ -213,6 +240,7 @@ export default function FrameworksPage() {
       window.removeEventListener("beforeunload", beforeUnloadHandler);
       if (pollTimer) clearInterval(pollTimer);
       setAiImporting(false);
+      aiImportingRef.current = false;
       setTimeout(() => setAiProgress(null), 5000);
       if (aiFileRef.current) aiFileRef.current.value = "";
     }

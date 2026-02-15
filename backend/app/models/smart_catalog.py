@@ -254,6 +254,10 @@ class AIProviderConfig(Base):
     feature_document_import: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
     feature_management_report: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
 
+    # Feature toggles — Audit Program
+    feature_audit_program_suggest: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    feature_audit_program_review: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+
     # Test metadata
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_test_ok: Mapped[bool | None] = mapped_column(Boolean)

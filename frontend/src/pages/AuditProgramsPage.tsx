@@ -343,6 +343,24 @@ export default function AuditProgramsPage() {
   const [transferJustification, setTransferJustification] = useState("");
   const [draftPrograms, setDraftPrograms] = useState<AuditProgram[]>([]);
 
+  // AI (Krok 8)
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({});
+  const [showAISuggest, setShowAISuggest] = useState(false);
+  const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<Record<string, unknown>[]>([]);
+  const [aiSuggestChecked, setAiSuggestChecked] = useState<Set<number>>(new Set());
+  const [aiSuggestScopes, setAiSuggestScopes] = useState<string[]>(["compliance"]);
+  const [aiSuggestContext, setAiSuggestContext] = useState("");
+  const [aiSuggestIncludes, setAiSuggestIncludes] = useState({
+    assessments: true, findings: true, risks: true, suppliers: true,
+    locations: true, previous_program: true, frameworks: true,
+  });
+  const [showAIReview, setShowAIReview] = useState(false);
+  const [aiReviewLoading, setAiReviewLoading] = useState(false);
+  const [aiReviewResult, setAiReviewResult] = useState<Record<string, unknown>[] | null>(null);
+  const [aiAddingItem, setAiAddingItem] = useState(false);
+
   // Lookups
   const [users, setUsers] = useState<UserOption[]>([]);
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
@@ -375,6 +393,9 @@ export default function AuditProgramsPage() {
     api.get<OrgUnitTreeNode[]>("/api/v1/org-units/tree").then(setOrgTree).catch(() => {});
     api.get<{ users: UserOption[] }>("/api/v1/audit-programs/lookups")
       .then(d => setUsers(d.users))
+      .catch(() => {});
+    api.get<{ ai_enabled: boolean; ai_features: Record<string, boolean> }>("/api/v1/config/features")
+      .then(d => { setAiEnabled(d.ai_enabled); setAiFeatures(d.ai_features); })
       .catch(() => {});
   }, []);
 
@@ -745,13 +766,51 @@ export default function AuditProgramsPage() {
             )}
 
             {sel.status === "draft" && (
-              <button
-                className="btn btn-sm"
-                style={{ width: "100%", marginTop: 10 }}
-                onClick={() => { setEditingItem(null); setShowItemModal(true); }}
-              >
-                + Dodaj pozycje
-              </button>
+              <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                <button
+                  className="btn btn-sm"
+                  style={{ flex: 1 }}
+                  onClick={() => { setEditingItem(null); setShowItemModal(true); }}
+                >
+                  + Dodaj pozycje
+                </button>
+                {aiEnabled && aiFeatures.audit_program_suggest && (
+                  <button
+                    className="btn btn-sm"
+                    style={{ flex: 1, background: "linear-gradient(135deg, #8b5cf6, #6366f1)", color: "#fff", border: "none" }}
+                    onClick={() => {
+                      setAiSuggestions([]);
+                      setAiSuggestChecked(new Set());
+                      setAiSuggestScopes(["compliance"]);
+                      setAiSuggestContext("");
+                      setShowAISuggest(true);
+                    }}
+                  >
+                    Zasugeruj pozycje AI
+                  </button>
+                )}
+                {aiEnabled && aiFeatures.audit_program_review && (
+                  <button
+                    className="btn btn-sm"
+                    style={{ flex: 1, background: "linear-gradient(135deg, #06b6d4, #3b82f6)", color: "#fff", border: "none" }}
+                    onClick={async () => {
+                      setAiReviewResult(null);
+                      setShowAIReview(true);
+                      setAiReviewLoading(true);
+                      try {
+                        const res = await api.post<{ observations: Record<string, unknown>[] }>("/api/v1/ai/audit-program/review-completeness", { program_id: sel.id });
+                        setAiReviewResult(res.observations);
+                      } catch (err) {
+                        alert("Blad AI: " + err);
+                      } finally {
+                        setAiReviewLoading(false);
+                      }
+                    }}
+                  >
+                    Sprawdz kompletnosc AI
+                  </button>
+                )}
+              </div>
             )}
 
             {/* ── Change Requests (Krok 6) ── */}
@@ -1599,6 +1658,325 @@ export default function AuditProgramsPage() {
               {workflowBusy ? "Transferowanie..." : "Transferuj"}
             </button>
           </div>
+        </div>
+      </Modal>
+
+      {/* ── AI Suggest Items Modal (Krok 8) ── */}
+      <Modal open={showAISuggest} onClose={() => setShowAISuggest(false)} title="AI: Zasugeruj pozycje programu audytow">
+        <div style={{ maxHeight: "70vh", overflowY: "auto" }}>
+          {aiSuggestions.length === 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label className="label">Zakres tematyczny programu *</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {[
+                    { key: "compliance", label: "Audyty zgodnosci (compliance)" },
+                    { key: "process", label: "Audyty procesowe (risk-based)" },
+                    { key: "supplier", label: "Audyty dostawcow" },
+                    { key: "physical", label: "Audyty lokalizacji (bezp. fizyczne)" },
+                    { key: "follow_up", label: "Audyty follow-up (weryfikacja ustalen)" },
+                  ].map(opt => (
+                    <label key={opt.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer", padding: "4px 8px", borderRadius: 4, background: aiSuggestScopes.includes(opt.key) ? "rgba(99,102,241,0.15)" : "var(--bg-inset)" }}>
+                      <input
+                        type="checkbox"
+                        checked={aiSuggestScopes.includes(opt.key)}
+                        onChange={e => {
+                          setAiSuggestScopes(prev =>
+                            e.target.checked ? [...prev, opt.key] : prev.filter(s => s !== opt.key)
+                          );
+                        }}
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="label">Dodatkowy kontekst (opcjonalny)</label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  value={aiSuggestContext}
+                  onChange={e => setAiSuggestContext(e.target.value)}
+                  placeholder="Np. Jestem CISO, chce zaplanowac audyty zgodnosci z ISO 27001 i NIS2..."
+                />
+              </div>
+
+              <div>
+                <label className="label">Uwzglednij dane z systemu</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {[
+                    { key: "assessments", label: "Oceny zgodnosci" },
+                    { key: "findings", label: "Otwarte ustalenia" },
+                    { key: "risks", label: "Rejestr ryzyk" },
+                    { key: "suppliers", label: "Lista dostawcow" },
+                    { key: "locations", label: "Lista lokalizacji" },
+                    { key: "previous_program", label: "Poprzedni program" },
+                    { key: "frameworks", label: "Frameworki/regulacje" },
+                  ].map(opt => (
+                    <label key={opt.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, cursor: "pointer", padding: "4px 8px", borderRadius: 4, background: aiSuggestIncludes[opt.key as keyof typeof aiSuggestIncludes] ? "rgba(99,102,241,0.15)" : "var(--bg-inset)" }}>
+                      <input
+                        type="checkbox"
+                        checked={aiSuggestIncludes[opt.key as keyof typeof aiSuggestIncludes]}
+                        onChange={e => setAiSuggestIncludes(prev => ({ ...prev, [opt.key]: e.target.checked }))}
+                      />
+                      {opt.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+                <button className="btn btn-sm" onClick={() => setShowAISuggest(false)}>Anuluj</button>
+                <button
+                  className="btn btn-sm btn-primary"
+                  style={{ background: "linear-gradient(135deg, #8b5cf6, #6366f1)", borderColor: "#6366f1" }}
+                  disabled={aiSuggestLoading || aiSuggestScopes.length === 0}
+                  onClick={async () => {
+                    if (!selected) return;
+                    setAiSuggestLoading(true);
+                    try {
+                      const res = await api.post<{ suggestions: Record<string, unknown>[] }>("/api/v1/ai/audit-program/suggest-items", {
+                        program_id: selected.id,
+                        scope_themes: aiSuggestScopes,
+                        additional_context: aiSuggestContext || null,
+                        include_assessments: aiSuggestIncludes.assessments,
+                        include_findings: aiSuggestIncludes.findings,
+                        include_risks: aiSuggestIncludes.risks,
+                        include_suppliers: aiSuggestIncludes.suppliers,
+                        include_locations: aiSuggestIncludes.locations,
+                        include_previous_program: aiSuggestIncludes.previous_program,
+                        include_frameworks: aiSuggestIncludes.frameworks,
+                      });
+                      setAiSuggestions(res.suggestions);
+                      setAiSuggestChecked(new Set(res.suggestions.map((_: unknown, i: number) => i)));
+                    } catch (err) {
+                      alert("Blad AI: " + err);
+                    } finally {
+                      setAiSuggestLoading(false);
+                    }
+                  }}
+                >
+                  {aiSuggestLoading ? "Generowanie..." : "Generuj sugestie"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
+                AI zasugerowalo {aiSuggestions.length} pozycji programu
+              </div>
+              {aiSuggestions.map((sug, idx) => (
+                <label
+                  key={idx}
+                  style={{
+                    display: "flex", gap: 8, padding: "8px 10px", borderRadius: 6,
+                    background: aiSuggestChecked.has(idx) ? "rgba(99,102,241,0.08)" : "var(--bg-inset)",
+                    border: `1px solid ${aiSuggestChecked.has(idx) ? "rgba(99,102,241,0.3)" : "transparent"}`,
+                    cursor: "pointer", fontSize: 12,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={aiSuggestChecked.has(idx)}
+                    onChange={e => {
+                      setAiSuggestChecked(prev => {
+                        const next = new Set(prev);
+                        e.target.checked ? next.add(idx) : next.delete(idx);
+                        return next;
+                      });
+                    }}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: 600 }}>
+                        Q{String(sug.planned_quarter ?? "?")} | {String(sug.name)}
+                      </span>
+                      <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: PRIORITY_COLORS[String(sug.priority)] || "#94a3b8", color: "#fff" }}>
+                        {String(sug.priority ?? "medium")}
+                      </span>
+                    </div>
+                    <div style={{ color: "var(--text-muted)", marginTop: 2 }}>
+                      {AUDIT_TYPE_LABELS[String(sug.audit_type)] || String(sug.audit_type ?? "")}
+                      {sug.estimated_days && <> | ~{String(sug.estimated_days)} dni</>}
+                      {sug.scope_name && <> | {String(sug.scope_name)}</>}
+                    </div>
+                    {sug.rationale && (
+                      <div style={{ color: "var(--text-secondary)", marginTop: 4, fontStyle: "italic" }}>
+                        {String(sug.rationale)}
+                      </div>
+                    )}
+                  </div>
+                </label>
+              ))}
+
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
+                Zaznaczonych: {aiSuggestChecked.size} pozycji
+                {aiSuggestions.filter((_, i) => aiSuggestChecked.has(i)).reduce((sum, s) => sum + (Number(s.estimated_days) || 0), 0) > 0 && (
+                  <>, ~{aiSuggestions.filter((_, i) => aiSuggestChecked.has(i)).reduce((sum, s) => sum + (Number(s.estimated_days) || 0), 0)} osobodni</>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+                <button className="btn btn-sm" onClick={() => setAiSuggestions([])}>Wstecz</button>
+                <button className="btn btn-sm" onClick={() => setShowAISuggest(false)}>Anuluj</button>
+                <button
+                  className="btn btn-sm btn-primary"
+                  disabled={aiSuggestChecked.size === 0 || aiAddingItem}
+                  onClick={async () => {
+                    if (!selected) return;
+                    setAiAddingItem(true);
+                    try {
+                      for (const idx of aiSuggestChecked) {
+                        const sug = aiSuggestions[idx];
+                        await api.post(`/api/v1/audit-programs/${selected.id}/items`, {
+                          name: sug.name,
+                          audit_type: sug.audit_type || "compliance",
+                          planned_quarter: sug.planned_quarter || null,
+                          planned_days: sug.estimated_days || null,
+                          priority: sug.priority || "medium",
+                          scope_type: sug.scope_type || null,
+                          scope_name: sug.scope_name || null,
+                          audit_method: "on_site",
+                          description: sug.rationale ? String(sug.rationale) : null,
+                        });
+                      }
+                      setShowAISuggest(false);
+                      loadItems(selected.id);
+                      load();
+                    } catch (err) {
+                      alert("Blad dodawania: " + err);
+                    } finally {
+                      setAiAddingItem(false);
+                    }
+                  }}
+                >
+                  {aiAddingItem ? "Dodawanie..." : `Dodaj zaznaczone (${aiSuggestChecked.size})`}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* ── AI Review Completeness Modal (Krok 8) ── */}
+      <Modal open={showAIReview} onClose={() => setShowAIReview(false)} title="AI: Przeglad kompletnosci programu">
+        <div style={{ maxHeight: "70vh", overflowY: "auto" }}>
+          {aiReviewLoading ? (
+            <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>Analizowanie programu...</div>
+              <div style={{ fontSize: 12 }}>AI sprawdza kompletnosc na podstawie danych systemowych</div>
+            </div>
+          ) : aiReviewResult === null ? (
+            <div style={{ textAlign: "center", padding: 24, color: "var(--text-muted)", fontSize: 12 }}>Brak wynikow</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {/* Gaps */}
+              {aiReviewResult.filter(o => o.type === "gap").length > 0 && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--red)", marginBottom: 6 }}>
+                    Luki ({aiReviewResult.filter(o => o.type === "gap").length})
+                  </div>
+                  {aiReviewResult.filter(o => o.type === "gap").map((obs, idx) => (
+                    <div key={`gap-${idx}`} style={{ padding: 8, borderRadius: 6, marginBottom: 6, background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontWeight: 600 }}>
+                          <span style={{ color: String(obs.severity) === "critical" ? "var(--red)" : "var(--orange)" }}>
+                            {String(obs.severity ?? "").toUpperCase()}
+                          </span>{" "}
+                          {String(obs.title)}
+                        </span>
+                        {obs.suggested_item && selected?.status === "draft" && (
+                          <button
+                            className="btn btn-xs"
+                            style={{ fontSize: 10, color: "var(--green)" }}
+                            disabled={aiAddingItem}
+                            onClick={async () => {
+                              if (!selected) return;
+                              setAiAddingItem(true);
+                              try {
+                                const si = obs.suggested_item as Record<string, unknown>;
+                                await api.post(`/api/v1/audit-programs/${selected.id}/items`, {
+                                  name: si.name,
+                                  audit_type: si.audit_type || "compliance",
+                                  planned_quarter: si.planned_quarter || null,
+                                  planned_days: si.estimated_days || null,
+                                  priority: si.priority || "medium",
+                                  scope_type: si.scope_type || null,
+                                  scope_name: si.scope_name || null,
+                                  audit_method: "on_site",
+                                });
+                                loadItems(selected.id);
+                                load();
+                              } catch (err) {
+                                alert("Blad: " + err);
+                              } finally {
+                                setAiAddingItem(false);
+                              }
+                            }}
+                          >
+                            + Dodaj do programu
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ color: "var(--text-secondary)", marginTop: 4 }}>{String(obs.details)}</div>
+                      {obs.recommendation && (
+                        <div style={{ color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>Rekomendacja: {String(obs.recommendation)}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Warnings */}
+              {aiReviewResult.filter(o => o.type === "warning").length > 0 && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--orange)", marginBottom: 6 }}>
+                    Ostrzezenia ({aiReviewResult.filter(o => o.type === "warning").length})
+                  </div>
+                  {aiReviewResult.filter(o => o.type === "warning").map((obs, idx) => (
+                    <div key={`warn-${idx}`} style={{ padding: 8, borderRadius: 6, marginBottom: 6, background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.2)", fontSize: 12 }}>
+                      <div style={{ fontWeight: 600 }}>
+                        <span style={{ color: "var(--orange)" }}>{String(obs.severity ?? "").toUpperCase()}</span>{" "}
+                        {String(obs.title)}
+                      </div>
+                      <div style={{ color: "var(--text-secondary)", marginTop: 4 }}>{String(obs.details)}</div>
+                      {obs.recommendation && (
+                        <div style={{ color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>Rekomendacja: {String(obs.recommendation)}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Confirmations */}
+              {aiReviewResult.filter(o => o.type === "confirmation").length > 0 && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--green)", marginBottom: 6 }}>
+                    Potwierdzone pokrycie ({aiReviewResult.filter(o => o.type === "confirmation").length})
+                  </div>
+                  {aiReviewResult.filter(o => o.type === "confirmation").map((obs, idx) => (
+                    <div key={`conf-${idx}`} style={{ padding: 8, borderRadius: 6, marginBottom: 6, background: "rgba(34,197,94,0.06)", border: "1px solid rgba(34,197,94,0.2)", fontSize: 12 }}>
+                      <div style={{ fontWeight: 600, color: "var(--green)" }}>{String(obs.title)}</div>
+                      <div style={{ color: "var(--text-secondary)", marginTop: 2 }}>{String(obs.details)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {aiReviewResult.length === 0 && (
+                <div style={{ textAlign: "center", padding: 16, color: "var(--text-muted)", fontSize: 12 }}>
+                  AI nie zwrocilo zadnych obserwacji.
+                </div>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                <button className="btn btn-sm" onClick={() => setShowAIReview(false)}>Zamknij</button>
+              </div>
+            </div>
+          )}
         </div>
       </Modal>
     </div>

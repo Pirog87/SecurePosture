@@ -960,15 +960,17 @@ class AIService:
     ) -> dict:
         """Analyze first chunk of document to extract framework metadata + nodes."""
         self._require_ai()
+        from app.services.ai_prompts import get_prompt
+        system_prompt = await get_prompt(self.session, "document_import")
 
         prompt = (
             f"Plik: {filename}\n\n"
             f"Tekst dokumentu:\n{document_text}\n\n"
-            f"Przeanalizuj ten dokument i wyodrebnij pelna strukture."
+            f"Przeanalizuj ten dokument i wyodrebnij pelna strukture z pelna oryginalna trescia."
         )
 
         result = await self._call_llm(
-            system=SYSTEM_PROMPT_DOCUMENT_IMPORT,
+            system=system_prompt,
             user_message=prompt,
             action_type="DOCUMENT_IMPORT",
             user_id=user_id,
@@ -985,15 +987,17 @@ class AIService:
     ) -> dict:
         """Analyze continuation chunk of document."""
         self._require_ai()
+        from app.services.ai_prompts import get_prompt
+        system_prompt = await get_prompt(self.session, "document_import_continuation")
 
         prompt = (
             f"Dotychczas wyodrebnione wezly (ostatnie):\n{previous_nodes_summary}\n\n"
             f"Kontynuacja tekstu dokumentu:\n{document_text}\n\n"
-            f"Kontynuuj wyodrebnianie struktury."
+            f"Kontynuuj wyodrebnianie struktury z pelna oryginalna trescia."
         )
 
         result = await self._call_llm(
-            system=SYSTEM_PROMPT_DOCUMENT_IMPORT_CONTINUATION,
+            system=system_prompt,
             user_message=prompt,
             action_type="DOCUMENT_IMPORT",
             user_id=user_id,

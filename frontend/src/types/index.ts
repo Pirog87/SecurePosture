@@ -851,6 +851,7 @@ export interface FrameworkNodeTree {
   name_pl: string | null;
   description: string | null;
   description_pl: string | null;
+  content: string | null;
   depth: number;
   order_id: number;
   assessable: boolean;

@@ -26,7 +26,7 @@ from app.models.dictionary import DictionaryEntry
 from app.models.framework import (
     AssessmentDimension, DimensionLevel, Framework, FrameworkNode,
     FrameworkNodeSecurityArea, FrameworkVersionHistory, FrameworkOrgUnit,
-    FrameworkReview, LIFECYCLE_STATUSES,
+    FrameworkReview, DocumentMetrics, FrameworkAttachment, LIFECYCLE_STATUSES,
 )
 from app.models.org_unit import OrgUnit
 from app.models.security_area import SecurityDomain
@@ -1219,6 +1219,7 @@ async def import_from_ai(
             ref_id = str(nd.get("ref_id", "")).strip() or None
             name = (nd.get("name") or ref_id or f"Węzeł {idx + 1}")[:500]
             description = nd.get("description")
+            content = nd.get("content")  # full verbatim text
             depth = nd.get("depth", 1)
             assessable = bool(nd.get("assessable", False))
 
@@ -1228,6 +1229,7 @@ async def import_from_ai(
                 ref_id=ref_id,
                 name=name,
                 description=description,
+                content=content,
                 depth=depth,
                 order_id=idx + 1,
                 assessable=assessable,
@@ -1270,6 +1272,29 @@ async def import_from_ai(
         fw.total_assessable = total_assessable
         fw.edit_version = 1
 
+        # Save document metrics if extracted by AI
+        metrics_data = fw_meta.get("metrics")
+        if metrics_data and isinstance(metrics_data, dict):
+            dm = DocumentMetrics(
+                framework_id=fw.id,
+                change_history=metrics_data.get("change_history"),
+                responsibilities=metrics_data.get("responsibilities"),
+                implementation_date=metrics_data.get("implementation_date"),
+                implementation_method=metrics_data.get("implementation_method"),
+                verification_date=metrics_data.get("verification_date"),
+                effective_date=metrics_data.get("effective_date"),
+                distribution_responsible=metrics_data.get("distribution_responsible"),
+                distribution_date=metrics_data.get("distribution_date"),
+                distribution_list=metrics_data.get("distribution_list"),
+                notification_method=metrics_data.get("notification_method"),
+                access_level=metrics_data.get("access_level"),
+                classification=metrics_data.get("classification"),
+                additional_permissions=metrics_data.get("additional_permissions"),
+                applicable_roles=metrics_data.get("applicable_roles"),
+                management_approved=metrics_data.get("management_approved"),
+            )
+            s.add(dm)
+
         # Version history
         s.add(FrameworkVersionHistory(
             framework_id=fw.id,
@@ -1281,6 +1306,30 @@ async def import_from_ai(
             snapshot_nodes_count=total_nodes,
             snapshot_assessable_count=total_assessable,
         ))
+
+        # Save source file as attachment
+        import os
+        FRAMEWORK_UPLOAD_DIR = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "frameworks"
+        )
+        os.makedirs(FRAMEWORK_UPLOAD_DIR, exist_ok=True)
+        await file.seek(0)
+        file_content = await file.read()
+        ext = os.path.splitext(file.filename or "file")[1]
+        stored_name = f"{fw.id}_{_uuid.uuid4().hex}{ext}"
+        path = os.path.join(FRAMEWORK_UPLOAD_DIR, stored_name)
+        with open(path, "wb") as f:
+            f.write(file_content)
+        att = FrameworkAttachment(
+            framework_id=fw.id,
+            filename=stored_name,
+            original_name=file.filename or "file",
+            file_size=len(file_content),
+            content_type=file.content_type,
+            uploaded_by="ai-import",
+            description="Dokument źródłowy — automatycznie dołączony podczas importu AI",
+        )
+        s.add(att)
 
         await s.commit()
         await s.refresh(fw)
@@ -1850,3 +1899,169 @@ async def adopt_framework(
         if hasattr(out, k):
             setattr(out, k, v)
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Document Metrics (Metryka dokumentu)
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/{fw_id}/metrics", summary="Pobierz metrykę dokumentu")
+async def get_document_metrics(fw_id: int, s: AsyncSession = Depends(get_session)):
+    dm = (await s.execute(
+        select(DocumentMetrics).where(DocumentMetrics.framework_id == fw_id)
+    )).scalar_one_or_none()
+    if not dm:
+        return {"framework_id": fw_id, "exists": False}
+    return {
+        "framework_id": fw_id,
+        "exists": True,
+        "change_history": dm.change_history or [],
+        "responsibilities": dm.responsibilities or [],
+        "implementation_date": dm.implementation_date,
+        "implementation_method": dm.implementation_method,
+        "verification_date": dm.verification_date,
+        "effective_date": dm.effective_date,
+        "distribution_responsible": dm.distribution_responsible,
+        "distribution_date": dm.distribution_date,
+        "distribution_list": dm.distribution_list,
+        "notification_method": dm.notification_method,
+        "access_level": dm.access_level,
+        "classification": dm.classification,
+        "additional_permissions": dm.additional_permissions,
+        "applicable_roles": dm.applicable_roles,
+        "management_approved": dm.management_approved,
+        "extra": dm.extra or {},
+    }
+
+
+@router.put("/{fw_id}/metrics", summary="Zapisz metrykę dokumentu")
+async def save_document_metrics(fw_id: int, body: dict, s: AsyncSession = Depends(get_session)):
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Dokument nie istnieje")
+
+    dm = (await s.execute(
+        select(DocumentMetrics).where(DocumentMetrics.framework_id == fw_id)
+    )).scalar_one_or_none()
+
+    if not dm:
+        dm = DocumentMetrics(framework_id=fw_id)
+        s.add(dm)
+
+    for field in (
+        "change_history", "responsibilities", "implementation_date", "implementation_method",
+        "verification_date", "effective_date", "distribution_responsible", "distribution_date",
+        "distribution_list", "notification_method", "access_level", "classification",
+        "additional_permissions", "applicable_roles", "management_approved", "extra",
+    ):
+        if field in body:
+            setattr(dm, field, body[field])
+
+    dm.updated_at = datetime.utcnow()
+    await s.commit()
+    return {"status": "ok"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Framework Attachments (Załączniki dokumentu)
+# ═══════════════════════════════════════════════════════════════════
+
+import os as _os
+
+FRAMEWORK_UPLOAD_DIR = _os.path.join(
+    _os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))), "uploads", "frameworks"
+)
+
+
+@router.get("/{fw_id}/attachments", summary="Lista załączników dokumentu")
+async def list_attachments(fw_id: int, s: AsyncSession = Depends(get_session)):
+    rows = (await s.execute(
+        select(FrameworkAttachment)
+        .where(FrameworkAttachment.framework_id == fw_id)
+        .order_by(FrameworkAttachment.created_at.desc())
+    )).scalars().all()
+    return [
+        {
+            "id": a.id,
+            "filename": a.filename,
+            "original_name": a.original_name,
+            "file_size": a.file_size,
+            "content_type": a.content_type,
+            "uploaded_by": a.uploaded_by,
+            "description": a.description,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in rows
+    ]
+
+
+@router.post("/{fw_id}/attachments", summary="Dodaj załącznik do dokumentu")
+async def upload_framework_attachment(
+    fw_id: int,
+    file: UploadFile = File(...),
+    s: AsyncSession = Depends(get_session),
+):
+    fw = await s.get(Framework, fw_id)
+    if not fw:
+        raise HTTPException(404, "Dokument nie istnieje")
+
+    _os.makedirs(FRAMEWORK_UPLOAD_DIR, exist_ok=True)
+    ext = _os.path.splitext(file.filename or "file")[1]
+    stored_name = f"{fw_id}_{_uuid.uuid4().hex}{ext}"
+    path = _os.path.join(FRAMEWORK_UPLOAD_DIR, stored_name)
+
+    content = await file.read()
+    with open(path, "wb") as f:
+        f.write(content)
+
+    att = FrameworkAttachment(
+        framework_id=fw_id,
+        filename=stored_name,
+        original_name=file.filename or "file",
+        file_size=len(content),
+        content_type=file.content_type,
+    )
+    s.add(att)
+    await s.commit()
+    await s.refresh(att)
+    return {
+        "id": att.id,
+        "filename": att.filename,
+        "original_name": att.original_name,
+        "file_size": att.file_size,
+        "content_type": att.content_type,
+        "created_at": att.created_at.isoformat() if att.created_at else None,
+    }
+
+
+@router.get("/{fw_id}/attachments/{att_id}/download", summary="Pobierz załącznik")
+async def download_framework_attachment(
+    fw_id: int, att_id: int, s: AsyncSession = Depends(get_session),
+):
+    from starlette.responses import FileResponse
+    att = await s.get(FrameworkAttachment, att_id)
+    if not att or att.framework_id != fw_id:
+        raise HTTPException(404, "Załącznik nie istnieje")
+
+    path = _os.path.join(FRAMEWORK_UPLOAD_DIR, att.filename)
+    if not _os.path.exists(path):
+        raise HTTPException(404, "Plik nie istnieje na dysku")
+
+    return FileResponse(path, filename=att.original_name, media_type=att.content_type or "application/octet-stream")
+
+
+@router.delete("/{fw_id}/attachments/{att_id}", summary="Usuń załącznik")
+async def delete_framework_attachment(
+    fw_id: int, att_id: int, s: AsyncSession = Depends(get_session),
+):
+    att = await s.get(FrameworkAttachment, att_id)
+    if not att or att.framework_id != fw_id:
+        raise HTTPException(404, "Załącznik nie istnieje")
+
+    path = _os.path.join(FRAMEWORK_UPLOAD_DIR, att.filename)
+    if _os.path.exists(path):
+        _os.remove(path)
+
+    await s.delete(att)
+    await s.commit()
+    return {"status": "deleted", "id": att_id}

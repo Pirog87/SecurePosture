@@ -551,6 +551,9 @@ export default function AIConfigPage() {
         </div>
       </div>
 
+      {/* ── AI Prompt Templates ── */}
+      <AIPromptsSection />
+
       {/* ── Usage Stats ── */}
       <div className="card" style={{ marginTop: 4 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -672,6 +675,151 @@ function StatBox({ label, value, color }: { label: string; value: string; color:
     }}>
       <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace", color }}>{value}</div>
       <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════
+   AI Prompts Section — editable per function
+   ═══════════════════════════════════════════════════ */
+interface PromptTemplate {
+  id: number;
+  function_key: string;
+  display_name: string;
+  description: string;
+  prompt_text: string;
+  is_customized: boolean;
+  default_text?: string;
+  updated_by: string | null;
+  updated_at: string | null;
+}
+
+function AIPromptsSection() {
+  const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [defaultText, setDefaultText] = useState("");
+
+  const loadPrompts = useCallback(() => {
+    setLoading(true);
+    fetch(`${API}/api/v1/admin/ai-prompts`).then(r => r.json())
+      .then(setPrompts)
+      .catch(() => setPrompts([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { loadPrompts(); }, [loadPrompts]);
+
+  const handleEdit = async (key: string) => {
+    // Load full prompt with default text
+    try {
+      const res = await fetch(`${API}/api/v1/admin/ai-prompts/${key}`);
+      const data: PromptTemplate = await res.json();
+      setEditText(data.prompt_text);
+      setDefaultText(data.default_text || "");
+      setEditingKey(key);
+    } catch {
+      alert("Nie udało się załadować promptu");
+    }
+  };
+
+  const handleSave = async () => {
+    if (!editingKey) return;
+    setSaving(true);
+    try {
+      await fetch(`${API}/api/v1/admin/ai-prompts/${editingKey}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt_text: editText }),
+      });
+      setEditingKey(null);
+      loadPrompts();
+    } catch {
+      alert("Błąd zapisu promptu");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async (key: string) => {
+    if (!confirm("Przywrócić domyślny prompt? Twoje zmiany zostaną utracone.")) return;
+    try {
+      await fetch(`${API}/api/v1/admin/ai-prompts/${key}/reset`, { method: "POST" });
+      if (editingKey === key) setEditingKey(null);
+      loadPrompts();
+    } catch {
+      alert("Błąd resetowania promptu");
+    }
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 4 }}>
+      <div className="card-title">Prompty AI (edytowalne)</div>
+      <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
+        Każda funkcja AI używa konfigurowalnego promptu systemowego. Możesz je edytować bez zmian w kodzie.
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Ładowanie...</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {prompts.map(p => (
+            <div key={p.function_key} style={{
+              padding: "10px 14px", borderRadius: 8,
+              background: editingKey === p.function_key ? "var(--blue-dim)" : "var(--bg-subtle)",
+              border: `1px solid ${p.is_customized ? "rgba(59,130,246,0.3)" : "transparent"}`,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{p.display_name}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{p.description}</div>
+                  {p.is_customized && (
+                    <span className="score-badge badge-blue" style={{ fontSize: 9, marginTop: 4 }}>Zmodyfikowany</span>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button className="btn btn-sm" onClick={() => editingKey === p.function_key ? setEditingKey(null) : handleEdit(p.function_key)}>
+                    {editingKey === p.function_key ? "Zwiń" : "Edytuj"}
+                  </button>
+                  {p.is_customized && (
+                    <button className="btn btn-sm" style={{ color: "var(--orange)" }} onClick={() => handleReset(p.function_key)}>
+                      Resetuj
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {editingKey === p.function_key && (
+                <div style={{ marginTop: 10 }}>
+                  <textarea
+                    value={editText}
+                    onChange={e => setEditText(e.target.value)}
+                    style={{
+                      width: "100%", minHeight: 200, fontFamily: "'JetBrains Mono',monospace",
+                      fontSize: 12, padding: 10, borderRadius: 6, border: "1px solid var(--border)",
+                      background: "var(--bg)", color: "var(--text)", resize: "vertical",
+                    }}
+                  />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+                    <button className="btn btn-sm" style={{ fontSize: 11, color: "var(--text-muted)" }}
+                      onClick={() => setEditText(defaultText)}>
+                      Wstaw domyślny
+                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn btn-sm" onClick={() => setEditingKey(null)}>Anuluj</button>
+                      <button className="btn btn-sm btn-primary" onClick={handleSave} disabled={saving}>
+                        {saving ? "Zapisuję..." : "Zapisz prompt"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@ Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1-6
 from datetime import datetime, date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_session
@@ -70,10 +70,10 @@ async def _enrich_program(s: AsyncSession, p: AuditProgramV2) -> AuditProgramOut
     # Item stats
     items_q = select(
         func.count().label("total"),
-        func.sum(func.iif(AuditProgramItem.item_status == "completed", 1, 0)).label("completed"),
-        func.sum(func.iif(AuditProgramItem.item_status == "in_progress", 1, 0)).label("in_progress"),
-        func.sum(func.iif(AuditProgramItem.item_status == "planned", 1, 0)).label("planned"),
-        func.sum(func.iif(AuditProgramItem.item_status == "cancelled", 1, 0)).label("cancelled"),
+        func.sum(case((AuditProgramItem.item_status == "completed", 1), else_=0)).label("completed"),
+        func.sum(case((AuditProgramItem.item_status == "in_progress", 1), else_=0)).label("in_progress"),
+        func.sum(case((AuditProgramItem.item_status == "planned", 1), else_=0)).label("planned"),
+        func.sum(case((AuditProgramItem.item_status == "cancelled", 1), else_=0)).label("cancelled"),
     ).where(AuditProgramItem.audit_program_id == p.id)
     row = (await s.execute(items_q)).one_or_none()
     total = row.total if row else 0
@@ -367,10 +367,10 @@ async def create_program(
         ref_id=ref_id,
         **body.model_dump(),
         version=1,
+        version_group_id=0,  # temporary, updated after flush
         status="draft",
         created_by=body.owner_id,
     )
-    # version_group_id will be set after flush (= own id)
     s.add(p)
     await s.flush()
     p.version_group_id = p.id

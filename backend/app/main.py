@@ -44,6 +44,7 @@ from app.routers.audit_program import (
     suppliers_router,
     locations_router,
 )
+from app.routers.audit_program_ai import router as audit_program_ai_router
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -116,6 +117,7 @@ app.include_router(audit_engagements_router)
 app.include_router(framework_mapping_router)
 app.include_router(test_template_router)
 app.include_router(audit_findings_router)
+app.include_router(audit_program_ai_router)
 
 
 # ── Startup: auto-sync AI prompt templates with code defaults ──

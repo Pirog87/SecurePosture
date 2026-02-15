@@ -41,6 +41,8 @@ from app.services.ai_prompts import (
     SYSTEM_PROMPT_TRANSLATE,
     SYSTEM_PROMPT_DOCUMENT_IMPORT,
     SYSTEM_PROMPT_DOCUMENT_IMPORT_CONTINUATION,
+    SYSTEM_PROMPT_AUDIT_PROGRAM_SUGGEST,
+    SYSTEM_PROMPT_AUDIT_PROGRAM_REVIEW,
 )
 
 
@@ -1038,6 +1040,70 @@ class AIService:
             timeout=300,
         )
         return result if isinstance(result, dict) else {"nodes": []}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 14: Audit Program — AI Suggest Items
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def suggest_audit_program_items(
+        self,
+        user_id: int,
+        context: str,
+    ) -> list:
+        """Suggest audit program items based on organizational context."""
+        self._require_feature("audit_program_suggest")
+
+        try:
+            from app.services.ai_prompts import get_prompt
+            system_prompt = await get_prompt(self.session, "audit_program_suggest")
+        except Exception:
+            system_prompt = SYSTEM_PROMPT_AUDIT_PROGRAM_SUGGEST
+
+        result = await self._call_llm(
+            system=system_prompt,
+            user_message=context,
+            action_type="AUDIT_PROGRAM_SUGGEST",
+            user_id=user_id,
+            max_tokens=6000,
+            timeout=120,
+        )
+        if isinstance(result, list):
+            return result
+        if isinstance(result, dict) and "suggestions" in result:
+            return result["suggestions"]
+        return [result] if isinstance(result, dict) else []
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 15: Audit Program — AI Completeness Review
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def review_audit_program_completeness(
+        self,
+        user_id: int,
+        context: str,
+    ) -> dict:
+        """Review audit program completeness and identify gaps/warnings."""
+        self._require_feature("audit_program_review")
+
+        try:
+            from app.services.ai_prompts import get_prompt
+            system_prompt = await get_prompt(self.session, "audit_program_review")
+        except Exception:
+            system_prompt = SYSTEM_PROMPT_AUDIT_PROGRAM_REVIEW
+
+        result = await self._call_llm(
+            system=system_prompt,
+            user_message=context,
+            action_type="AUDIT_PROGRAM_REVIEW",
+            user_id=user_id,
+            max_tokens=6000,
+            timeout=120,
+        )
+        if isinstance(result, dict) and "observations" in result:
+            return result
+        if isinstance(result, list):
+            return {"observations": result}
+        return {"observations": []}
 
 
 async def get_ai_service(session: AsyncSession) -> AIService:

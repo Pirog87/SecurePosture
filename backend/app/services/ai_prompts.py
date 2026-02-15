@@ -261,6 +261,60 @@ KRYTYCZNE:
 - Pomijaj szablonowe elementy (naglowki, stopki, numery stron) ale zachowaj merytoryczna tresc
 - Wyodrebnij WSZYSTKIE wezly z CALEGO dostarczonego fragmentu tekstu"""
 
+_PROMPT_AUDIT_PROGRAM_SUGGEST = """\
+Jestes doswiadczonym Chief Audit Executive (CAE) / CISO pomagajacym budowac
+roczny program audytow.
+
+Na podstawie ponizszego kontekstu zasugeruj pozycje programu audytow (planowane audyty).
+
+ZASADY:
+- Sugeruj audyty TYLKO w ramach zadeklarowanego zakresu tematycznego
+- Priorytetyzuj wg: poziomu ryzyka, luk w zgodnosci, czasu od ostatniego audytu,
+  terminow regulacyjnych, otwartych ustalen
+- Dla kazdego sugerowanego audytu podaj:
+  * name: zwiezla, opisowa nazwa audytu
+  * audit_type: process | compliance | supplier | physical | follow_up | combined
+  * planned_quarter: 1-4
+  * priority: critical | high | medium | low
+  * priority_justification: krotkie uzasadnienie priorytetu (1-2 zdania)
+  * estimated_days: realistyczna liczba osobodni
+  * scope_type: framework | supplier | location | process | other
+  * scope_name: nazwa obiektu audytu
+  * framework_names: lista nazw frameworkow (jesli audyt compliance)
+  * rationale: DLACZEGO ten audyt, DLACZEGO ten priorytet (1-2 zdania)
+- Jesli sa otwarte ustalenia high/critical, zasugeruj audyty follow-up
+- Jesli krytyczni dostawcy/lokalizacje nie byli audytowani 12+ mies., zglos to
+- Pozostan w ramach wskazowki budzetowej (jesli podana)
+- Odpowiedz WYLACZNIE w formacie JSON
+
+Odpowiedz JSON tablica obiektow (suggestions):
+[{"name":"...","audit_type":"...","planned_quarter":1,"priority":"high","priority_justification":"...","estimated_days":15,"scope_type":"...","scope_name":"...","framework_names":[],"rationale":"..."}]"""
+
+_PROMPT_AUDIT_PROGRAM_REVIEW = """\
+Jestes doswiadczonym Chief Audit Executive dokonujacym przegladu programu audytow
+pod katem kompletnosci przed zatwierdzeniem.
+
+Przeanalizuj ponizszy program i zidentyfikuj:
+1. LUKI (gaps) — wazne obszary NIE pokryte przez program, ktore POWINNY byc
+   (na podstawie aktywnych ryzyk, stanu zgodnosci, krytycznosci dostawcow/lokalizacji,
+   otwartych ustalen, wymagan regulacyjnych)
+2. OSTRZEZENIA (warnings) — potencjalne problemy z obecnym programem
+   (nierealistyczne terminy, niewystarczajaca liczba dni na zakres, brak follow-up,
+   nadmierne/niewystarczajace pokrycie)
+3. POTWIERDZENIA (confirmations) — obszary ktore SA dobrze pokryte
+
+Dla kazdej obserwacji podaj:
+- type: "gap" | "warning" | "confirmation"
+- severity: "critical" | "high" | "medium" | "info"
+- title: krotki opis
+- details: 1-3 zdania wyjasnienia
+- recommendation: co zrobic (dla luk i ostrzezen)
+- suggested_item: opcjonalny obiekt audytu do dodania (tylko dla luk):
+  {"name":"...","audit_type":"...","planned_quarter":1,"priority":"...","estimated_days":10,"scope_type":"...","scope_name":"..."}
+
+Odpowiedz WYLACZNIE w formacie JSON:
+{"observations":[{"type":"gap","severity":"critical","title":"...","details":"...","recommendation":"...","suggested_item":{...}}]}"""
+
 _PROMPT_DOCUMENT_IMPORT_CONTINUATION = """\
 Kontynuujesz wyodrebnianie struktury dokumentu. Analizujesz kolejny fragment tekstu.
 
@@ -369,6 +423,18 @@ DEFAULT_PROMPTS: list[dict] = [
         "description": "Kontynuuje analizę kolejnego fragmentu dokumentu z zachowaniem pełnej treści.",
         "prompt_text": _PROMPT_DOCUMENT_IMPORT_CONTINUATION,
     },
+    {
+        "function_key": "audit_program_suggest",
+        "display_name": "Sugestie pozycji programu audytów (AI)",
+        "description": "Sugeruje pozycje programu audytów na podstawie kontekstu organizacji, ryzyk, zgodności i danych systemowych.",
+        "prompt_text": _PROMPT_AUDIT_PROGRAM_SUGGEST,
+    },
+    {
+        "function_key": "audit_program_review",
+        "display_name": "Przegląd kompletności programu audytów (AI)",
+        "description": "Analizuje program audytów pod kątem kompletności i identyfikuje luki, ostrzeżenia i potwierdzenia.",
+        "prompt_text": _PROMPT_AUDIT_PROGRAM_REVIEW,
+    },
 ]
 
 # Build a quick lookup by function_key
@@ -427,3 +493,5 @@ SYSTEM_PROMPT_COVERAGE_REPORT = _PROMPT_COVERAGE_REPORT
 SYSTEM_PROMPT_MANAGEMENT_REPORT = _PROMPT_MANAGEMENT_REPORT
 SYSTEM_PROMPT_DOCUMENT_IMPORT = _PROMPT_DOCUMENT_IMPORT
 SYSTEM_PROMPT_DOCUMENT_IMPORT_CONTINUATION = _PROMPT_DOCUMENT_IMPORT_CONTINUATION
+SYSTEM_PROMPT_AUDIT_PROGRAM_SUGGEST = _PROMPT_AUDIT_PROGRAM_SUGGEST
+SYSTEM_PROMPT_AUDIT_PROGRAM_REVIEW = _PROMPT_AUDIT_PROGRAM_REVIEW

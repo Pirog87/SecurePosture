@@ -802,6 +802,8 @@ async def get_feature_flags(s: AsyncSession = Depends(get_session)):
             "cross_mapping": config.feature_cross_mapping,
             "coverage_report": config.feature_coverage_report,
             "document_import": config.feature_document_import,
+            "audit_program_suggest": config.feature_audit_program_suggest,
+            "audit_program_review": config.feature_audit_program_review,
         },
     )
 

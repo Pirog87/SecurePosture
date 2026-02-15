@@ -72,6 +72,10 @@ REQUIRED_TABLES = [
     "framework_node_ai_cache",
     "ai_provider_config",
     "document_metrics", "framework_attachments", "ai_prompt_templates",
+    # Audit Program V2 (migration 024)
+    "audit_programs_v2", "audit_program_items", "audit_program_change_requests",
+    "audit_program_history", "audit_program_version_diffs",
+    "suppliers", "locations",
     "alembic_version",
 ]
 

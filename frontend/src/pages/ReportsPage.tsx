@@ -122,10 +122,17 @@ export default function ReportsPage() {
       <div className="grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
         <div className="card" style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
-            <span style={{ fontSize: 28 }}>🤖</span>
+            <div style={{ width: 32, height: 32, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: "rgba(124,58,237,0.12)" }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <path d="M9 15l2 2 4-4" />
+              </svg>
+            </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
                 Raport Zarzadczy AI
+                <span style={{ fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 4, background: "rgba(124,58,237,0.15)", color: "#7c3aed" }}>AI</span>
               </div>
               <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.4 }}>
                 Kompleksowy raport dla zarzadu generowany przez AI na podstawie aktualnych danych:
@@ -267,7 +274,12 @@ function AIReportView({ data }: { data: AIReportData }) {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, borderBottom: "2px solid var(--border)", paddingBottom: 16 }}>
         <div>
-          <h3 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#7c3aed" }}>
+          <h3 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#7c3aed", display: "flex", alignItems: "center", gap: 10 }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <path d="M9 15l2 2 4-4" />
+            </svg>
             Raport Zarzadczy — SecurePosture
           </h3>
           <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>

@@ -8,14 +8,14 @@ New tables:
 New columns:
 - framework_nodes.content: Full verbatim text of document section
 
-Revision ID: 021_document_metrics_attachments_prompts
+Revision ID: 021_doc_metrics_att_prompt
 Revises: 020_ai_feature_toggles
 Create Date: 2026-02-15
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "021_document_metrics_attachments_prompts"
+revision = "021_doc_metrics_att_prompt"
 down_revision = "020_ai_feature_toggles"
 
 

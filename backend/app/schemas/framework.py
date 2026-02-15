@@ -250,6 +250,11 @@ class LifecycleChangeRequest(BaseModel):
     )
 
 
+class MetricField(BaseModel):
+    key: str
+    label: str
+    detected: bool
+
 class FrameworkImportResult(BaseModel):
     """Response after importing a framework."""
     framework_id: int
@@ -257,6 +262,8 @@ class FrameworkImportResult(BaseModel):
     total_nodes: int
     total_assessable: int
     dimensions_created: int
+    metrics_detected: bool = False
+    metrics_summary: list[MetricField] = []
 
 
 class FrameworkImportAdoptionRequest(BaseModel):

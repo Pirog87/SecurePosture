@@ -25,7 +25,8 @@
 12. Interfejs użytkownika
 13. Permissions (RBAC)
 14. Seed Data
-15. Sekwencja implementacji
+15. AI jako opcjonalny plugin — 2 use case'y
+16. Sekwencja implementacji
 
 ---
 
@@ -1559,7 +1560,481 @@ def check_program_permission(user, program, action):
 
 ---
 
-## 15. Sekwencja implementacji
+## 15. AI jako opcjonalny plugin — 2 use case'y
+
+### 15.1. Zasada działania
+
+Identycznie jak w pozostałych modułach: AI korzysta z TEGO SAMEGO `ai_provider_config`. Feature toggles:
+
+```sql
+ALTER TABLE ai_provider_config ADD COLUMN IF NOT EXISTS
+    feature_audit_program_suggest  BOOLEAN DEFAULT TRUE;
+ALTER TABLE ai_provider_config ADD COLUMN IF NOT EXISTS
+    feature_audit_program_review   BOOLEAN DEFAULT TRUE;
+```
+
+Rozszerzenie GET `/api/v1/config/features`:
+
+```json
+{
+  "ai_enabled": true,
+  "ai_features": {
+    "audit_program_suggest": true,
+    "audit_program_review": true
+  }
+}
+```
+
+Gdy AI off: ZERO elementów AI w UI programu audytów. System kompletny bez AI.
+
+### 15.2. UC-AP-1: AI-sugerowany program na bazie kontekstu i danych systemowych (MUST HAVE)
+
+#### Problem
+
+CAE/CISO tworzy nowy program audytów. Musi przejrzeć: ryzyka, compliance assessments, otwarte ustalenia, dostawców, lokalizacje, poprzednie programy — i złożyć priorytetyzowaną listę. To 2-4 tygodnie pracy, a dane są rozproszone po wielu modułach systemu.
+
+#### Kluczowe ograniczenie: kontekst programu
+
+Programów w organizacji może być wiele, specjalizowanych:
+
+| Program | Kto tworzy | Zakres | Dane wejściowe AI |
+|---------|-----------|--------|-------------------|
+| Audyt wewnętrzny (risk-based) | CAE | Procesy, systemy, governance | Rejestr ryzyk, poprzednie ustalenia |
+| Audyty zgodności CISO | CISO | ISO 27001, NIS2, DORA, RODO | Compliance assessments, frameworki |
+| Audyty dostawców | CISO / Procurement | Dostawcy krytyczni | Lista dostawców, krytyczność, daty audytów |
+| Audyty lokalizacji | CISO / Facility | DC, biura, magazyny | Lista lokalizacji, krytyczność, daty audytów |
+| Audyty finansowe | CFO / IA | SOX, kontrole finansowe | Odrębny kontekst |
+| Audyty jakości | Quality Manager | ISO 9001, procesy produkcyjne | Odrębny kontekst |
+
+**AI NIE MOŻE zgadywać** jaki to program. Dlatego przed generowaniem sugestii, Owner musi podać kontekst.
+
+#### Trigger
+
+Przycisk **"✨ Zasugeruj pozycje AI"** — widoczny tylko w programie ze statusem `draft`, gdy AI włączone.
+
+#### Krok 1: Dialog kontekstowy (WYMAGANY przed wywołaniem AI)
+
+Owner wypełnia formularz kontekstu:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ ✨ AI: Zasugeruj pozycje programu audytów                      │
+│                                                                 │
+│ Kontekst programu (wymagane):                                   │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ Zakres tematyczny programu: *                               │ │
+│ │ [▼ Wybierz jeden lub więcej]                                │ │
+│ │   ☑ Audyty zgodności (compliance frameworks)                │ │
+│ │   ☐ Audyty procesowe (risk-based)                           │ │
+│ │   ☑ Audyty dostawców                                        │ │
+│ │   ☑ Audyty lokalizacji (bezpieczeństwo fizyczne)            │ │
+│ │   ☐ Audyty follow-up (weryfikacja ustaleń)                  │ │
+│ │   ☐ Inne                                                    │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ Dodatkowy kontekst (opcjonalny, free-text):                     │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ "Jestem CISO. Chcę zaplanować audyty zgodności z ISO 27001 │ │
+│ │  i NIS2 dla całej organizacji, plus audyty kluczowych       │ │
+│ │  dostawców chmury i obu data center. Budżet ~100 osobodni." │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ Uwzględnij dane z systemu:                                      │
+│   ☑ Compliance assessments (aktualny % zgodności per framework)│
+│   ☑ Otwarte audit findings (niezamknięte ustalenia)            │
+│   ☑ Rejestr ryzyk (scenariusze ryzyka high/critical)           │
+│   ☑ Lista dostawców (z krytycznością)                           │
+│   ☑ Lista lokalizacji (z krytycznością)                         │
+│   ☑ Poprzedni program (co było audytowane, kiedy)               │
+│   ☐ Frameworki z datą wejścia w życie                           │
+│                                                                 │
+│                              [Anuluj] [✨ Generuj sugestie]     │
+└────────────────────────────────────────────────────────────────┘
+```
+
+#### Krok 2: Context Builder (backend)
+
+Na bazie wybranych opcji, system buduje kontekst dla AI:
+
+```python
+def build_audit_program_context(
+    program: AuditProgram,
+    scope_themes: list[str],        # ['compliance', 'supplier', 'physical']
+    additional_context: str,         # free-text od usera
+    include_assessments: bool,
+    include_findings: bool,
+    include_risks: bool,
+    include_suppliers: bool,
+    include_locations: bool,
+    include_previous_program: bool,
+    include_frameworks: bool,
+) -> str:
+    """
+    Buduje kontekst tekstowy na potrzeby promptu AI.
+    Zbiera dane z wielu modułów systemu i formatuje je.
+    """
+    context_parts = []
+
+    # Podstawowe info o programie
+    context_parts.append(f"""
+PROGRAM: {program.name}
+Okres: {program.period_start} → {program.period_end}
+Organizacja: {program.org_unit.name if program.org_unit else 'Cała organizacja'}
+Zakres tematyczny: {', '.join(scope_themes)}
+""")
+
+    if additional_context:
+        context_parts.append(f"KONTEKST OD UŻYTKOWNIKA: {additional_context}")
+
+    # Compliance assessments
+    if include_assessments and 'compliance' in scope_themes:
+        assessments = ComplianceAssessment.objects.filter(
+            status='in_progress',
+            org_unit_id=program.org_unit_id
+        ).select_related('framework')
+        if assessments.exists():
+            lines = ["AKTUALNE OCENY ZGODNOŚCI:"]
+            for a in assessments:
+                lines.append(
+                    f"- {a.framework.name}: {a.compliance_score}% "
+                    f"({a.non_compliant_count} niezgodności, "
+                    f"{a.partially_count} częściowo)"
+                )
+            context_parts.append('\n'.join(lines))
+
+    # Otwarte findings
+    if include_findings:
+        findings = AuditFinding.objects.filter(
+            status__in=['open', 'acknowledged', 'in_remediation'],
+            audit_engagement__org_unit_id=program.org_unit_id
+        ).order_by('-severity')[:20]
+        if findings.exists():
+            lines = ["OTWARTE USTALENIA AUDYTOWE:"]
+            for f in findings:
+                lines.append(
+                    f"- [{f.severity.upper()}] {f.title} "
+                    f"(z audytu: {f.audit_engagement.name}, "
+                    f"status: {f.status})"
+                )
+            context_parts.append('\n'.join(lines))
+
+    # Risk scenarios
+    if include_risks:
+        risks = RiskScenario.objects.filter(
+            risk_level__in=['high', 'critical'],
+        ).order_by('-risk_level')[:20]
+        if risks.exists():
+            lines = ["SCENARIUSZE RYZYKA (HIGH/CRITICAL):"]
+            for r in risks:
+                lines.append(f"- [{r.risk_level.upper()}] {r.name}")
+            context_parts.append('\n'.join(lines))
+
+    # Dostawcy
+    if include_suppliers and 'supplier' in scope_themes:
+        suppliers = Supplier.objects.filter(
+            status='active'
+        ).order_by('-criticality')
+        if suppliers.exists():
+            lines = ["AKTYWNI DOSTAWCY:"]
+            for s in suppliers:
+                last_audit = get_last_audit_date(scope_type='supplier', scope_id=s.id)
+                lines.append(
+                    f"- {s.name} (krytyczność: {s.criticality}, "
+                    f"ostatni audyt: {last_audit or 'nigdy'})"
+                )
+            context_parts.append('\n'.join(lines))
+
+    # Lokalizacje
+    if include_locations and 'physical' in scope_themes:
+        locations = Location.objects.filter(
+            status='active'
+        ).order_by('-criticality')
+        if locations.exists():
+            lines = ["AKTYWNE LOKALIZACJE:"]
+            for loc in locations:
+                last_audit = get_last_audit_date(scope_type='location', scope_id=loc.id)
+                lines.append(
+                    f"- {loc.name} ({loc.location_type}, krytyczność: {loc.criticality}, "
+                    f"ostatni audyt: {last_audit or 'nigdy'})"
+                )
+            context_parts.append('\n'.join(lines))
+
+    # Poprzedni program
+    if include_previous_program:
+        prev = get_previous_program(program)
+        if prev:
+            items = AuditProgramItem.objects.filter(audit_program_id=prev.id)
+            lines = [f"POPRZEDNI PROGRAM: {prev.name} ({prev.period_start} → {prev.period_end})"]
+            for item in items:
+                lines.append(
+                    f"- {item.name} ({item.audit_type}, {item.item_status})"
+                )
+            context_parts.append('\n'.join(lines))
+
+    # Frameworki z datą wejścia w życie
+    if include_frameworks and 'compliance' in scope_themes:
+        frameworks = Framework.objects.filter(
+            is_active=True,
+            document_type__in=['regulation', 'standard']
+        )
+        if frameworks.exists():
+            lines = ["AKTYWNE FRAMEWORKI / REGULACJE:"]
+            for fw in frameworks:
+                lines.append(
+                    f"- {fw.name} (typ: {fw.document_type}, "
+                    f"wejście w życie: {fw.effective_date or 'N/A'})"
+                )
+            context_parts.append('\n'.join(lines))
+
+    return '\n\n'.join(context_parts)
+```
+
+#### Krok 3: Prompt template
+
+```
+You are an experienced Chief Audit Executive (CAE) / CISO helping to build
+an annual audit program.
+
+Based on the context below, suggest audit program items (planned audits).
+
+RULES:
+- Only suggest audits within the declared scope themes
+- Prioritize based on: risk level, compliance gaps, time since last audit,
+  regulatory deadlines, open findings
+- For each suggested audit, provide:
+  * name (concise, descriptive)
+  * audit_type (process | compliance | supplier | physical | follow_up | combined)
+  * planned_quarter (1-4)
+  * priority (critical | high | medium | low) with justification
+  * estimated_days (realistic, consider scope complexity)
+  * scope_type and scope_name
+  * framework_names (if compliance audit)
+  * brief rationale (1-2 sentences: WHY this audit, WHY this priority)
+- If there are open high/critical findings, suggest follow-up audits
+- If critical suppliers/locations were not audited in 12+ months, flag them
+- Stay within the budget hint if provided
+- Respond ONLY in JSON array format
+
+CONTEXT:
+{context}
+
+Respond with a JSON array of suggested audit program items.
+```
+
+#### Krok 4: Output → review
+
+AI zwraca JSON → system parsuje → wyświetla jako propozycje do review:
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ ✨ AI zasugerowało 8 pozycji programu                          │
+│                                                                 │
+│ ☑ Q1 | Audyt ISO 27001 — Dział IT          | Compliance | High │
+│   Uzasadnienie: "Compliance score 72%, 5 niezgodności.         │
+│   Ostatni audyt: 14 mies. temu. Priorytet ze względu           │
+│   na zbliżający się audyt certyfikacyjny."                     │
+│   Szacowane dni: 20                                            │
+│                                                                 │
+│ ☑ Q1 | Audyt dostawcy AWS                   | Supplier  | High │
+│   Uzasadnienie: "Krytyczność: critical. Ostatni audyt: nigdy.  │
+│   Dostawca hostuje systemy produkcyjne."                       │
+│   Szacowane dni: 15                                            │
+│                                                                 │
+│ ☑ Q2 | Audyt NIS2 compliance                | Compliance| Crit │
+│   Uzasadnienie: "Nowa regulacja, effective date 2024-10-17.    │
+│   Compliance assessment: 62%. Brak wcześniejszego audytu."     │
+│   Szacowane dni: 25                                            │
+│                                                                 │
+│ ☑ Q2 | Audyt DC Warszawa — bezp. fizyczne   | Physical  | Med  │
+│   ...                                                          │
+│                                                                 │
+│ ☐ Q3 | Follow-up ustaleń High z 2024        | Follow-up | Med  │
+│   ...  (odznaczone = user nie chce tej pozycji)                │
+│                                                                 │
+│ Suma zaznaczonych: 7 audytów, ~115 osobodni                    │
+│                                                                 │
+│                    [Anuluj] [Dodaj zaznaczone do programu]     │
+└────────────────────────────────────────────────────────────────┘
+```
+
+Owner zaznacza/odznacza, modyfikuje, i klika "Dodaj zaznaczone" → pozycje lądują w draft programu jako zwykłe `audit_program_items`.
+
+#### Feature toggle
+
+`ai_provider_config.feature_audit_program_suggest`
+
+### 15.3. UC-AP-2: AI przegląd kompletności programu (MUST HAVE)
+
+#### Problem
+
+Owner stworzył program (ręcznie lub z pomocą AI) i chce go złożyć do zatwierdzenia. Zanim to zrobi, chce upewnić się, że niczego nie pominął — żaden krytyczny dostawca, żadna regulacja, żaden open finding.
+
+#### Trigger
+
+Przycisk **"✨ Sprawdź kompletność AI"** — widoczny w programie ze statusem `draft`, gdy AI włączone. Rekomendowany do użycia PRZED submittem.
+
+#### Krok 1: Context Builder
+
+System automatycznie buduje kontekst:
+- Aktualny program (wszystkie pozycje)
+- Te same źródła danych co UC-AP-1 (assessments, findings, ryzyka, dostawcy, lokalizacje, frameworki, poprzedni program)
+- Różnica: NIE wymaga dialogu kontekstowego — system czyta istniejące pozycje programu i wnioskuje zakres
+
+```python
+def infer_program_scope(program: AuditProgram) -> list[str]:
+    """
+    Na bazie istniejących pozycji programu, wnioskuje zakres tematyczny.
+    """
+    items = AuditProgramItem.objects.filter(audit_program_id=program.id)
+    types = set(item.audit_type for item in items)
+
+    scope = []
+    if 'compliance' in types:
+        scope.append('compliance')
+    if 'process' in types:
+        scope.append('process')
+    if 'supplier' in types:
+        scope.append('supplier')
+    if 'physical' in types:
+        scope.append('physical')
+    if 'follow_up' in types:
+        scope.append('follow_up')
+    return scope
+```
+
+#### Krok 2: Prompt template
+
+```
+You are an experienced Chief Audit Executive reviewing an audit program
+for completeness before approval.
+
+Analyze the program below and identify:
+1. GAPS — important areas NOT covered by the program that SHOULD be
+   (based on active risks, compliance status, supplier/location criticality,
+   open findings, regulatory requirements)
+2. WARNINGS — potential issues with the current program
+   (unrealistic timelines, insufficient days for scope, missing follow-ups,
+   over/under-coverage)
+3. CONFIRMATIONS — areas that ARE well covered
+
+For each observation, provide:
+- type: "gap" | "warning" | "confirmation"
+- severity: "critical" | "high" | "medium" | "info"
+- title: short description
+- details: 1-3 sentences explaining the observation
+- recommendation: what to do about it (for gaps and warnings)
+- related_data: reference to specific risk/finding/supplier/framework
+
+CURRENT PROGRAM:
+{program_items_json}
+
+SYSTEM DATA:
+{context}
+
+Respond ONLY in JSON array format.
+```
+
+#### Krok 3: Output → review
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ ✨ AI: Przegląd kompletności programu                          │
+│ Program: AP-2025-002 Program Audytów CISO 2025 (draft)         │
+│                                                                 │
+│ ── Luki (2) ──────────────────────────────────────────────────│
+│                                                                 │
+│ 🔴 CRITICAL: Brak audytu NIS2                                  │
+│    Framework NIS2 jest aktywny, compliance assessment: 62%.     │
+│    Regulacja obowiązuje od 10/2024. Żadna pozycja programu     │
+│    nie pokrywa NIS2.                                           │
+│    → Rekomendacja: Dodaj audyt NIS2 compliance (Q1-Q2,         │
+│      est. 20-25 dni)                                           │
+│                           [+ Dodaj do programu]                │
+│                                                                 │
+│ 🟡 HIGH: Dostawca AWS (critical) — brak audytu od 14 mies.    │
+│    Amazon Web Services jest klasyfikowany jako critical.        │
+│    Ostatni audyt: 2023-11. Rekomendowany cykl: 12 mies.       │
+│    → Rekomendacja: Dodaj audyt dostawcy AWS (Q2, est. 15 dni) │
+│                           [+ Dodaj do programu]                │
+│                                                                 │
+│ ── Ostrzeżenia (2) ──────────────────────────────────────────│
+│                                                                 │
+│ 🟡 MEDIUM: 3 otwarte findings High bez follow-up              │
+│    Z programu 2024 pozostały 3 ustalenia severity: High        │
+│    w statusie 'in_remediation'. Brak pozycji follow-up.        │
+│    → Rekomendacja: Dodaj follow-up w Q2-Q3                     │
+│                           [+ Dodaj do programu]                │
+│                                                                 │
+│ 🟡 MEDIUM: API-005 (Audyt NIS2) — 10 dni może być             │
+│    niewystarczające                                            │
+│    NIS2 ma 42 wymagania, compliance 62%. Przy takim zakresie   │
+│    rekomendowane minimum to 20 osobodni.                       │
+│    → Rekomendacja: Zwiększ planned_days do 20-25               │
+│                                                                 │
+│ ── Potwierdzone pokrycie (4) ────────────────────────────────│
+│                                                                 │
+│ ✅ INFO: ISO 27001 — pokryty (API-001, Q1, 20 dni)            │
+│ ✅ INFO: DC Warszawa — pokryty (API-004, Q2, 8 dni)           │
+│ ✅ INFO: Dostawca Azure — pokryty (API-010, Q4, 12 dni)       │
+│ ✅ INFO: Budżet 150 dni — realistyczny na 12 audytów          │
+│                                                                 │
+│                                              [Zamknij]         │
+└────────────────────────────────────────────────────────────────┘
+```
+
+Przycisk **"+ Dodaj do programu"** przy każdej luce: AI od razu proponuje gotowy `audit_program_item` na bazie swojej rekomendacji. Owner klika → pozycja trafia do draft.
+
+#### Feature toggle
+
+`ai_provider_config.feature_audit_program_review`
+
+### 15.4. AI Endpoints
+
+```
+POST   /api/v1/ai/audit-program/suggest-items
+       Body: {
+         program_id,
+         scope_themes: ["compliance", "supplier", "physical"],
+         additional_context: "free text...",
+         include_assessments: true,
+         include_findings: true,
+         include_risks: true,
+         include_suppliers: true,
+         include_locations: true,
+         include_previous_program: true,
+         include_frameworks: true
+       }
+       Constraint: program status = 'draft', ai_enabled, feature_audit_program_suggest
+       Response: {suggestions: [{name, audit_type, planned_quarter, priority, ...}, ...]}
+
+POST   /api/v1/ai/audit-program/review-completeness
+       Body: {program_id}
+       Constraint: program status = 'draft', ai_enabled, feature_audit_program_review
+       Response: {observations: [{type, severity, title, details, recommendation, ...}, ...]}
+```
+
+Oba endpointy: HTTP 503 gdy AI niedostępne. Logi w `ai_audit_log`.
+
+### 15.5. UI: warunkowy rendering
+
+```javascript
+const { aiEnabled, aiFeatures } = useFeatureFlags();
+
+// Tylko w draft programu
+{program.status === 'draft' && aiEnabled && aiFeatures.audit_program_suggest && (
+  <AISuggestItemsButton programId={program.id} />
+)}
+
+{program.status === 'draft' && aiEnabled && aiFeatures.audit_program_review && (
+  <AIReviewCompletenessButton programId={program.id} />
+)}
+
+// Gdy AI off: zero buttonów, zero ikon, zero wzmianek
+```
+
+---
+
+## 16. Sekwencja implementacji
 
 ### Faza AP-1: Model i API (1.5 tygodnia)
 
@@ -1606,6 +2081,23 @@ def check_program_permission(user, program, action):
 | AP-2.14 | UI: Suppliers CRUD | AP-1.17 |
 | AP-2.15 | UI: Locations CRUD | AP-1.17 |
 
-**Czas całkowity: ~3 tygodnie**
+**SYSTEM KOMPLETNY I GOTOWY BEZ AI PO FAZIE AP-2 (~3 tygodnie)**
+
+### Faza AP-3: AI Plugin (3-4 dni, OPCJONALNA)
+
+| # | Zadanie | Zależność |
+|---|---------|-----------|
+| AP-3.1 | ALTER `ai_provider_config`: +2 feature toggles | Faza AP-1 |
+| AP-3.2 | Rozszerzenie `/api/v1/config/features` o nowe toggles | AP-3.1 |
+| AP-3.3 | Context Builder: `build_audit_program_context()` | Faza AP-1 |
+| AP-3.4 | UC-AP-1: Prompt template + endpoint `POST /ai/audit-program/suggest-items` | AP-3.3 |
+| AP-3.5 | UC-AP-2: Prompt template + endpoint `POST /ai/audit-program/review-completeness` | AP-3.3 |
+| AP-3.6 | UI: Dialog kontekstowy AI Suggest (multi-select scope, free-text, checkboxy źródeł) | AP-3.4 |
+| AP-3.7 | UI: Panel review sugestii (checkbox list, dodaj zaznaczone) | AP-3.4 |
+| AP-3.8 | UI: Panel przeglądu kompletności (gaps, warnings, confirmations, quick-add) | AP-3.5 |
+| AP-3.9 | UI: Warunkowy rendering (zero AI gdy off) | AP-3.1 |
+| AP-3.10 | Testy: mocks, degradacja, feature flags, 503 when off | AP-3.4, AP-3.5 |
+
+**Czas całkowity: ~3.5 tygodnia** (3 tyg. MVP bez AI + 3-4 dni AI plugin)
 
 Po zakończeniu tego modułu, przechodzimy do **Modułu Audit Engagement** (realizacja audytu: scoping → fieldwork → findings → reporting).

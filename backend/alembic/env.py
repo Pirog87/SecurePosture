@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 from logging.config import fileConfig
+from pathlib import Path
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -16,10 +17,19 @@ from app.models import Base  # noqa: E402
 
 config = context.config
 
-# Override sqlalchemy.url from environment variable (same as app uses)
+# Override sqlalchemy.url — try env var first, then .env file (same as app uses)
 database_url = os.getenv("DATABASE_URL", "")
+if not database_url:
+    env_file = Path(__file__).resolve().parent.parent / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("DATABASE_URL=") and not line.startswith("#"):
+                database_url = line.split("=", 1)[1].strip().strip("'\"")
+                break
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+    # Escape % for ConfigParser interpolation (e.g. %3D in passwords)
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

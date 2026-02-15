@@ -24,8 +24,17 @@ interface InitResult {
   details?: string;
 }
 
+const DRIVER_LABELS: Record<string, string> = {
+  "mysql+asyncmy": "MySQL (asyncmy)",
+  "mysql+aiomysql": "MySQL (aiomysql)",
+  "postgresql+asyncpg": "PostgreSQL (asyncpg)",
+  "sqlite+aiosqlite": "SQLite (aiosqlite)",
+};
+
 export default function DatabaseAdminPage() {
   const [current, setCurrent] = useState<DbConfig | null>(null);
+  const [editing, setEditing] = useState(false);
+
   const [host, setHost] = useState("");
   const [port, setPort] = useState(3306);
   const [database, setDatabase] = useState("");
@@ -52,6 +61,29 @@ export default function DatabaseAdminPage() {
       })
       .catch(() => {});
   }, []);
+
+  const startEditing = () => {
+    if (!confirm("Czy na pewno chcesz edytować parametry połączenia z bazą danych? Nieprawidłowe zmiany mogą uniemożliwić działanie aplikacji.")) return;
+    setEditing(true);
+    setTestResult(null);
+    setInitResult(null);
+    setSaveMsg(null);
+  };
+
+  const cancelEditing = () => {
+    if (current) {
+      setHost(current.host);
+      setPort(current.port);
+      setDatabase(current.database);
+      setUser(current.user);
+      setDriver(current.driver);
+    }
+    setPassword("");
+    setEditing(false);
+    setTestResult(null);
+    setInitResult(null);
+    setSaveMsg(null);
+  };
 
   const handleTest = async () => {
     setTesting(true);
@@ -101,6 +133,9 @@ export default function DatabaseAdminPage() {
       });
       const data = await res.json();
       setSaveMsg(data.message);
+      // Update current after successful save
+      setCurrent({ host, port, database, user, driver, connected: true });
+      setEditing(false);
     } catch {
       setSaveMsg("Błąd zapisu konfiguracji");
     } finally {
@@ -110,6 +145,15 @@ export default function DatabaseAdminPage() {
 
   const isNewDb = host !== current?.host || port !== current?.port || database !== current?.database;
 
+  const fieldStyle = (readOnly: boolean): React.CSSProperties => ({
+    ...(readOnly ? {
+      background: "var(--bg-subtle)",
+      color: "var(--text-secondary)",
+      cursor: "not-allowed",
+      border: "1px solid transparent",
+    } : {}),
+  });
+
   return (
     <div style={{ maxWidth: 720, margin: "0 auto" }}>
       <h2 style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>Konfiguracja bazy danych</h2>
@@ -117,67 +161,151 @@ export default function DatabaseAdminPage() {
         Zarządzaj połączeniem z bazą danych. Możesz podłączyć się do nowej bazy i automatycznie utworzyć schemat.
       </p>
 
-      {/* Current connection info */}
+      {/* Status banner */}
       {current && (
         <div style={{
-          background: "var(--green-dim)", border: "1px solid var(--green)", borderRadius: 8,
+          background: current.connected ? "var(--green-dim)" : "var(--red-dim)",
+          border: `1px solid ${current.connected ? "var(--green)" : "var(--red)"}`,
+          borderRadius: 8,
           padding: "10px 14px", marginBottom: 20, fontSize: 12,
         }}>
           <strong>Aktywne połączenie:</strong> {current.user}@{current.host}:{current.port}/{current.database}
-          <span style={{ marginLeft: 8, color: "var(--green)" }}>Połączono</span>
+          <span style={{ marginLeft: 8, color: current.connected ? "var(--green)" : "var(--red)" }}>
+            {current.connected ? "Połączono" : "Brak połączenia"}
+          </span>
         </div>
       )}
 
-      {/* Connection form */}
+      {/* Connection parameters card */}
       <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>Parametry połączenia</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Parametry połączenia</h3>
+          {!editing ? (
+            <button
+              className="btn btn-secondary"
+              onClick={startEditing}
+              style={{ fontSize: 12, padding: "4px 12px" }}
+            >
+              Edytuj
+            </button>
+          ) : (
+            <button
+              className="btn btn-secondary"
+              onClick={cancelEditing}
+              style={{ fontSize: 12, padding: "4px 12px" }}
+            >
+              Anuluj
+            </button>
+          )}
+        </div>
+
+        {!editing && (
+          <div style={{
+            background: "var(--bg-subtle)", borderRadius: 6,
+            padding: "6px 10px", marginBottom: 14,
+            fontSize: 11, color: "var(--text-muted)",
+          }}>
+            Pola są zablokowane. Kliknij „Edytuj" aby zmienić parametry połączenia.
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div className="form-group">
             <label>Host (IP / hostname)</label>
-            <input className="form-control" value={host} onChange={e => setHost(e.target.value)}
-                   placeholder="192.168.1.100" />
+            <input
+              className="form-control"
+              value={host}
+              onChange={e => setHost(e.target.value)}
+              placeholder="192.168.1.100"
+              readOnly={!editing}
+              style={fieldStyle(!editing)}
+            />
           </div>
           <div className="form-group">
             <label>Port</label>
-            <input className="form-control" type="number" value={port}
-                   onChange={e => setPort(Number(e.target.value))} />
+            <input
+              className="form-control"
+              type="number"
+              value={port}
+              onChange={e => setPort(Number(e.target.value))}
+              readOnly={!editing}
+              style={fieldStyle(!editing)}
+            />
           </div>
           <div className="form-group">
             <label>Nazwa bazy danych</label>
-            <input className="form-control" value={database} onChange={e => setDatabase(e.target.value)}
-                   placeholder="secureposture" />
+            <input
+              className="form-control"
+              value={database}
+              onChange={e => setDatabase(e.target.value)}
+              placeholder="secureposture"
+              readOnly={!editing}
+              style={fieldStyle(!editing)}
+            />
           </div>
           <div className="form-group">
             <label>Sterownik</label>
-            <select className="form-control" value={driver} onChange={e => setDriver(e.target.value)}>
-              <option value="mysql+asyncmy">MySQL (asyncmy)</option>
-              <option value="mysql+aiomysql">MySQL (aiomysql)</option>
-              <option value="postgresql+asyncpg">PostgreSQL (asyncpg)</option>
-              <option value="sqlite+aiosqlite">SQLite (aiosqlite)</option>
-            </select>
+            {editing ? (
+              <select className="form-control" value={driver} onChange={e => setDriver(e.target.value)}>
+                <option value="mysql+asyncmy">MySQL (asyncmy)</option>
+                <option value="mysql+aiomysql">MySQL (aiomysql)</option>
+                <option value="postgresql+asyncpg">PostgreSQL (asyncpg)</option>
+                <option value="sqlite+aiosqlite">SQLite (aiosqlite)</option>
+              </select>
+            ) : (
+              <input
+                className="form-control"
+                value={DRIVER_LABELS[driver] || driver}
+                readOnly
+                style={fieldStyle(true)}
+              />
+            )}
           </div>
           <div className="form-group">
             <label>Użytkownik</label>
-            <input className="form-control" value={user} onChange={e => setUser(e.target.value)}
-                   placeholder="root" />
+            <input
+              className="form-control"
+              value={user}
+              onChange={e => setUser(e.target.value)}
+              placeholder="root"
+              readOnly={!editing}
+              style={fieldStyle(!editing)}
+            />
           </div>
           <div className="form-group">
             <label>Hasło</label>
-            <input className="form-control" type="password" value={password}
-                   onChange={e => setPassword(e.target.value)} placeholder="Hasło do bazy" />
+            {editing ? (
+              <input
+                className="form-control"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="Nowe hasło do bazy"
+              />
+            ) : (
+              <input
+                className="form-control"
+                type="password"
+                value="********"
+                readOnly
+                style={fieldStyle(true)}
+              />
+            )}
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-          <button className="btn btn-primary" onClick={handleTest} disabled={testing || !host || !database || !user}>
-            {testing ? "Testowanie..." : "Testuj połączenie"}
-          </button>
-        </div>
+        {/* Action buttons — only in edit mode */}
+        {editing && (
+          <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+            <button className="btn btn-primary" onClick={handleTest} disabled={testing || !host || !database || !user}>
+              {testing ? "Testowanie..." : "Testuj połączenie"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Test result */}
-      {testResult && (
+      {editing && testResult && (
         <div className="card" style={{
           padding: "12px 16px", marginBottom: 16,
           background: testResult.status === "ok" ? "var(--green-dim)" : "var(--red-dim)",
@@ -200,7 +328,7 @@ export default function DatabaseAdminPage() {
       )}
 
       {/* Schema initialization */}
-      {testResult?.status === "ok" && (
+      {editing && testResult?.status === "ok" && (
         <div className="card" style={{ padding: 20, marginBottom: 16 }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Inicjalizacja schematu</h3>
           <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
@@ -231,7 +359,7 @@ export default function DatabaseAdminPage() {
       )}
 
       {/* Save config */}
-      {testResult?.status === "ok" && isNewDb && (
+      {editing && testResult?.status === "ok" && isNewDb && (
         <div className="card" style={{ padding: 20, marginBottom: 16 }}>
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Zapisz konfigurację</h3>
           <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>

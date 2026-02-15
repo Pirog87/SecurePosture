@@ -1,6 +1,6 @@
 """
-Audit Program CRUD + lifecycle + items + suppliers + locations.
-Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1 + Krok 2 (state machine)
+Audit Program CRUD + lifecycle + items + suppliers + locations + version diffs.
+Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1-4
 """
 from datetime import datetime
 
@@ -13,6 +13,7 @@ from app.models.audit_program import (
     AuditProgramV2,
     AuditProgramItem,
     AuditProgramHistory,
+    AuditProgramVersionDiff,
     Supplier,
     Location,
 )
@@ -172,6 +173,131 @@ async def _log(s: AsyncSession, program_id: int, entity_type: str, entity_id: in
         performed_by=user_id,
     )
     s.add(entry)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Version Diff generation (Krok 4)
+# ═══════════════════════════════════════════════════════════════
+
+# Fields compared at program level
+_PROGRAM_DIFF_FIELDS = [
+    "name", "description", "period_type", "period_start", "period_end", "year",
+    "strategic_objectives", "risks_and_opportunities", "scope_description",
+    "audit_criteria", "methods", "risk_assessment_ref",
+    "budget_planned_days", "budget_planned_cost", "budget_currency",
+    "owner_id", "approver_id", "org_unit_id",
+]
+
+# Fields compared at item level
+_ITEM_DIFF_FIELDS = [
+    "name", "description", "audit_type", "planned_quarter", "planned_month",
+    "planned_start", "planned_end", "scope_type", "scope_name",
+    "planned_days", "planned_cost", "priority", "risk_rating",
+    "lead_auditor_id", "audit_method", "display_order",
+]
+
+
+def _serialize(val: object) -> str | None:
+    """Normalize a value to a comparable string."""
+    if val is None:
+        return None
+    if hasattr(val, "isoformat"):
+        return val.isoformat()
+    return str(val)
+
+
+async def generate_version_diff(
+    s: AsyncSession,
+    from_program: AuditProgramV2,
+    to_program: AuditProgramV2,
+) -> AuditProgramVersionDiff:
+    """Compare two program versions field-by-field and item-by-item, save diff record."""
+
+    # 1. Compare program-level fields
+    program_field_changes: dict[str, dict[str, str | None]] = {}
+    for field in _PROGRAM_DIFF_FIELDS:
+        old_val = _serialize(getattr(from_program, field))
+        new_val = _serialize(getattr(to_program, field))
+        if old_val != new_val:
+            program_field_changes[field] = {"from": old_val, "to": new_val}
+
+    # 2. Load items for both versions
+    from_items_q = select(AuditProgramItem).where(
+        AuditProgramItem.audit_program_id == from_program.id,
+    ).order_by(AuditProgramItem.display_order)
+    from_items = list((await s.execute(from_items_q)).scalars().all())
+
+    to_items_q = select(AuditProgramItem).where(
+        AuditProgramItem.audit_program_id == to_program.id,
+    ).order_by(AuditProgramItem.display_order)
+    to_items = list((await s.execute(to_items_q)).scalars().all())
+
+    # Index by ref_id for matching
+    from_map = {it.ref_id: it for it in from_items if it.ref_id}
+    to_map = {it.ref_id: it for it in to_items if it.ref_id}
+
+    items_added: list[dict] = []
+    items_removed: list[dict] = []
+    items_modified: list[dict] = []
+    items_unchanged = 0
+
+    # Items in to_version but not in from_version → added
+    for ref_id, item in to_map.items():
+        if ref_id not in from_map:
+            items_added.append({"ref_id": ref_id, "name": item.name, "audit_type": item.audit_type})
+
+    # Items in from_version but not in to_version → removed
+    for ref_id, item in from_map.items():
+        if ref_id not in to_map:
+            items_removed.append({"ref_id": ref_id, "name": item.name, "audit_type": item.audit_type})
+
+    # Items in both → compare fields
+    for ref_id in from_map:
+        if ref_id not in to_map:
+            continue
+        old_item = from_map[ref_id]
+        new_item = to_map[ref_id]
+        changes: dict[str, dict[str, str | None]] = {}
+        for field in _ITEM_DIFF_FIELDS:
+            old_val = _serialize(getattr(old_item, field))
+            new_val = _serialize(getattr(new_item, field))
+            if old_val != new_val:
+                changes[field] = {"from": old_val, "to": new_val}
+        if changes:
+            items_modified.append({"ref_id": ref_id, "name": new_item.name, "changes": changes})
+        else:
+            items_unchanged += 1
+
+    # 3. Build human-readable summary
+    parts: list[str] = []
+    if program_field_changes:
+        parts.append(f"Zmieniono {len(program_field_changes)} pol programu")
+    if items_added:
+        parts.append(f"Dodano {len(items_added)} pozycji")
+    if items_removed:
+        parts.append(f"Usunieto {len(items_removed)} pozycji")
+    if items_modified:
+        parts.append(f"Zmodyfikowano {len(items_modified)} pozycji")
+    if items_unchanged:
+        parts.append(f"{items_unchanged} pozycji bez zmian")
+    summary = ". ".join(parts) + "." if parts else "Brak zmian."
+
+    # 4. Persist
+    diff = AuditProgramVersionDiff(
+        version_group_id=from_program.version_group_id,
+        from_version_id=from_program.id,
+        to_version_id=to_program.id,
+        from_version=from_program.version,
+        to_version=to_program.version,
+        program_field_changes=program_field_changes,
+        items_added=items_added,
+        items_removed=items_removed,
+        items_modified=items_modified,
+        items_unchanged=items_unchanged,
+        summary=summary,
+    )
+    s.add(diff)
+    return diff
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -390,6 +516,13 @@ async def approve_program(
                f"Zatwierdzono program '{p.name}' v{p.version}",
                user_id=p.approver_id,
                justification=body.approval_justification)
+
+    # Krok 4: Auto-generate version diff for corrections (v2+)
+    if p.version > 1 and p.previous_version_id:
+        prev = await s.get(AuditProgramV2, p.previous_version_id)
+        if prev:
+            await generate_version_diff(s, prev, p)
+
     await s.commit()
     await s.refresh(p)
     return await _enrich_program(s, p)
@@ -609,6 +742,39 @@ async def list_versions(program_id: int, s: AsyncSession = Depends(get_session))
             "created_at": v.created_at.isoformat() if v.created_at else None,
         }
         for v in rows
+    ]
+
+
+# ── Version diffs (Krok 4) ──
+@programs_router.get("/{program_id}/diffs")
+async def list_diffs(program_id: int, s: AsyncSession = Depends(get_session)):
+    """List all version diffs for a program (by version_group_id)."""
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+
+    q = (
+        select(AuditProgramVersionDiff)
+        .where(AuditProgramVersionDiff.version_group_id == p.version_group_id)
+        .order_by(AuditProgramVersionDiff.to_version.desc())
+    )
+    rows = (await s.execute(q)).scalars().all()
+    return [
+        {
+            "id": d.id,
+            "from_version_id": d.from_version_id,
+            "to_version_id": d.to_version_id,
+            "from_version": d.from_version,
+            "to_version": d.to_version,
+            "program_field_changes": d.program_field_changes,
+            "items_added": d.items_added,
+            "items_removed": d.items_removed,
+            "items_modified": d.items_modified,
+            "items_unchanged": d.items_unchanged,
+            "summary": d.summary,
+            "generated_at": d.generated_at.isoformat() if d.generated_at else None,
+        }
+        for d in rows
     ]
 
 

@@ -72,6 +72,21 @@ interface ProgramItem {
   created_at: string;
 }
 
+interface VersionDiff {
+  id: number;
+  from_version_id: number;
+  to_version_id: number;
+  from_version: number;
+  to_version: number;
+  program_field_changes: Record<string, { from: string | null; to: string | null }>;
+  items_added: { ref_id: string; name: string; audit_type: string }[];
+  items_removed: { ref_id: string; name: string; audit_type: string }[];
+  items_modified: { ref_id: string; name: string; changes: Record<string, { from: string | null; to: string | null }> }[];
+  items_unchanged: number;
+  summary: string;
+  generated_at: string | null;
+}
+
 interface UserOption {
   id: number;
   display_name: string;
@@ -141,6 +156,24 @@ const METHOD_LABELS: Record<string, string> = {
   remote: "Zdalnie",
   hybrid: "Hybrydowo",
   document_review: "Przeglad dokumentow",
+};
+
+const FIELD_LABELS: Record<string, string> = {
+  name: "Nazwa", description: "Opis", period_type: "Typ okresu",
+  period_start: "Okres od", period_end: "Okres do", year: "Rok",
+  strategic_objectives: "Cele strategiczne", risks_and_opportunities: "Ryzyka i szanse",
+  scope_description: "Zakres", audit_criteria: "Kryteria audytu",
+  methods: "Metody", risk_assessment_ref: "Ref. oceny ryzyka",
+  budget_planned_days: "Budzet (dni)", budget_planned_cost: "Budzet (koszt)",
+  budget_currency: "Waluta", owner_id: "Wlasciciel (ID)", approver_id: "Zatwierdzajacy (ID)",
+  org_unit_id: "Jedn. org. (ID)", audit_type: "Typ audytu",
+  planned_quarter: "Kwartal", planned_month: "Miesiac",
+  planned_start: "Data od", planned_end: "Data do",
+  scope_type: "Typ zakresu", scope_name: "Nazwa zakresu",
+  planned_days: "Osobodni", planned_cost: "Koszt",
+  priority: "Priorytet", risk_rating: "Ocena ryzyka",
+  lead_auditor_id: "Audytor wiodacy (ID)", audit_method: "Metoda",
+  display_order: "Kolejnosc",
 };
 
 function SectionHeader({ number, label }: { number: string; label: string }) {
@@ -215,8 +248,10 @@ export default function AuditProgramsPage() {
   const [correctionReason, setCorrectionReason] = useState("");
   const [workflowBusy, setWorkflowBusy] = useState(false);
 
-  // Version history
+  // Version history & diffs
   const [versions, setVersions] = useState<{ id: number; version: number; status: string; is_current_version: boolean; correction_reason: string | null; approved_at: string | null; created_at: string | null }[]>([]);
+  const [diffs, setDiffs] = useState<VersionDiff[]>([]);
+  const [selectedDiff, setSelectedDiff] = useState<VersionDiff | null>(null);
 
   // Lookups
   const [users, setUsers] = useState<UserOption[]>([]);
@@ -253,15 +288,19 @@ export default function AuditProgramsPage() {
       .catch(() => {});
   }, []);
 
-  // Load items + versions when selection changes
+  // Load items + versions + diffs when selection changes
   useEffect(() => {
     if (selected) {
       loadItems(selected.id);
       api.get<typeof versions>(`/api/v1/audit-programs/${selected.id}/versions`)
         .then(setVersions).catch(() => setVersions([]));
+      api.get<VersionDiff[]>(`/api/v1/audit-programs/${selected.id}/diffs`)
+        .then(setDiffs).catch(() => setDiffs([]));
     } else {
       setItems([]);
       setVersions([]);
+      setDiffs([]);
+      setSelectedDiff(null);
     }
   }, [selected?.id]);
 
@@ -676,35 +715,173 @@ export default function AuditProgramsPage() {
               <div style={{ marginTop: 12 }}>
                 <SectionHeader number={"\u2463"} label={`Historia wersji (${versions.length})`} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {versions.map(v => (
-                    <div
-                      key={v.id}
-                      style={{
-                        display: "flex", justifyContent: "space-between", alignItems: "center",
-                        padding: "6px 8px", borderRadius: 4, fontSize: 11,
-                        background: v.id === sel.id ? "rgba(59,130,246,0.1)" : "var(--bg-inset)",
-                        border: v.is_current_version ? "1px solid var(--blue)" : "1px solid transparent",
-                        cursor: v.id !== sel.id ? "pointer" : "default",
-                      }}
-                      onClick={() => {
-                        if (v.id !== sel.id) {
-                          api.get<AuditProgram>(`/api/v1/audit-programs/${v.id}`)
-                            .then(p => setSelected(p))
-                            .catch(() => {});
-                        }
-                      }}
-                    >
-                      <div>
-                        <span style={{ fontWeight: 600, fontFamily: "'JetBrains Mono',monospace" }}>v{v.version}</span>
-                        {v.is_current_version && <span style={{ fontSize: 9, color: "var(--blue)", marginLeft: 4 }}>aktualna</span>}
+                  {versions.map(v => {
+                    const diff = diffs.find(d => d.to_version_id === v.id);
+                    return (
+                      <div
+                        key={v.id}
+                        style={{
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                          padding: "6px 8px", borderRadius: 4, fontSize: 11,
+                          background: v.id === sel.id ? "rgba(59,130,246,0.1)" : "var(--bg-inset)",
+                          border: v.is_current_version ? "1px solid var(--blue)" : "1px solid transparent",
+                          cursor: v.id !== sel.id ? "pointer" : "default",
+                        }}
+                        onClick={() => {
+                          if (v.id !== sel.id) {
+                            api.get<AuditProgram>(`/api/v1/audit-programs/${v.id}`)
+                              .then(p => setSelected(p))
+                              .catch(() => {});
+                          }
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ fontWeight: 600, fontFamily: "'JetBrains Mono',monospace" }}>v{v.version}</span>
+                          {v.is_current_version && <span style={{ fontSize: 9, color: "var(--blue)" }}>aktualna</span>}
+                          {diff && (
+                            <button
+                              className="btn btn-xs"
+                              style={{ fontSize: 9, padding: "0 4px", lineHeight: "16px", marginLeft: 2 }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedDiff(selectedDiff?.id === diff.id ? null : diff);
+                              }}
+                              title={`Porownaj v${diff.from_version} → v${diff.to_version}`}
+                            >
+                              diff
+                            </button>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <Badge label={STATUS_LABELS[v.status] || v.status} color={STATUS_COLORS[v.status] || "#94a3b8"} />
+                          <span style={{ color: "var(--text-muted)" }}>{v.created_at?.slice(0, 10)}</span>
+                        </div>
                       </div>
-                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                        <Badge label={STATUS_LABELS[v.status] || v.status} color={STATUS_COLORS[v.status] || "#94a3b8"} />
-                        <span style={{ color: "var(--text-muted)" }}>{v.created_at?.slice(0, 10)}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+
+                {/* ── Diff Viewer ── */}
+                {selectedDiff && (
+                  <div style={{ marginTop: 8, padding: 10, borderRadius: 6, background: "var(--bg-inset)", border: "1px solid var(--border)", fontSize: 11 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <div style={{ fontWeight: 700, color: "var(--purple)" }}>
+                        Zmiany: v{selectedDiff.from_version} → v{selectedDiff.to_version}
+                      </div>
+                      <button
+                        className="btn btn-xs"
+                        style={{ fontSize: 10, padding: "0 4px" }}
+                        onClick={() => setSelectedDiff(null)}
+                      >
+                        &#10005;
+                      </button>
+                    </div>
+
+                    <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8, fontStyle: "italic" }}>
+                      {selectedDiff.summary}
+                    </div>
+
+                    {/* Program field changes */}
+                    {Object.keys(selectedDiff.program_field_changes).length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--blue)" }}>Pola programu:</div>
+                        {Object.entries(selectedDiff.program_field_changes).map(([field, { from: fromVal, to: toVal }]) => (
+                          <div key={field} style={{ display: "flex", gap: 4, marginBottom: 2, lineHeight: 1.5 }}>
+                            <span style={{ color: "var(--text-muted)", minWidth: 100, flexShrink: 0 }}>
+                              {FIELD_LABELS[field] || field}:
+                            </span>
+                            <span>
+                              <span style={{ textDecoration: "line-through", color: "var(--red)", opacity: 0.7 }}>
+                                {fromVal ?? "(brak)"}
+                              </span>
+                              {" → "}
+                              <span style={{ color: "var(--green)", fontWeight: 500 }}>
+                                {toVal ?? "(brak)"}
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Items added */}
+                    {selectedDiff.items_added.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--green)" }}>
+                          Dodane pozycje ({selectedDiff.items_added.length}):
+                        </div>
+                        {selectedDiff.items_added.map(item => (
+                          <div key={item.ref_id} style={{ paddingLeft: 8, marginBottom: 2 }}>
+                            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>{item.ref_id}</span>
+                            {" "}{item.name}
+                            <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>({AUDIT_TYPE_LABELS[item.audit_type] || item.audit_type})</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Items removed */}
+                    {selectedDiff.items_removed.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--red)" }}>
+                          Usuniete pozycje ({selectedDiff.items_removed.length}):
+                        </div>
+                        {selectedDiff.items_removed.map(item => (
+                          <div key={item.ref_id} style={{ paddingLeft: 8, marginBottom: 2, textDecoration: "line-through", opacity: 0.7 }}>
+                            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10 }}>{item.ref_id}</span>
+                            {" "}{item.name}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Items modified */}
+                    {selectedDiff.items_modified.length > 0 && (
+                      <div style={{ marginBottom: 8 }}>
+                        <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--orange)" }}>
+                          Zmodyfikowane pozycje ({selectedDiff.items_modified.length}):
+                        </div>
+                        {selectedDiff.items_modified.map(item => (
+                          <div key={item.ref_id} style={{ paddingLeft: 8, marginBottom: 6, borderLeft: "2px solid var(--orange)", paddingTop: 2, paddingBottom: 2 }}>
+                            <div style={{ fontWeight: 500 }}>
+                              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>{item.ref_id}</span>
+                              {" "}{item.name}
+                            </div>
+                            {Object.entries(item.changes).map(([field, { from: fv, to: tv }]) => (
+                              <div key={field} style={{ display: "flex", gap: 4, paddingLeft: 8 }}>
+                                <span style={{ color: "var(--text-muted)", minWidth: 90, flexShrink: 0 }}>
+                                  {FIELD_LABELS[field] || field}:
+                                </span>
+                                <span>
+                                  <span style={{ textDecoration: "line-through", color: "var(--red)", opacity: 0.7 }}>
+                                    {fv ?? "(brak)"}
+                                  </span>
+                                  {" → "}
+                                  <span style={{ color: "var(--green)", fontWeight: 500 }}>
+                                    {tv ?? "(brak)"}
+                                  </span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Unchanged count */}
+                    {selectedDiff.items_unchanged > 0 && (
+                      <div style={{ color: "var(--text-muted)", fontStyle: "italic" }}>
+                        {selectedDiff.items_unchanged} pozycji bez zmian
+                      </div>
+                    )}
+
+                    {selectedDiff.generated_at && (
+                      <div style={{ marginTop: 6, fontSize: 10, color: "var(--text-muted)", textAlign: "right" }}>
+                        Wygenerowano: {selectedDiff.generated_at.slice(0, 16).replace("T", " ")}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>

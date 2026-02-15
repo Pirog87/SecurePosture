@@ -1733,55 +1733,82 @@ async def get_ai_prompt(function_key: str, s: AsyncSession = Depends(get_session
     from app.models.smart_catalog import AIPromptTemplate
     from app.services.ai_prompts import DEFAULT_PROMPTS, _DEFAULTS_BY_KEY
 
+    # Helper: build response from default definition
+    def _from_default(entry: dict) -> dict:
+        return {
+            "id": 0,
+            "function_key": entry["function_key"],
+            "display_name": entry["display_name"],
+            "description": entry.get("description", ""),
+            "prompt_text": entry["prompt_text"],
+            "is_customized": False,
+            "default_text": entry["prompt_text"],
+            "updated_by": None,
+            "updated_at": None,
+        }
+
+    # 1. Try DB lookup
+    db_ok = True
     row = None
     try:
         row = (await s.execute(
             select(AIPromptTemplate).where(AIPromptTemplate.function_key == function_key)
         )).scalar_one_or_none()
     except Exception:
-        pass  # table may not exist yet
-
-    # Auto-seed if row missing but we have a default
-    if not row:
-        default_entry = next((p for p in DEFAULT_PROMPTS if p["function_key"] == function_key), None)
-        if not default_entry:
-            raise HTTPException(404, f"Prompt '{function_key}' nie istnieje")
+        db_ok = False
         try:
-            row = AIPromptTemplate(
+            await s.rollback()
+        except Exception:
+            pass
+
+    # 2. Found in DB → return
+    if row:
+        return {
+            "id": row.id,
+            "function_key": row.function_key,
+            "display_name": row.display_name,
+            "description": row.description,
+            "prompt_text": row.prompt_text,
+            "is_customized": row.is_customized,
+            "default_text": _DEFAULTS_BY_KEY.get(function_key, ""),
+            "updated_by": row.updated_by,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+
+    # 3. Not in DB — find default
+    default_entry = next((p for p in DEFAULT_PROMPTS if p["function_key"] == function_key), None)
+    if not default_entry:
+        raise HTTPException(404, f"Prompt '{function_key}' nie istnieje")
+
+    # 4. DB works but row missing → seed it
+    if db_ok:
+        try:
+            new_row = AIPromptTemplate(
                 function_key=default_entry["function_key"],
                 display_name=default_entry["display_name"],
                 description=default_entry.get("description", ""),
                 prompt_text=default_entry["prompt_text"],
                 is_customized=False,
             )
-            s.add(row)
+            s.add(new_row)
             await s.commit()
-            await s.refresh(row)
-        except Exception:
-            # DB not available — return from defaults directly
+            await s.refresh(new_row)
             return {
-                "id": 0,
-                "function_key": function_key,
-                "display_name": default_entry["display_name"],
-                "description": default_entry.get("description", ""),
-                "prompt_text": default_entry["prompt_text"],
-                "is_customized": False,
+                "id": new_row.id,
+                "function_key": new_row.function_key,
+                "display_name": new_row.display_name,
+                "description": new_row.description,
+                "prompt_text": new_row.prompt_text,
+                "is_customized": new_row.is_customized,
                 "default_text": default_entry["prompt_text"],
-                "updated_by": None,
-                "updated_at": None,
+                "updated_by": new_row.updated_by,
+                "updated_at": new_row.updated_at.isoformat() if new_row.updated_at else None,
             }
+        except Exception:
+            pass
 
-    return {
-        "id": row.id,
-        "function_key": row.function_key,
-        "display_name": row.display_name,
-        "description": row.description,
-        "prompt_text": row.prompt_text,
-        "is_customized": row.is_customized,
-        "default_text": _DEFAULTS_BY_KEY.get(function_key, ""),
-        "updated_by": row.updated_by,
-        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-    }
+    # 5. Fallback — return from hardcoded defaults
+    return _from_default(default_entry)
 
 
 @router.put("/api/v1/admin/ai-prompts/{function_key}", summary="Edytuj prompt AI")
@@ -1835,22 +1862,20 @@ async def reset_ai_prompt(function_key: str, s: AsyncSession = Depends(get_sessi
 # ═══════════════════════════════════════════════════════════════════
 
 def _parse_database_url(url: str) -> dict:
-    """Parse DATABASE_URL into components."""
-    import re
-    # mysql+asyncmy://user:pass@host:port/dbname
-    m = re.match(
-        r"(?P<driver>[^:]+)://(?P<user>[^:]*):(?P<password>[^@]*)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<database>\w+)",
-        url,
-    )
-    if not m:
+    """Parse DATABASE_URL into components using urllib (handles encoded passwords etc.)."""
+    from urllib.parse import urlparse, unquote
+
+    try:
+        parsed = urlparse(url)
+        # scheme = "mysql+asyncmy" etc.
+        driver = parsed.scheme or ""
+        host = parsed.hostname or ""
+        port = parsed.port or 3306
+        user = unquote(parsed.username or "")
+        database = parsed.path.lstrip("/") if parsed.path else ""
+        return {"driver": driver, "host": host, "port": int(port), "database": database, "user": user}
+    except Exception:
         return {"driver": "", "host": "", "port": 3306, "database": "", "user": "", "raw": url}
-    return {
-        "driver": m.group("driver"),
-        "host": m.group("host"),
-        "port": int(m.group("port") or 3306),
-        "database": m.group("database"),
-        "user": m.group("user"),
-    }
 
 
 def _build_database_url(host: str, port: int, database: str, user: str, password: str,
@@ -1864,14 +1889,27 @@ def _build_database_url(host: str, port: int, database: str, user: str, password
 async def get_db_config():
     """Return current DB connection info (password masked)."""
     from app.config import settings
-    parsed = _parse_database_url(settings.DATABASE_URL)
+
+    connected = False
+    try:
+        from app.database import check_db_connection
+        connected = await check_db_connection()
+    except Exception:
+        pass
+
+    try:
+        parsed = _parse_database_url(settings.DATABASE_URL)
+    except Exception:
+        parsed = {}
+
     return {
-        "host": parsed.get("host", ""),
+        "host": parsed.get("host", "") or "(nieznany)",
         "port": parsed.get("port", 3306),
-        "database": parsed.get("database", ""),
-        "user": parsed.get("user", ""),
+        "database": parsed.get("database", "") or "(nieznana)",
+        "user": parsed.get("user", "") or "(brak)",
         "driver": parsed.get("driver", "mysql+asyncmy"),
-        "connected": True,
+        "connected": connected,
+        "raw_driver": settings.DATABASE_URL.split("://")[0] if "://" in settings.DATABASE_URL else "",
     }
 
 

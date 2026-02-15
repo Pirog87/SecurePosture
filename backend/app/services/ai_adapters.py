@@ -95,7 +95,13 @@ class AnthropicAdapter(AIAdapter):
             response.raise_for_status()
             data = response.json()
 
-            text = data["content"][0]["text"]
+            content = data.get("content") or []
+            if not content:
+                raise ValueError(
+                    f"Anthropic API zwróciło pustą odpowiedź "
+                    f"(stop_reason={data.get('stop_reason', '?')})"
+                )
+            text = content[0].get("text", "")
             usage = data.get("usage", {})
             tokens_in = usage.get("input_tokens", 0)
             tokens_out = usage.get("output_tokens", 0)
@@ -154,7 +160,13 @@ class OpenAICompatibleAdapter(AIAdapter):
             response.raise_for_status()
             data = response.json()
 
-            text = data["choices"][0]["message"]["content"]
+            choices = data.get("choices") or []
+            if not choices:
+                raise ValueError(
+                    f"OpenAI API zwróciło pustą odpowiedź "
+                    f"(finish_reason=brak choices)"
+                )
+            text = choices[0].get("message", {}).get("content", "")
             usage = data.get("usage", {})
             tokens_in = usage.get("prompt_tokens", 0)
             tokens_out = usage.get("completion_tokens", 0)

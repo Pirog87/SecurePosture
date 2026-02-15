@@ -129,6 +129,7 @@ async def report_risks(
 @router.get("/assets", summary="Raport aktywow (Excel)")
 async def report_assets(
     asset_category_id: int | None = Query(None),
+    org_unit_id: int | None = Query(None),
     s: AsyncSession = Depends(get_session),
 ):
     wb, Font, PatternFill, Alignment, Border, Side = _wb()
@@ -145,6 +146,8 @@ async def report_assets(
     q = select(Asset).where(Asset.is_active.is_(True))
     if asset_category_id:
         q = q.where(Asset.asset_category_id == asset_category_id)
+    if org_unit_id:
+        q = q.where(Asset.org_unit_id == org_unit_id)
     q = q.order_by(Asset.name)
     assets = (await s.execute(q)).scalars().all()
 
@@ -174,36 +177,63 @@ async def report_assets(
 # ═══════════════════ EXECUTIVE REPORT ═══════════════════
 
 @router.get("/executive", summary="Raport Executive Summary (Excel)")
-async def report_executive(s: AsyncSession = Depends(get_session)):
+async def report_executive(
+    org_unit_id: int | None = Query(None),
+    s: AsyncSession = Depends(get_session),
+):
     wb, Font, PatternFill, Alignment, Border, Side = _wb()
+
+    # Resolve org unit name for header
+    org_unit_name = None
+    if org_unit_id:
+        ou = await s.get(OrgUnit, org_unit_id)
+        org_unit_name = ou.name if ou else None
 
     # Sheet 1: Summary
     ws1 = wb.active
     ws1.title = "Podsumowanie"
     title_font = Font(bold=True, size=14, color="1F4E79")
-    ws1.cell(row=1, column=1, value="SecurePosture — Raport Executive Summary").font = title_font
+    title_text = "SecurePosture — Raport Executive Summary"
+    if org_unit_name:
+        title_text += f" — {org_unit_name}"
+    ws1.cell(row=1, column=1, value=title_text).font = title_font
     ws1.cell(row=2, column=1, value=f"Data generacji: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     # KPIs
     ws1.cell(row=4, column=1, value="Kluczowe wskazniki (KPI)").font = Font(bold=True, size=12)
 
+    # Risk base filter
+    risk_base = [Risk.is_active.is_(True)]
+    if org_unit_id:
+        risk_base.append(Risk.org_unit_id == org_unit_id)
+
     # Risk counts
-    total_risks = (await s.execute(select(func.count()).select_from(Risk).where(Risk.is_active.is_(True)))).scalar() or 0
-    high_risks = (await s.execute(select(func.count()).select_from(Risk).where(Risk.is_active.is_(True), Risk.risk_level == "high"))).scalar() or 0
-    medium_risks = (await s.execute(select(func.count()).select_from(Risk).where(Risk.is_active.is_(True), Risk.risk_level == "medium"))).scalar() or 0
-    low_risks = (await s.execute(select(func.count()).select_from(Risk).where(Risk.is_active.is_(True), Risk.risk_level == "low"))).scalar() or 0
+    total_risks = (await s.execute(select(func.count()).select_from(Risk).where(*risk_base))).scalar() or 0
+    high_risks = (await s.execute(select(func.count()).select_from(Risk).where(*risk_base, Risk.risk_level == "high"))).scalar() or 0
+    medium_risks = (await s.execute(select(func.count()).select_from(Risk).where(*risk_base, Risk.risk_level == "medium"))).scalar() or 0
+    low_risks = (await s.execute(select(func.count()).select_from(Risk).where(*risk_base, Risk.risk_level == "low"))).scalar() or 0
+
+    # Asset base filter
+    asset_base = [Asset.is_active.is_(True)]
+    if org_unit_id:
+        asset_base.append(Asset.org_unit_id == org_unit_id)
 
     # Asset counts
-    total_assets = (await s.execute(select(func.count()).select_from(Asset).where(Asset.is_active.is_(True)))).scalar() or 0
-    assets_with_risks = (await s.execute(
-        select(func.count(func.distinct(Risk.asset_id))).where(Risk.is_active.is_(True), Risk.asset_id.isnot(None))
-    )).scalar() or 0
+    total_assets = (await s.execute(select(func.count()).select_from(Asset).where(*asset_base))).scalar() or 0
+    assets_with_risks_q = select(func.count(func.distinct(Risk.asset_id))).where(*risk_base, Risk.asset_id.isnot(None))
+    assets_with_risks = (await s.execute(assets_with_risks_q)).scalar() or 0
 
     # Vulnerability counts
-    open_vulns = (await s.execute(select(func.count()).select_from(VulnerabilityRecord).where(VulnerabilityRecord.is_active.is_(True)))).scalar() or 0
+    vuln_base = [VulnerabilityRecord.is_active.is_(True)]
+    if org_unit_id:
+        vuln_base.append(VulnerabilityRecord.org_unit_id == org_unit_id)
+    open_vulns = (await s.execute(select(func.count()).select_from(VulnerabilityRecord).where(*vuln_base))).scalar() or 0
 
     # Incident counts
-    open_incidents = (await s.execute(select(func.count()).select_from(Incident).where(Incident.is_active.is_(True)))).scalar() or 0
+    inc_base = [Incident.is_active.is_(True)]
+    if org_unit_id:
+        inc_base.append(Incident.org_unit_id == org_unit_id)
+    open_incidents = (await s.execute(select(func.count()).select_from(Incident).where(*inc_base))).scalar() or 0
 
     kpis = [
         ("Ryzyka ogolnie", total_risks),
@@ -223,7 +253,7 @@ async def report_executive(s: AsyncSession = Depends(get_session)):
     ws2 = wb.create_sheet("Ryzyka - Top 20")
     headers = ["ID", "Aktywo", "Jednostka", "Domena", "Ocena (R)", "Poziom", "Status", "Wlasciciel"]
     border = _styled_header(ws2, 1, headers, Font, PatternFill, Alignment, Border, Side)
-    top_q = select(Risk).where(Risk.is_active.is_(True)).order_by(Risk.risk_score.desc()).limit(20)
+    top_q = select(Risk).where(*risk_base).order_by(Risk.risk_score.desc()).limit(20)
     top_risks = (await s.execute(top_q)).scalars().all()
     for i, r in enumerate(top_risks, 2):
         org = await s.get(OrgUnit, r.org_unit_id) if r.org_unit_id else None
@@ -246,9 +276,10 @@ async def report_executive(s: AsyncSession = Depends(get_session)):
         select(AssetCategory.name, func.count(Asset.id))
         .join(Asset, Asset.asset_category_id == AssetCategory.id, isouter=True)
         .where(AssetCategory.is_active.is_(True))
-        .group_by(AssetCategory.id, AssetCategory.name)
-        .order_by(func.count(Asset.id).desc())
     )
+    if org_unit_id:
+        cat_q = cat_q.where(Asset.org_unit_id == org_unit_id)
+    cat_q = cat_q.group_by(AssetCategory.id, AssetCategory.name).order_by(func.count(Asset.id).desc())
     cat_rows = (await s.execute(cat_q)).all()
     for i, (name, count) in enumerate(cat_rows, 2):
         ws3.cell(row=i, column=1, value=name)

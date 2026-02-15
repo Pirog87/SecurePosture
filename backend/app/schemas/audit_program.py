@@ -375,3 +375,8 @@ class CRRejectPayload(BaseModel):
 
 class CRImplementPayload(BaseModel):
     change_request_ids: list[int] | None = None
+
+
+class TransferPayload(BaseModel):
+    target_program_id: int
+    justification: str = Field(..., min_length=5)

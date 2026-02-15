@@ -38,6 +38,7 @@ from app.schemas.audit_program import (
     CRReviewPayload,
     CRRejectPayload,
     CRImplementPayload,
+    TransferPayload,
     SupplierCreate,
     SupplierUpdate,
     SupplierOut,
@@ -1044,6 +1045,142 @@ async def defer_item(
                user_id=p.owner_id)
     await s.commit()
     return {"status": "deferred"}
+
+
+# ── Transfer item between programs (Krok 7) ──
+@items_router.post("/{item_id}/transfer")
+async def transfer_item(
+    item_id: int,
+    body: TransferPayload,
+    s: AsyncSession = Depends(get_session),
+):
+    """Transfer an audit item from one draft program to another draft program."""
+    item = await s.get(AuditProgramItem, item_id)
+    if not item:
+        raise HTTPException(404, "Pozycja nie znaleziona")
+
+    source = await s.get(AuditProgramV2, item.audit_program_id)
+    if not source or source.status != "draft":
+        raise HTTPException(400, "Program zrodlowy musi miec status 'draft'")
+
+    target = await s.get(AuditProgramV2, body.target_program_id)
+    if not target:
+        raise HTTPException(404, "Program docelowy nie znaleziony")
+    if target.status != "draft":
+        raise HTTPException(400, "Program docelowy musi miec status 'draft'")
+    if target.id == source.id:
+        raise HTTPException(400, "Nie mozna transferowac do tego samego programu")
+
+    # 1. Create copy in target
+    new_ref = await _next_item_ref(s, target.id)
+    new_item = AuditProgramItem(
+        audit_program_id=target.id,
+        ref_id=new_ref, name=item.name, description=item.description,
+        audit_type=item.audit_type, planned_quarter=item.planned_quarter,
+        planned_month=item.planned_month, planned_start=item.planned_start,
+        planned_end=item.planned_end, scope_type=item.scope_type,
+        scope_id=item.scope_id, scope_name=item.scope_name,
+        framework_ids=item.framework_ids, criteria_description=item.criteria_description,
+        planned_days=item.planned_days, planned_cost=item.planned_cost,
+        priority=item.priority, risk_rating=item.risk_rating,
+        risk_justification=item.risk_justification,
+        lead_auditor_id=item.lead_auditor_id, auditor_ids=item.auditor_ids,
+        audit_engagement_id=item.audit_engagement_id,
+        item_status="planned", audit_method=item.audit_method,
+    )
+    s.add(new_item)
+    await s.flush()
+
+    # 2. Cancel source item
+    item.item_status = "cancelled"
+    item.cancellation_reason = (
+        f"Przeniesiono do programu {target.ref_id} v{target.version}: {body.justification}"
+    )
+
+    # 3. Log in both programs
+    await _log(
+        s, source.id, "program_item", item.id, "item_transferred_out",
+        f"Pozycja '{item.name}' przeniesiona do {target.ref_id} v{target.version}",
+        user_id=source.owner_id, justification=body.justification,
+    )
+    await _log(
+        s, target.id, "program_item", new_item.id, "item_transferred_in",
+        f"Pozycja '{item.name}' przeniesiona z {source.ref_id} v{source.version}",
+        user_id=source.owner_id, justification=body.justification,
+    )
+
+    await s.commit()
+    return {
+        "status": "transferred",
+        "source_item_id": item.id,
+        "target_item_id": new_item.id,
+        "target_program_id": target.id,
+    }
+
+
+# ── Program statistics (Krok 7) ──
+@programs_router.get("/{program_id}/stats")
+async def get_program_stats(program_id: int, s: AsyncSession = Depends(get_session)):
+    """Return detailed statistics for a program."""
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+
+    items_q = select(AuditProgramItem).where(
+        AuditProgramItem.audit_program_id == program_id,
+    )
+    items_list = (await s.execute(items_q)).scalars().all()
+
+    total = len(items_list)
+    by_status: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    by_quarter: dict[int, int] = {}
+    by_priority: dict[str, int] = {}
+    total_planned_days = 0
+    total_planned_cost = 0
+
+    for item in items_list:
+        by_status[item.item_status] = by_status.get(item.item_status, 0) + 1
+        by_type[item.audit_type] = by_type.get(item.audit_type, 0) + 1
+        if item.planned_quarter:
+            by_quarter[item.planned_quarter] = by_quarter.get(item.planned_quarter, 0) + 1
+        by_priority[item.priority] = by_priority.get(item.priority, 0) + 1
+        if item.planned_days:
+            total_planned_days += float(item.planned_days)
+        if item.planned_cost:
+            total_planned_cost += float(item.planned_cost)
+
+    completed = by_status.get("completed", 0)
+    progress_pct = round((completed / total) * 100, 1) if total > 0 else 0
+
+    budget_days_pct = (
+        round((float(p.budget_actual_days) / float(p.budget_planned_days)) * 100, 1)
+        if p.budget_planned_days and float(p.budget_planned_days) > 0
+        else 0
+    )
+    budget_cost_pct = (
+        round((float(p.budget_actual_cost) / float(p.budget_planned_cost)) * 100, 1)
+        if p.budget_planned_cost and float(p.budget_planned_cost) > 0
+        else 0
+    )
+
+    return {
+        "total_items": total,
+        "by_status": by_status,
+        "by_type": by_type,
+        "by_quarter": by_quarter,
+        "by_priority": by_priority,
+        "progress_pct": progress_pct,
+        "total_planned_days": total_planned_days,
+        "total_planned_cost": total_planned_cost,
+        "budget_planned_days": float(p.budget_planned_days) if p.budget_planned_days else 0,
+        "budget_actual_days": float(p.budget_actual_days) if p.budget_actual_days else 0,
+        "budget_days_pct": budget_days_pct,
+        "budget_planned_cost": float(p.budget_planned_cost) if p.budget_planned_cost else 0,
+        "budget_actual_cost": float(p.budget_actual_cost) if p.budget_actual_cost else 0,
+        "budget_cost_pct": budget_cost_pct,
+        "budget_currency": p.budget_currency,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════

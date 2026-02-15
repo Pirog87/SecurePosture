@@ -34,7 +34,9 @@ interface AuditProgram {
   items_cancelled: number;
   pending_cr_count: number;
   budget_planned_days: number | null;
+  budget_actual_days: number;
   budget_planned_cost: number | null;
+  budget_actual_cost: number;
   budget_currency: string;
   strategic_objectives: string | null;
   scope_description: string | null;
@@ -335,6 +337,12 @@ export default function AuditProgramsPage() {
   const [showCRRejectModal, setShowCRRejectModal] = useState<ChangeRequest | null>(null);
   const [crRejectComment, setCrRejectComment] = useState("");
 
+  // Transfer
+  const [showTransferModal, setShowTransferModal] = useState<ProgramItem | null>(null);
+  const [transferTargetId, setTransferTargetId] = useState<number | null>(null);
+  const [transferJustification, setTransferJustification] = useState("");
+  const [draftPrograms, setDraftPrograms] = useState<AuditProgram[]>([]);
+
   // Lookups
   const [users, setUsers] = useState<UserOption[]>([]);
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
@@ -592,10 +600,38 @@ export default function AuditProgramsPage() {
               <DetailRow label="Jedn. org." value={sel.org_unit_name} />
               <DetailRow label="Okres" value={`${sel.period_start} \u2014 ${sel.period_end}`} />
               {sel.budget_planned_days != null && (
-                <DetailRow label="Budzet (dni)" value={sel.budget_planned_days} />
+                <div>
+                  <DetailRow
+                    label="Budzet (dni)"
+                    value={`${sel.budget_actual_days} / ${sel.budget_planned_days}`}
+                    color={sel.budget_actual_days > Number(sel.budget_planned_days) ? "var(--red)" : undefined}
+                  />
+                  <div style={{ height: 4, borderRadius: 2, background: "var(--bg-inset)", overflow: "hidden", marginTop: 2, marginBottom: 4 }}>
+                    <div style={{
+                      height: "100%", borderRadius: 2,
+                      width: `${Math.min(100, Math.round((sel.budget_actual_days / Number(sel.budget_planned_days)) * 100))}%`,
+                      background: sel.budget_actual_days > Number(sel.budget_planned_days) ? "var(--red)" : "var(--blue)",
+                      transition: "width 0.3s",
+                    }} />
+                  </div>
+                </div>
               )}
               {sel.budget_planned_cost != null && (
-                <DetailRow label="Budzet (koszt)" value={`${sel.budget_planned_cost} ${sel.budget_currency}`} />
+                <div>
+                  <DetailRow
+                    label="Budzet (koszt)"
+                    value={`${sel.budget_actual_cost} / ${sel.budget_planned_cost} ${sel.budget_currency}`}
+                    color={sel.budget_actual_cost > Number(sel.budget_planned_cost) ? "var(--red)" : undefined}
+                  />
+                  <div style={{ height: 4, borderRadius: 2, background: "var(--bg-inset)", overflow: "hidden", marginTop: 2, marginBottom: 4 }}>
+                    <div style={{
+                      height: "100%", borderRadius: 2,
+                      width: `${Math.min(100, Math.round((sel.budget_actual_cost / Number(sel.budget_planned_cost)) * 100))}%`,
+                      background: sel.budget_actual_cost > Number(sel.budget_planned_cost) ? "var(--red)" : "var(--green)",
+                      transition: "width 0.3s",
+                    }} />
+                  </div>
+                </div>
               )}
 
               {sel.scope_description && (
@@ -651,6 +687,26 @@ export default function AuditProgramsPage() {
                         {item.ref_id && <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>{item.ref_id}</span>}
                       </div>
                       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        {/* Transfer button for draft programs */}
+                        {sel.status === "draft" && item.item_status === "planned" && (
+                          <button
+                            className="btn btn-xs"
+                            style={{ fontSize: 10, padding: "1px 6px", color: "var(--orange)" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShowTransferModal(item);
+                              setTransferTargetId(null);
+                              setTransferJustification("");
+                              // Load draft programs for target selection
+                              api.get<AuditProgram[]>("/api/v1/audit-programs?status=draft")
+                                .then(p => setDraftPrograms(p.filter(dp => dp.id !== sel.id)))
+                                .catch(() => setDraftPrograms([]));
+                            }}
+                            title="Transfer do innego programu"
+                          >
+                            Transfer
+                          </button>
+                        )}
                         {/* Item lifecycle buttons for approved/in_execution programs */}
                         {["approved", "in_execution"].includes(sel.status) && item.item_status === "planned" && (
                           <button
@@ -1483,6 +1539,64 @@ export default function AuditProgramsPage() {
               }}
             >
               {workflowBusy ? "Odrzucanie..." : "Odrzuc CR"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Transfer Modal ── */}
+      <Modal open={!!showTransferModal} onClose={() => setShowTransferModal(null)} title={`Transfer: ${showTransferModal?.name ?? ""}`}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 400 }}>
+          <p style={{ fontSize: 13, margin: 0, color: "var(--text-muted)" }}>
+            Przenies pozycje audytu do innego programu w statusie &quot;Szkic&quot;. Pozycja zostanie anulowana w biezacym programie i skopiowana do docelowego.
+          </p>
+          <label style={{ fontSize: 13 }}>
+            Program docelowy *
+            <select
+              className="form-control"
+              value={transferTargetId ?? ""}
+              onChange={e => setTransferTargetId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">-- wybierz program --</option>
+              {draftPrograms.map(dp => (
+                <option key={dp.id} value={dp.id}>{dp.ref_id} — {dp.name} (v{dp.version})</option>
+              ))}
+            </select>
+            {draftPrograms.length === 0 && (
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Brak innych programow w statusie Szkic</span>
+            )}
+          </label>
+          <label style={{ fontSize: 13 }}>
+            Uzasadnienie * (min. 5 znakow)
+            <textarea
+              className="form-control"
+              value={transferJustification}
+              onChange={e => setTransferJustification(e.target.value)}
+              rows={3}
+              placeholder="Dlaczego pozycja ma byc przeniesiona..."
+            />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setShowTransferModal(null)}>Anuluj</button>
+            <button
+              className="btn btn-primary"
+              style={{ background: "var(--orange)", borderColor: "var(--orange)" }}
+              disabled={!transferTargetId || transferJustification.trim().length < 5 || workflowBusy}
+              onClick={async () => {
+                if (!showTransferModal || !transferTargetId) return;
+                setWorkflowBusy(true);
+                try {
+                  await api.post(`/api/v1/audit-program-items/${showTransferModal.id}/transfer`, {
+                    target_program_id: transferTargetId,
+                    justification: transferJustification.trim(),
+                  });
+                  setShowTransferModal(null);
+                  if (sel) { loadItems(sel.id); loadPrograms(); }
+                } catch (err) { alert("Blad transferu: " + err); }
+                finally { setWorkflowBusy(false); }
+              }}
+            >
+              {workflowBusy ? "Transferowanie..." : "Transferuj"}
             </button>
           </div>
         </div>

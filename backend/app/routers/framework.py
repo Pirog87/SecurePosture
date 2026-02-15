@@ -1144,6 +1144,9 @@ async def import_from_ai(
         progress["nodes_found"] = nodes
         progress["percent"] = int(step / total_steps * 100)
 
+    if not chunks:
+        raise HTTPException(400, "Dokument jest pusty lub nie udało się wyekstrahować tekstu.")
+
     try:
         # Pass 1: analyze first chunk — get framework metadata + initial nodes
         _update_progress(0, f"AI analizuje fragment 1/{len(chunks)}...")

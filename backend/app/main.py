@@ -33,11 +33,16 @@ from app.routers.report import router as report_router
 from app.routers.smart_catalog import router as smart_catalog_router
 from app.routers.control_effectiveness import router as control_effectiveness_router
 from app.routers.compliance import router as compliance_router
-from app.routers.audit_workflow import programs as audit_programs_router
 from app.routers.audit_workflow import engagements as audit_engagements_router
 from app.routers.audit_workflow import findings_router as audit_findings_router
 from app.routers.framework_mapping import router as framework_mapping_router
 from app.routers.test_template import router as test_template_router
+from app.routers.audit_program import (
+    programs_router as audit_programs_v2_router,
+    items_router as audit_items_router,
+    suppliers_router,
+    locations_router,
+)
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -101,7 +106,10 @@ app.include_router(report_router)
 app.include_router(smart_catalog_router)
 app.include_router(control_effectiveness_router)
 app.include_router(compliance_router)
-app.include_router(audit_programs_router)
+app.include_router(audit_programs_v2_router)
+app.include_router(audit_items_router)
+app.include_router(suppliers_router)
+app.include_router(locations_router)
 app.include_router(audit_engagements_router)
 app.include_router(framework_mapping_router)
 app.include_router(test_template_router)

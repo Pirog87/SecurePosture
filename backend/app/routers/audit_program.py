@@ -467,6 +467,151 @@ async def archive_program(program_id: int, s: AsyncSession = Depends(get_session
     return await _enrich_program(s, p)
 
 
+# ── T7/T8: approved|in_execution → superseded (initiate correction) ──
+@programs_router.post("/{program_id}/initiate-correction", response_model=AuditProgramOut)
+async def initiate_correction(
+    program_id: int,
+    body: CorrectionPayload,
+    s: AsyncSession = Depends(get_session),
+):
+    """
+    Create a new version (correction) of an approved/in_execution program.
+    1. Validate: program must be 'approved' or 'in_execution'
+    2. Old program → 'superseded', is_current_version = False
+    3. New program → copy with version+1, status='draft', is_current_version = True
+    4. Copy all audit_program_items (preserving engagement links)
+    """
+    original = await s.get(AuditProgramV2, program_id)
+    if not original:
+        raise HTTPException(404, "Program nie znaleziony")
+    if original.status not in ("approved", "in_execution"):
+        raise HTTPException(
+            400,
+            f"Korekta mozliwa tylko dla programu 'approved' lub 'in_execution', aktualny: '{original.status}'",
+        )
+
+    # 1. Supersede the original
+    old_status = original.status
+    _set_status(original, "superseded")
+    original.is_current_version = False
+    original.correction_reason = body.correction_reason
+    original.correction_initiated_at = datetime.utcnow()
+
+    await _log(s, original.id, "program", original.id, "correction_initiated",
+               f"Inicjacja korekty programu '{original.name}' v{original.version}: {body.correction_reason}",
+               user_id=original.owner_id,
+               justification=body.correction_reason)
+
+    # 2. Create new version
+    new_p = AuditProgramV2(
+        ref_id=original.ref_id,
+        name=original.name,
+        description=original.description,
+        version=original.version + 1,
+        version_group_id=original.version_group_id,
+        is_current_version=True,
+        previous_version_id=original.id,
+        period_type=original.period_type,
+        period_start=original.period_start,
+        period_end=original.period_end,
+        year=original.year,
+        strategic_objectives=original.strategic_objectives,
+        risks_and_opportunities=original.risks_and_opportunities,
+        scope_description=original.scope_description,
+        audit_criteria=original.audit_criteria,
+        methods=original.methods,
+        risk_assessment_ref=original.risk_assessment_ref,
+        budget_planned_days=original.budget_planned_days,
+        budget_actual_days=original.budget_actual_days,
+        budget_planned_cost=original.budget_planned_cost,
+        budget_actual_cost=original.budget_actual_cost,
+        budget_currency=original.budget_currency,
+        kpis=original.kpis,
+        previous_program_id=original.previous_program_id,
+        status="draft",
+        owner_id=original.owner_id,
+        approver_id=original.approver_id,
+        org_unit_id=original.org_unit_id,
+        created_by=original.owner_id,
+    )
+    s.add(new_p)
+    await s.flush()  # get new_p.id
+
+    # 3. Copy items
+    items_q = select(AuditProgramItem).where(
+        AuditProgramItem.audit_program_id == original.id,
+    ).order_by(AuditProgramItem.display_order)
+    old_items = (await s.execute(items_q)).scalars().all()
+
+    for idx, oi in enumerate(old_items):
+        new_item = AuditProgramItem(
+            audit_program_id=new_p.id,
+            ref_id=oi.ref_id,
+            name=oi.name,
+            description=oi.description,
+            audit_type=oi.audit_type,
+            planned_quarter=oi.planned_quarter,
+            planned_month=oi.planned_month,
+            planned_start=oi.planned_start,
+            planned_end=oi.planned_end,
+            scope_type=oi.scope_type,
+            scope_id=oi.scope_id,
+            scope_name=oi.scope_name,
+            framework_ids=oi.framework_ids,
+            criteria_description=oi.criteria_description,
+            planned_days=oi.planned_days,
+            planned_cost=oi.planned_cost,
+            priority=oi.priority,
+            risk_rating=oi.risk_rating,
+            risk_justification=oi.risk_justification,
+            lead_auditor_id=oi.lead_auditor_id,
+            auditor_ids=oi.auditor_ids,
+            audit_engagement_id=oi.audit_engagement_id,  # preserve link
+            item_status="planned",  # reset to planned in new version
+            audit_method=oi.audit_method,
+            display_order=idx,
+        )
+        s.add(new_item)
+
+    await _log(s, new_p.id, "program", new_p.id, "version_created",
+               f"Utworzono korekta v{new_p.version} programu '{new_p.name}' "
+               f"(z {old_status} v{original.version})",
+               user_id=original.owner_id,
+               justification=body.correction_reason)
+
+    await s.commit()
+    await s.refresh(new_p)
+    return await _enrich_program(s, new_p)
+
+
+# ── Version history ──
+@programs_router.get("/{program_id}/versions")
+async def list_versions(program_id: int, s: AsyncSession = Depends(get_session)):
+    """List all versions of a program (by version_group_id)."""
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+
+    q = (
+        select(AuditProgramV2)
+        .where(AuditProgramV2.version_group_id == p.version_group_id)
+        .order_by(AuditProgramV2.version.desc())
+    )
+    rows = (await s.execute(q)).scalars().all()
+    return [
+        {
+            "id": v.id,
+            "version": v.version,
+            "status": v.status,
+            "is_current_version": v.is_current_version,
+            "correction_reason": v.correction_reason,
+            "approved_at": v.approved_at.isoformat() if v.approved_at else None,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+        }
+        for v in rows
+    ]
+
+
 # ── T6: approved → in_execution (auto, triggered by item status change) ──
 @items_router.post("/{item_id}/start")
 async def start_item(item_id: int, s: AsyncSession = Depends(get_session)):

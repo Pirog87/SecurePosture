@@ -209,9 +209,14 @@ export default function AuditProgramsPage() {
   // Workflow dialogs
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [approveJustification, setApproveJustification] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
   const [workflowBusy, setWorkflowBusy] = useState(false);
+
+  // Version history
+  const [versions, setVersions] = useState<{ id: number; version: number; status: string; is_current_version: boolean; correction_reason: string | null; approved_at: string | null; created_at: string | null }[]>([]);
 
   // Lookups
   const [users, setUsers] = useState<UserOption[]>([]);
@@ -248,12 +253,15 @@ export default function AuditProgramsPage() {
       .catch(() => {});
   }, []);
 
-  // Load items when selection changes
+  // Load items + versions when selection changes
   useEffect(() => {
     if (selected) {
       loadItems(selected.id);
+      api.get<typeof versions>(`/api/v1/audit-programs/${selected.id}/versions`)
+        .then(setVersions).catch(() => setVersions([]));
     } else {
       setItems([]);
+      setVersions([]);
     }
   }, [selected?.id]);
 
@@ -613,17 +621,29 @@ export default function AuditProgramsPage() {
                 </div>
               )}
 
-              {/* in_execution → complete */}
-              {sel.status === "in_execution" && (
-                <button
-                  className="btn btn-sm btn-primary"
-                  style={{ width: "100%" }}
-                  onClick={() => doWorkflow("complete")}
-                  disabled={workflowBusy}
-                  title="Wszystkie pozycje musza byc zakonczone/anulowane/odroczone"
-                >
-                  Zakoncz program
-                </button>
+              {/* approved/in_execution → initiate correction */}
+              {["approved", "in_execution"].includes(sel.status) && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  {sel.status === "in_execution" && (
+                    <button
+                      className="btn btn-sm btn-primary"
+                      style={{ flex: 1 }}
+                      onClick={() => doWorkflow("complete")}
+                      disabled={workflowBusy}
+                      title="Wszystkie pozycje musza byc zakonczone/anulowane/odroczone"
+                    >
+                      Zakoncz program
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-sm"
+                    style={{ flex: 1, color: "var(--purple)", borderColor: "var(--purple)" }}
+                    onClick={() => { setCorrectionReason(""); setShowCorrectionModal(true); }}
+                    disabled={workflowBusy}
+                  >
+                    Inicjuj korekta
+                  </button>
+                </div>
               )}
 
               {/* completed → archive */}
@@ -650,6 +670,43 @@ export default function AuditProgramsPage() {
                 </div>
               )}
             </div>
+
+            {/* ── Version history ── */}
+            {versions.length > 1 && (
+              <div style={{ marginTop: 12 }}>
+                <SectionHeader number={"\u2463"} label={`Historia wersji (${versions.length})`} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {versions.map(v => (
+                    <div
+                      key={v.id}
+                      style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "6px 8px", borderRadius: 4, fontSize: 11,
+                        background: v.id === sel.id ? "rgba(59,130,246,0.1)" : "var(--bg-inset)",
+                        border: v.is_current_version ? "1px solid var(--blue)" : "1px solid transparent",
+                        cursor: v.id !== sel.id ? "pointer" : "default",
+                      }}
+                      onClick={() => {
+                        if (v.id !== sel.id) {
+                          api.get<AuditProgram>(`/api/v1/audit-programs/${v.id}`)
+                            .then(p => setSelected(p))
+                            .catch(() => {});
+                        }
+                      }}
+                    >
+                      <div>
+                        <span style={{ fontWeight: 600, fontFamily: "'JetBrains Mono',monospace" }}>v{v.version}</span>
+                        {v.is_current_version && <span style={{ fontSize: 9, color: "var(--blue)", marginLeft: 4 }}>aktualna</span>}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <Badge label={STATUS_LABELS[v.status] || v.status} color={STATUS_COLORS[v.status] || "#94a3b8"} />
+                        <span style={{ color: "var(--text-muted)" }}>{v.created_at?.slice(0, 10)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -792,6 +849,56 @@ export default function AuditProgramsPage() {
               }}
             >
               {workflowBusy ? "Zatwierdzanie..." : "Zatwierdz"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Correction Modal ── */}
+      <Modal
+        open={showCorrectionModal}
+        onClose={() => setShowCorrectionModal(false)}
+        title="Inicjacja korekty programu"
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
+            Korekta utworzy nowa wersje (v{(sel?.version ?? 0) + 1}) programu jako kopie w statusie "Szkic".
+            Obecna wersja zostanie oznaczona jako "Zastapiona".
+          </p>
+          <label style={{ fontSize: 13 }}>
+            Uzasadnienie korekty * (min. 10 znakow)
+            <textarea
+              className="form-control"
+              value={correctionReason}
+              onChange={e => setCorrectionReason(e.target.value)}
+              rows={3}
+              placeholder="Opisz powod korekty, np. zmiana zakresu, dodanie nowych audytow..."
+            />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setShowCorrectionModal(false)}>Anuluj</button>
+            <button
+              className="btn btn-primary"
+              style={{ background: "var(--purple)", borderColor: "var(--purple)" }}
+              disabled={correctionReason.trim().length < 10 || workflowBusy}
+              onClick={async () => {
+                setWorkflowBusy(true);
+                try {
+                  const newProg = await api.post<AuditProgram>(
+                    `/api/v1/audit-programs/${sel!.id}/initiate-correction`,
+                    { correction_reason: correctionReason.trim() },
+                  );
+                  setShowCorrectionModal(false);
+                  setSelected(newProg);
+                  load();
+                } catch (err) {
+                  alert("Blad: " + err);
+                } finally {
+                  setWorkflowBusy(false);
+                }
+              }}
+            >
+              {workflowBusy ? "Tworzenie korekty..." : "Utworz korekta"}
             </button>
           </div>
         </div>

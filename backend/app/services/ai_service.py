@@ -966,7 +966,9 @@ class AIService:
         prompt = (
             f"Plik: {filename}\n\n"
             f"Tekst dokumentu:\n{document_text}\n\n"
-            f"Przeanalizuj ten dokument i wyodrebnij pelna strukture z pelna oryginalna trescia."
+            f"Przeanalizuj ten dokument i wyodrebnij pelna strukture. KRYTYCZNE: "
+            f"pole 'content' kazdego wezla MUSI zawierac PELNA oryginalna tresc sekcji "
+            f"skopiowana slowo w slowo z tekstu powyzej. NIE streszczaj, NIE parafrazuj."
         )
 
         result = await self._call_llm(
@@ -974,8 +976,8 @@ class AIService:
             user_message=prompt,
             action_type="DOCUMENT_IMPORT",
             user_id=user_id,
-            max_tokens=16000,
-            timeout=180,
+            max_tokens=32000,
+            timeout=300,
         )
         return result if isinstance(result, dict) else {"framework": {}, "nodes": []}
 
@@ -993,7 +995,8 @@ class AIService:
         prompt = (
             f"Dotychczas wyodrebnione wezly (ostatnie):\n{previous_nodes_summary}\n\n"
             f"Kontynuacja tekstu dokumentu:\n{document_text}\n\n"
-            f"Kontynuuj wyodrebnianie struktury z pelna oryginalna trescia."
+            f"WAZNE: Skopiuj PELNA oryginalna tresc kazdej sekcji do pola 'content'. "
+            f"NIE streszczaj, NIE parafrazuj — kopiuj slowo w slowo z tekstu powyzej."
         )
 
         result = await self._call_llm(
@@ -1001,8 +1004,8 @@ class AIService:
             user_message=prompt,
             action_type="DOCUMENT_IMPORT",
             user_id=user_id,
-            max_tokens=16000,
-            timeout=180,
+            max_tokens=32000,
+            timeout=300,
         )
         return result if isinstance(result, dict) else {"nodes": []}
 

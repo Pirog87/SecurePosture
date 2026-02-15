@@ -150,6 +150,14 @@ export default function FrameworksPage() {
     setImportError(null);
     setAiProgress({ percent: 0, message: "Wysyłanie pliku...", nodes_found: 0 });
 
+    // Protect against page reload during import
+    const beforeUnloadHandler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "Import AI jest w toku. Przeładowanie strony przerwie proces. Kontynuować?";
+      return e.returnValue;
+    };
+    window.addEventListener("beforeunload", beforeUnloadHandler);
+
     const formData = new FormData();
     formData.append("file", file);
 
@@ -202,6 +210,7 @@ export default function FrameworksPage() {
       }
       load();
     } finally {
+      window.removeEventListener("beforeunload", beforeUnloadHandler);
       if (pollTimer) clearInterval(pollTimer);
       setAiImporting(false);
       setTimeout(() => setAiProgress(null), 5000);
@@ -341,6 +350,11 @@ export default function FrameworksPage() {
             />
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{aiProgress.message}</div>
+          {aiProgress.percent < 100 && (
+            <div style={{ fontSize: 11, color: "var(--orange)", marginTop: 6, fontWeight: 500 }}>
+              Nie zamykaj ani nie przeładowuj strony — import zostanie przerwany.
+            </div>
+          )}
         </div>
       )}
 

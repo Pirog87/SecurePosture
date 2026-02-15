@@ -1272,9 +1272,37 @@ async def import_from_ai(
         fw.total_assessable = total_assessable
         fw.edit_version = 1
 
-        # Save document metrics if extracted by AI
+        # Build metrics detection summary (+/-)
+        _METRIC_LABELS = {
+            "change_history": "Historia zmian",
+            "responsibilities": "Odpowiedzialności / akceptacje",
+            "implementation_date": "Data wdrożenia",
+            "implementation_method": "Metoda wdrożenia",
+            "verification_date": "Data weryfikacji",
+            "effective_date": "Data obowiązywania",
+            "distribution_responsible": "Odpowiedzialny za dystrybucję",
+            "distribution_date": "Data dystrybucji",
+            "distribution_list": "Lista dystrybucyjna",
+            "notification_method": "Metoda powiadomienia",
+            "access_level": "Poziom dostępu",
+            "classification": "Klasyfikacja dokumentu",
+            "additional_permissions": "Dodatkowe uprawnienia",
+            "applicable_roles": "Role objęte dokumentem",
+            "management_approved": "Zatwierdzenie kierownictwa",
+        }
         metrics_data = fw_meta.get("metrics")
+        metrics_summary_list = []
+        any_metric_detected = False
+
         if metrics_data and isinstance(metrics_data, dict):
+            for key, label in _METRIC_LABELS.items():
+                val = metrics_data.get(key)
+                detected = val is not None and val != "" and val != []
+                metrics_summary_list.append({"key": key, "label": label, "detected": detected})
+                if detected:
+                    any_metric_detected = True
+
+            # Save document metrics
             dm = DocumentMetrics(
                 framework_id=fw.id,
                 change_history=metrics_data.get("change_history"),
@@ -1294,6 +1322,10 @@ async def import_from_ai(
                 management_approved=metrics_data.get("management_approved"),
             )
             s.add(dm)
+        else:
+            # No metrics object at all — mark everything as not detected
+            for key, label in _METRIC_LABELS.items():
+                metrics_summary_list.append({"key": key, "label": label, "detected": False})
 
         # Version history
         s.add(FrameworkVersionHistory(
@@ -1351,6 +1383,8 @@ async def import_from_ai(
             total_nodes=fw.total_nodes,
             total_assessable=fw.total_assessable,
             dimensions_created=dims_count,
+            metrics_detected=any_metric_detected,
+            metrics_summary=metrics_summary_list,
         )
         resp = JSONResponse(content=result.model_dump())
         resp.headers["X-Import-Task-Id"] = task_id
@@ -1959,6 +1993,17 @@ async def save_document_metrics(fw_id: int, body: dict, s: AsyncSession = Depend
 
     dm.updated_at = datetime.utcnow()
     await s.commit()
+    return {"status": "ok"}
+
+
+@router.delete("/{fw_id}/metrics", summary="Usuń metrykę dokumentu")
+async def delete_document_metrics(fw_id: int, s: AsyncSession = Depends(get_session)):
+    dm = (await s.execute(
+        select(DocumentMetrics).where(DocumentMetrics.framework_id == fw_id)
+    )).scalar_one_or_none()
+    if dm:
+        await s.delete(dm)
+        await s.commit()
     return {"status": "ok"}
 
 

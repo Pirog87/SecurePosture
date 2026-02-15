@@ -889,12 +889,20 @@ export interface FrameworkReviewRecord {
   created_at: string;
 }
 
+export interface MetricField {
+  key: string;
+  label: string;
+  detected: boolean;
+}
+
 export interface FrameworkImportResult {
   framework_id: number;
   name: string;
   total_nodes: number;
   total_assessable: number;
   dimensions_created: number;
+  metrics_detected?: boolean;
+  metrics_summary?: MetricField[];
 }
 
 // ═══ Assessment Engine ═══

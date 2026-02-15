@@ -179,9 +179,9 @@ Jestes ekspertem ds. analizy dokumentow bezpieczenstwa informacji, norm i regula
 
 Wyodrebnij hierarchiczna strukture z tekstu dokumentu. ZACHOWAJ PELNA ORYGINALNA TRESC.
 
-ZASADY:
+ZASADY STRUKTURY:
 1. Zidentyfikuj metadane dokumentu: nazwe, wersje, wydawce, jezyk
-2. Wyodrebnij: rozdzialy, sekcje, podsekcje, wymagania
+2. Wyodrebnij KAZDY rozdzial, sekcje, podsekcje i wymagania — NIE pomijaj zadnej czesci dokumentu
 3. ref_id = numer sekcji z dokumentu (np. "4.1", "A.5.1.1", "Art. 32")
 4. assessable = true TYLKO dla konkretnych wymagan/kontroli (NIE rozdzialy/naglowki)
 5. parent_ref = ref_id rodzica
@@ -190,17 +190,30 @@ ZASADY:
 8. content: PELNA, DOSLOWNA tresc sekcji skopiowana 1:1 z dokumentu, BEZ skracania, BEZ parafrazowania.
    Zachowaj oryginalne sformulowania, interpunkcje i formatowanie.
 
-9. Jesli dokument zawiera METRYKE DOKUMENTU (historia zmian, odpowiedzialnosci, wdrozenie,
-   dystrybucja, poziom dostepu), wyodrebnij ja w polu "metrics" obiektu "framework":
-   - change_history: [{version, date, author, description}]
-   - responsibilities: [{role, name, title, date}]
-   - implementation_date, verification_date, effective_date
-   - distribution_responsible, distribution_date, distribution_list
-   - notification_method, access_level, classification
-   - applicable_roles, management_approved, additional_permissions
+METRYKA DOKUMENTU — OBOWIAZKOWA ANALIZA:
+9. ZAWSZE przeszukaj caly tekst pod katem metryki dokumentu. Szukaj:
+   - Tabeli "Historia zmian" / "Rejestr zmian" / "Wersje dokumentu"
+   - Sekcji "Odpowiedzialnosci" / "Akceptacja" / "Zatwierdzenie" / "Podpisy"
+   - Dat: wdrozenia, weryfikacji, obowiazywania, dystrybucji
+   - Informacji o: dystrybucji, klasyfikacji, poziomie dostepu, rolach
+
+   Wyodrebnij w polu "metrics" obiektu "framework". Dla kazdego pola ustaw:
+   - wartosc jezeli znaleziono w dokumencie
+   - null jezeli NIE znaleziono (pole puste = brak informacji w dokumencie)
+
+   Pola metryki:
+   - change_history: [{version, date, author, description}] | null
+   - responsibilities: [{role, name, title, date}] | null
+   - implementation_date, verification_date, effective_date: string | null
+   - distribution_responsible, distribution_date, distribution_list: string | null
+   - notification_method, access_level, classification: string | null
+   - applicable_roles, management_approved, additional_permissions: string | null
+
+   Dodatkowo dodaj pole "metrics_detected": true/false — czy w dokumencie znaleziono
+   JAKAKOLWIEK informacje metryczna (chocby jedno pole).
 
 WYMAGANY FORMAT — odpowiedz WYLACZNIE tym JSON, BEZ dodatkowego tekstu:
-{"framework":{"name":"...","ref_id":"...","description":"...","version":"...","provider":"...","locale":"pl","metrics":{}},"nodes":[{"ref_id":"4","name":"...","description":"...","content":"pelna tresc sekcji...","depth":1,"parent_ref":null,"assessable":false}]}
+{"framework":{"name":"...","ref_id":"...","description":"...","version":"...","provider":"...","locale":"pl","metrics":{"metrics_detected":true,"change_history":[...],...}},"nodes":[{"ref_id":"4","name":"...","description":"...","content":"pelna tresc sekcji...","depth":1,"parent_ref":null,"assessable":false}]}
 
 KRYTYCZNE:
 - Odpowiedz MUSI zaczynac sie od { i konczyc na }
@@ -208,7 +221,8 @@ KRYTYCZNE:
 - ZERO markdown (bez ```)
 - Pole "content" musi zawierac PELNA oryginalna tresc, NIE streszczenie
 - Nie pomijaj sekcji, zachowaj kolejnosc z dokumentu
-- Pomijaj szablonowe elementy (naglowki, stopki, numery stron) ale zachowaj merytoryczna tresc"""
+- Pomijaj szablonowe elementy (naglowki, stopki, numery stron) ale zachowaj merytoryczna tresc
+- Wyodrebnij WSZYSTKIE wezly z CALEGO dostarczonego fragmentu tekstu"""
 
 _PROMPT_DOCUMENT_IMPORT_CONTINUATION = """\
 Kontynuujesz wyodrebnianie struktury dokumentu. Analizujesz kolejny fragment tekstu.

@@ -578,6 +578,7 @@ export default function FrameworksPage() {
           <AdoptionForm
             frameworkId={adoptFrameworkId}
             documentTypes={documentTypes}
+            importResult={importResult}
             onClose={() => { setShowAdoptModal(false); setAdoptFrameworkId(null); load(); }}
             onAdoptAndOpen={(id) => { setShowAdoptModal(false); navigate(`/frameworks/${id}`); }}
           />
@@ -709,9 +710,10 @@ function CreateDocumentForm({ onClose, onCreate, documentTypes }: {
 }
 
 /* ─── Adoption Form (shown after import) ─── */
-function AdoptionForm({ frameworkId, documentTypes, onClose, onAdoptAndOpen }: {
+function AdoptionForm({ frameworkId, documentTypes, importResult, onClose, onAdoptAndOpen }: {
   frameworkId: number;
   documentTypes: DictionaryEntry[];
+  importResult: FrameworkImportResult | null;
   onClose: () => void;
   onAdoptAndOpen: (id: number) => void;
 }) {
@@ -721,7 +723,12 @@ function AdoptionForm({ frameworkId, documentTypes, onClose, onAdoptAndOpen }: {
   const [owner, setOwner] = useState("");
   const [requiresReview, setRequiresReview] = useState(false);
   const [reviewFrequency, setReviewFrequency] = useState(12);
+  const [importMetrics, setImportMetrics] = useState(true);
   const [loaded, setLoaded] = useState(false);
+
+  const metricsSummary = importResult?.metrics_summary ?? [];
+  const metricsDetected = importResult?.metrics_detected ?? false;
+  const detectedCount = metricsSummary.filter(m => m.detected).length;
 
   useEffect(() => {
     api.get<{ name: string; document_origin: string }>(`/api/v1/frameworks/${frameworkId}`)
@@ -735,6 +742,10 @@ function AdoptionForm({ frameworkId, documentTypes, onClose, onAdoptAndOpen }: {
 
   const handleAdopt = async () => {
     try {
+      // If user unchecked metrics, delete them
+      if (!importMetrics && metricsDetected) {
+        await api.delete(`/api/v1/frameworks/${frameworkId}/metrics`).catch(() => {});
+      }
       await api.put(`/api/v1/frameworks/${frameworkId}/adopt`, {
         name: name || undefined,
         document_type_id: documentTypeId,
@@ -799,6 +810,45 @@ function AdoptionForm({ frameworkId, documentTypes, onClose, onAdoptAndOpen }: {
             </div>
           )}
         </div>
+
+        {/* ── Metrics detection summary (+/-) ── */}
+        {metricsSummary.length > 0 && (
+          <div style={{
+            background: metricsDetected ? "var(--green-dim)" : "var(--bg-inset)",
+            border: `1px solid ${metricsDetected ? "var(--green)" : "var(--border)"}`,
+            borderRadius: 8, padding: "12px 14px",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <strong style={{ fontSize: 13 }}>
+                Metryka dokumentu {metricsDetected
+                  ? <span style={{ color: "var(--green)", fontWeight: 400, fontSize: 12 }}>({detectedCount}/{metricsSummary.length} wykryto)</span>
+                  : <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: 12 }}>(nie wykryto)</span>
+                }
+              </strong>
+              {metricsDetected && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12 }}>
+                  <input type="checkbox" checked={importMetrics} onChange={e => setImportMetrics(e.target.checked)} />
+                  Importuj metryki
+                </label>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 16px", fontSize: 12 }}>
+              {metricsSummary.map(m => (
+                <div key={m.key} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0" }}>
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    width: 18, height: 18, borderRadius: 4, fontSize: 11, fontWeight: 700,
+                    background: m.detected ? "var(--green)" : "var(--bg-subtle)",
+                    color: m.detected ? "#fff" : "var(--text-muted)",
+                  }}>
+                    {m.detected ? "+" : "\u2013"}
+                  </span>
+                  <span style={{ color: m.detected ? "var(--text)" : "var(--text-muted)" }}>{m.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
         <button className="btn" onClick={onClose}>Pomiń (pozostaw szkic)</button>

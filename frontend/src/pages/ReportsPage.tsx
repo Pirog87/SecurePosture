@@ -1,6 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+interface AIReportHistoryItem {
+  id: number;
+  title: string;
+  generated_at: string;
+}
 
 interface ReportDef {
   id: string;
@@ -42,6 +48,17 @@ export default function ReportsPage() {
   const [aiReport, setAiReport] = useState<AIReportData | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiHistory, setAiHistory] = useState<AIReportHistoryItem[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/reports/ai-management/history`);
+      if (res.ok) setAiHistory(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
   const handleGenerate = async (report: ReportDef, formData?: Record<string, string>) => {
     setGenerating(report.id);
@@ -84,10 +101,25 @@ export default function ReportsPage() {
       }
       const data = await res.json();
       setAiReport(data);
+      fetchHistory();
     } catch (err: unknown) {
       setAiError(err instanceof Error ? err.message : String(err));
     } finally {
       setAiLoading(false);
+    }
+  };
+
+  const handleLoadReport = async (id: number) => {
+    setHistoryLoading(true);
+    setAiError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/reports/ai-management/${id}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setAiReport(await res.json());
+    } catch (err: unknown) {
+      setAiError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -123,10 +155,10 @@ export default function ReportsPage() {
         <div className="card" style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
             <div style={{ width: 32, height: 32, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, background: "rgba(124,58,237,0.12)" }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <path d="M9 15l2 2 4-4" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="#7c3aed" stroke="none">
+                <path d="M12 2L14.09 8.26L20 9.27L15.55 13.97L16.91 20L12 16.9L7.09 20L8.45 13.97L4 9.27L9.91 8.26L12 2Z" />
+                <path d="M5 3L5.5 5L7 5.5L5.5 6L5 8L4.5 6L3 5.5L4.5 5L5 3Z" opacity="0.7" />
+                <path d="M19 14L19.5 16L21 16.5L19.5 17L19 19L18.5 17L17 16.5L18.5 16L19 14Z" opacity="0.7" />
               </svg>
             </div>
             <div style={{ flex: 1 }}>
@@ -152,6 +184,29 @@ export default function ReportsPage() {
           </div>
         </div>
       </div>
+
+      {/* Report History */}
+      {aiHistory.length > 0 && (
+        <div className="card no-print" style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
+            Zapisane raporty ({aiHistory.length})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {aiHistory.map(h => (
+              <button
+                key={h.id}
+                className="btn btn-sm"
+                style={{ textAlign: "left", fontSize: 12, padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", opacity: historyLoading ? 0.6 : 1 }}
+                disabled={historyLoading}
+                onClick={() => handleLoadReport(h.id)}
+              >
+                <span>{h.title}</span>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{new Date(h.generated_at).toLocaleString("pl-PL")}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {aiError && (
         <div className="card" style={{ marginTop: 16, borderLeft: "4px solid #ef4444", background: "rgba(239,68,68,0.05)" }}>
@@ -275,10 +330,10 @@ function AIReportView({ data }: { data: AIReportData }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, borderBottom: "2px solid var(--border)", paddingBottom: 16 }}>
         <div>
           <h3 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#7c3aed", display: "flex", alignItems: "center", gap: 10 }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <path d="M9 15l2 2 4-4" />
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="#7c3aed" stroke="none">
+              <path d="M12 2L14.09 8.26L20 9.27L15.55 13.97L16.91 20L12 16.9L7.09 20L8.45 13.97L4 9.27L9.91 8.26L12 2Z" />
+              <path d="M5 3L5.5 5L7 5.5L5.5 6L5 8L4.5 6L3 5.5L4.5 5L5 3Z" opacity="0.7" />
+              <path d="M19 14L19.5 16L21 16.5L19.5 17L19 19L18.5 17L17 16.5L18.5 16L19 14Z" opacity="0.7" />
             </svg>
             Raport Zarzadczy — SecurePosture
           </h3>

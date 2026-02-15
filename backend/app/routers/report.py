@@ -509,7 +509,64 @@ Wygeneruj profesjonalny raport zarzadczy na podstawie powyzszych danych."""
         log.exception("AI management report generation failed")
         raise HTTPException(status_code=502, detail=f"Blad komunikacji z AI: {e}")
 
+    # ── Persist report copy ──
+    from app.models.smart_catalog import AIManagementReport
+
+    generated_at = datetime.now()
+    report_row = AIManagementReport(
+        user_id=1,
+        org_unit_id=org_unit_id,
+        title=f"Raport zarzadczy {generated_at.strftime('%Y-%m-%d %H:%M')}",
+        report_json=result,
+        generated_at=generated_at,
+    )
+    s.add(report_row)
+    await s.commit()
+    await s.refresh(report_row)
+
     return JSONResponse(content={
-        "generated_at": datetime.now().isoformat(),
+        "id": report_row.id,
+        "generated_at": generated_at.isoformat(),
         "report": result,
     })
+
+
+# ── AI Report History ──
+
+@router.get("/ai-management/history", summary="Historia raportow AI")
+async def report_ai_history(
+    s: AsyncSession = Depends(get_session),
+):
+    """Return list of previously generated AI management reports (meta only)."""
+    from app.models.smart_catalog import AIManagementReport
+
+    rows = (await s.execute(
+        select(AIManagementReport).order_by(AIManagementReport.generated_at.desc()).limit(50)
+    )).scalars().all()
+
+    return [
+        {
+            "id": r.id,
+            "title": r.title,
+            "generated_at": r.generated_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+@router.get("/ai-management/{report_id}", summary="Pobierz raport AI")
+async def report_ai_get(
+    report_id: int,
+    s: AsyncSession = Depends(get_session),
+):
+    """Return a single persisted AI management report."""
+    from app.models.smart_catalog import AIManagementReport
+
+    row = await s.get(AIManagementReport, report_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Raport nie znaleziony")
+    return {
+        "id": row.id,
+        "generated_at": row.generated_at.isoformat(),
+        "report": row.report_json,
+    }

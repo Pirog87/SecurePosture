@@ -310,3 +310,16 @@ class AIAuditLog(Base):
     success: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AIManagementReport(Base):
+    """Persisted AI-generated management reports."""
+    __tablename__ = "ai_management_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    org_unit_id: Mapped[int | None] = mapped_column(ForeignKey("org_units.id"))
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    report_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

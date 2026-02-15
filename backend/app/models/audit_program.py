@@ -137,6 +137,7 @@ class AuditProgramV2(Base):
     change_requests: Mapped[list["AuditProgramChangeRequest"]] = relationship(
         back_populates="audit_program",
         cascade="all, delete-orphan",
+        foreign_keys="AuditProgramChangeRequest.audit_program_id",
     )
     history_entries: Mapped[list["AuditProgramHistory"]] = relationship(
         back_populates="audit_program",

@@ -34,7 +34,9 @@ interface AuditProgram {
   items_cancelled: number;
   pending_cr_count: number;
   budget_planned_days: number | null;
+  budget_actual_days: number;
   budget_planned_cost: number | null;
+  budget_actual_cost: number;
   budget_currency: string;
   strategic_objectives: string | null;
   scope_description: string | null;
@@ -85,6 +87,30 @@ interface VersionDiff {
   items_unchanged: number;
   summary: string;
   generated_at: string | null;
+}
+
+interface ChangeRequest {
+  id: number;
+  audit_program_id: number;
+  ref_id: string;
+  title: string;
+  change_type: string;
+  justification: string;
+  change_description: string;
+  impact_assessment: string | null;
+  affected_item_id: number | null;
+  proposed_changes: Record<string, unknown> | null;
+  status: string;
+  requested_by: number;
+  requested_by_name: string | null;
+  requested_at: string;
+  submitted_at: string | null;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  review_comment: string | null;
+  resulting_version_id: number | null;
+  implemented_at: string | null;
+  created_at: string;
 }
 
 interface HistoryEntry {
@@ -205,6 +231,22 @@ const ACTION_COLORS: Record<string, string> = {
   item_added: "var(--green)", item_removed: "var(--red)", item_modified: "var(--blue)",
 };
 
+const CR_TYPE_LABELS: Record<string, string> = {
+  add_audit: "Dodanie audytu", remove_audit: "Usuniecie audytu", modify_audit: "Modyfikacja audytu",
+  modify_schedule: "Zmiana harmonogramu", modify_scope: "Zmiana zakresu", modify_budget: "Zmiana budzetu",
+  modify_team: "Zmiana zespolu", other: "Inna",
+};
+
+const CR_STATUS_LABELS: Record<string, string> = {
+  draft: "Szkic", submitted: "Zlozony", approved: "Zatwierdzony",
+  rejected: "Odrzucony", implemented: "Wdrozony", cancelled: "Anulowany",
+};
+
+const CR_STATUS_COLORS: Record<string, string> = {
+  draft: "#94a3b8", submitted: "var(--purple)", approved: "var(--green)",
+  rejected: "var(--red)", implemented: "var(--blue)", cancelled: "#6b7280",
+};
+
 function SectionHeader({ number, label }: { number: string; label: string }) {
   return (
     <div style={{
@@ -289,6 +331,18 @@ export default function AuditProgramsPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyFilter, setHistoryFilter] = useState("");
 
+  // Change Requests
+  const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
+  const [showCRModal, setShowCRModal] = useState(false);
+  const [showCRRejectModal, setShowCRRejectModal] = useState<ChangeRequest | null>(null);
+  const [crRejectComment, setCrRejectComment] = useState("");
+
+  // Transfer
+  const [showTransferModal, setShowTransferModal] = useState<ProgramItem | null>(null);
+  const [transferTargetId, setTransferTargetId] = useState<number | null>(null);
+  const [transferJustification, setTransferJustification] = useState("");
+  const [draftPrograms, setDraftPrograms] = useState<AuditProgram[]>([]);
+
   // Lookups
   const [users, setUsers] = useState<UserOption[]>([]);
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
@@ -333,7 +387,12 @@ export default function AuditProgramsPage() {
       .finally(() => setHistoryLoading(false));
   };
 
-  // Load items + versions + diffs when selection changes
+  const loadCRs = (programId: number) => {
+    api.get<ChangeRequest[]>(`/api/v1/audit-programs/${programId}/change-requests`)
+      .then(setChangeRequests).catch(() => setChangeRequests([]));
+  };
+
+  // Load items + versions + diffs + CRs when selection changes
   useEffect(() => {
     if (selected) {
       loadItems(selected.id);
@@ -341,6 +400,7 @@ export default function AuditProgramsPage() {
         .then(setVersions).catch(() => setVersions([]));
       api.get<VersionDiff[]>(`/api/v1/audit-programs/${selected.id}/diffs`)
         .then(setDiffs).catch(() => setDiffs([]));
+      loadCRs(selected.id);
       setShowHistory(false);
       setHistory([]);
       setHistoryFilter("");
@@ -351,6 +411,7 @@ export default function AuditProgramsPage() {
       setSelectedDiff(null);
       setHistory([]);
       setShowHistory(false);
+      setChangeRequests([]);
     }
   }, [selected?.id]);
 
@@ -539,10 +600,38 @@ export default function AuditProgramsPage() {
               <DetailRow label="Jedn. org." value={sel.org_unit_name} />
               <DetailRow label="Okres" value={`${sel.period_start} \u2014 ${sel.period_end}`} />
               {sel.budget_planned_days != null && (
-                <DetailRow label="Budzet (dni)" value={sel.budget_planned_days} />
+                <div>
+                  <DetailRow
+                    label="Budzet (dni)"
+                    value={`${sel.budget_actual_days} / ${sel.budget_planned_days}`}
+                    color={sel.budget_actual_days > Number(sel.budget_planned_days) ? "var(--red)" : undefined}
+                  />
+                  <div style={{ height: 4, borderRadius: 2, background: "var(--bg-inset)", overflow: "hidden", marginTop: 2, marginBottom: 4 }}>
+                    <div style={{
+                      height: "100%", borderRadius: 2,
+                      width: `${Math.min(100, Math.round((sel.budget_actual_days / Number(sel.budget_planned_days)) * 100))}%`,
+                      background: sel.budget_actual_days > Number(sel.budget_planned_days) ? "var(--red)" : "var(--blue)",
+                      transition: "width 0.3s",
+                    }} />
+                  </div>
+                </div>
               )}
               {sel.budget_planned_cost != null && (
-                <DetailRow label="Budzet (koszt)" value={`${sel.budget_planned_cost} ${sel.budget_currency}`} />
+                <div>
+                  <DetailRow
+                    label="Budzet (koszt)"
+                    value={`${sel.budget_actual_cost} / ${sel.budget_planned_cost} ${sel.budget_currency}`}
+                    color={sel.budget_actual_cost > Number(sel.budget_planned_cost) ? "var(--red)" : undefined}
+                  />
+                  <div style={{ height: 4, borderRadius: 2, background: "var(--bg-inset)", overflow: "hidden", marginTop: 2, marginBottom: 4 }}>
+                    <div style={{
+                      height: "100%", borderRadius: 2,
+                      width: `${Math.min(100, Math.round((sel.budget_actual_cost / Number(sel.budget_planned_cost)) * 100))}%`,
+                      background: sel.budget_actual_cost > Number(sel.budget_planned_cost) ? "var(--red)" : "var(--green)",
+                      transition: "width 0.3s",
+                    }} />
+                  </div>
+                </div>
               )}
 
               {sel.scope_description && (
@@ -598,6 +687,26 @@ export default function AuditProgramsPage() {
                         {item.ref_id && <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>{item.ref_id}</span>}
                       </div>
                       <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        {/* Transfer button for draft programs */}
+                        {sel.status === "draft" && item.item_status === "planned" && (
+                          <button
+                            className="btn btn-xs"
+                            style={{ fontSize: 10, padding: "1px 6px", color: "var(--orange)" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setShowTransferModal(item);
+                              setTransferTargetId(null);
+                              setTransferJustification("");
+                              // Load draft programs for target selection
+                              api.get<AuditProgram[]>("/api/v1/audit-programs?status=draft")
+                                .then(p => setDraftPrograms(p.filter(dp => dp.id !== sel.id)))
+                                .catch(() => setDraftPrograms([]));
+                            }}
+                            title="Transfer do innego programu"
+                          >
+                            Transfer
+                          </button>
+                        )}
                         {/* Item lifecycle buttons for approved/in_execution programs */}
                         {["approved", "in_execution"].includes(sel.status) && item.item_status === "planned" && (
                           <button
@@ -643,6 +752,135 @@ export default function AuditProgramsPage() {
               >
                 + Dodaj pozycje
               </button>
+            )}
+
+            {/* ── Change Requests (Krok 6) ── */}
+            {["approved", "in_execution"].includes(sel.status) && (
+              <div style={{ marginTop: 8 }}>
+                <SectionHeader number={"\u2463"} label={`Change Requests (${changeRequests.length})`} />
+                {changeRequests.length === 0 ? (
+                  <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-muted)", padding: 8 }}>Brak wnioskow o zmiane</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {changeRequests.map(cr => (
+                      <div
+                        key={cr.id}
+                        style={{
+                          padding: "6px 8px", borderRadius: 4, fontSize: 11,
+                          background: "var(--bg-inset)",
+                          borderLeft: `3px solid ${CR_STATUS_COLORS[cr.status] || "#94a3b8"}`,
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <span style={{ fontWeight: 600 }}>{cr.title}</span>
+                            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)", marginLeft: 4 }}>{cr.ref_id}</span>
+                          </div>
+                          <Badge label={CR_STATUS_LABELS[cr.status] || cr.status} color={CR_STATUS_COLORS[cr.status] || "#94a3b8"} />
+                        </div>
+                        <div style={{ display: "flex", gap: 8, marginTop: 2, color: "var(--text-muted)", fontSize: 10 }}>
+                          <span>{CR_TYPE_LABELS[cr.change_type] || cr.change_type}</span>
+                          <span>{cr.requested_by_name || `User #${cr.requested_by}`}</span>
+                          <span>{cr.created_at?.slice(0, 10)}</span>
+                        </div>
+                        {cr.justification && (
+                          <div style={{ marginTop: 3, fontSize: 10, color: "var(--text-secondary)", fontStyle: "italic" }}>
+                            {cr.justification.length > 80 ? cr.justification.slice(0, 80) + "..." : cr.justification}
+                          </div>
+                        )}
+                        {cr.review_comment && (
+                          <div style={{ marginTop: 3, padding: "3px 6px", borderRadius: 3, background: "rgba(59,130,246,0.05)", fontSize: 10, color: "var(--text-secondary)" }}>
+                            Komentarz: {cr.review_comment}
+                          </div>
+                        )}
+                        {/* CR action buttons */}
+                        <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                          {cr.status === "draft" && (
+                            <>
+                              <button
+                                className="btn btn-xs"
+                                style={{ fontSize: 10, color: "var(--purple)" }}
+                                onClick={async () => {
+                                  try {
+                                    await api.post(`/api/v1/change-requests/${cr.id}/submit`, {});
+                                    loadCRs(sel.id);
+                                  } catch (err) { alert("Blad: " + err); }
+                                }}
+                                disabled={workflowBusy}
+                              >
+                                Zloz
+                              </button>
+                              <button
+                                className="btn btn-xs"
+                                style={{ fontSize: 10, color: "var(--red)" }}
+                                onClick={async () => {
+                                  if (!confirm("Usunac CR?")) return;
+                                  try {
+                                    await api.delete(`/api/v1/change-requests/${cr.id}`);
+                                    loadCRs(sel.id);
+                                  } catch (err) { alert("Blad: " + err); }
+                                }}
+                              >
+                                Usun
+                              </button>
+                            </>
+                          )}
+                          {cr.status === "submitted" && (
+                            <>
+                              <button
+                                className="btn btn-xs"
+                                style={{ fontSize: 10, color: "var(--green)" }}
+                                onClick={async () => {
+                                  try {
+                                    await api.post(`/api/v1/change-requests/${cr.id}/approve`, {});
+                                    loadCRs(sel.id);
+                                  } catch (err) { alert("Blad: " + err); }
+                                }}
+                                disabled={workflowBusy}
+                              >
+                                Zatwierdz
+                              </button>
+                              <button
+                                className="btn btn-xs"
+                                style={{ fontSize: 10, color: "var(--red)" }}
+                                onClick={() => { setCrRejectComment(""); setShowCRRejectModal(cr); }}
+                                disabled={workflowBusy}
+                              >
+                                Odrzuc
+                              </button>
+                            </>
+                          )}
+                          {cr.status === "approved" && (
+                            <button
+                              className="btn btn-xs"
+                              style={{ fontSize: 10, color: "var(--blue)", fontWeight: 600 }}
+                              onClick={async () => {
+                                setWorkflowBusy(true);
+                                try {
+                                  const newProg = await api.post<AuditProgram>(`/api/v1/change-requests/${cr.id}/implement`, {});
+                                  setSelected(newProg);
+                                  load();
+                                } catch (err) { alert("Blad: " + err); }
+                                finally { setWorkflowBusy(false); }
+                              }}
+                              disabled={workflowBusy}
+                            >
+                              Implementuj
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  className="btn btn-sm"
+                  style={{ width: "100%", marginTop: 6 }}
+                  onClick={() => setShowCRModal(true)}
+                >
+                  + Nowy Change Request
+                </button>
+              </div>
             )}
 
             {/* ── Workflow Actions ── */}
@@ -1240,6 +1478,129 @@ export default function AuditProgramsPage() {
           </div>
         </div>
       </Modal>
+
+      {/* ── CR Create Modal (Krok 6) ── */}
+      <Modal
+        open={showCRModal}
+        onClose={() => setShowCRModal(false)}
+        title="Nowy Change Request"
+        wide
+      >
+        {sel && (
+          <CRForm
+            items={items}
+            saving={saving}
+            onSubmit={async (data) => {
+              setSaving(true);
+              try {
+                await api.post(`/api/v1/audit-programs/${sel.id}/change-requests`, data);
+                setShowCRModal(false);
+                loadCRs(sel.id);
+              } catch (err) { alert("Blad: " + err); }
+              finally { setSaving(false); }
+            }}
+            onCancel={() => setShowCRModal(false)}
+          />
+        )}
+      </Modal>
+
+      {/* ── CR Reject Modal ── */}
+      <Modal
+        open={!!showCRRejectModal}
+        onClose={() => setShowCRRejectModal(null)}
+        title={`Odrzucenie CR: ${showCRRejectModal?.ref_id ?? ""}`}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <label style={{ fontSize: 13 }}>
+            Komentarz (powod odrzucenia) *
+            <textarea
+              className="form-control"
+              value={crRejectComment}
+              onChange={e => setCrRejectComment(e.target.value)}
+              rows={3}
+              placeholder="Opisz powod odrzucenia CR (min. 3 znaki)..."
+            />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setShowCRRejectModal(null)}>Anuluj</button>
+            <button
+              className="btn btn-primary"
+              style={{ background: "var(--red)", borderColor: "var(--red)" }}
+              disabled={crRejectComment.trim().length < 3 || workflowBusy}
+              onClick={async () => {
+                if (!showCRRejectModal) return;
+                setWorkflowBusy(true);
+                try {
+                  await api.post(`/api/v1/change-requests/${showCRRejectModal.id}/reject`, { review_comment: crRejectComment.trim() });
+                  setShowCRRejectModal(null);
+                  if (sel) loadCRs(sel.id);
+                } catch (err) { alert("Blad: " + err); }
+                finally { setWorkflowBusy(false); }
+              }}
+            >
+              {workflowBusy ? "Odrzucanie..." : "Odrzuc CR"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Transfer Modal ── */}
+      <Modal open={!!showTransferModal} onClose={() => setShowTransferModal(null)} title={`Transfer: ${showTransferModal?.name ?? ""}`}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 400 }}>
+          <p style={{ fontSize: 13, margin: 0, color: "var(--text-muted)" }}>
+            Przenies pozycje audytu do innego programu w statusie &quot;Szkic&quot;. Pozycja zostanie anulowana w biezacym programie i skopiowana do docelowego.
+          </p>
+          <label style={{ fontSize: 13 }}>
+            Program docelowy *
+            <select
+              className="form-control"
+              value={transferTargetId ?? ""}
+              onChange={e => setTransferTargetId(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">-- wybierz program --</option>
+              {draftPrograms.map(dp => (
+                <option key={dp.id} value={dp.id}>{dp.ref_id} — {dp.name} (v{dp.version})</option>
+              ))}
+            </select>
+            {draftPrograms.length === 0 && (
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Brak innych programow w statusie Szkic</span>
+            )}
+          </label>
+          <label style={{ fontSize: 13 }}>
+            Uzasadnienie * (min. 5 znakow)
+            <textarea
+              className="form-control"
+              value={transferJustification}
+              onChange={e => setTransferJustification(e.target.value)}
+              rows={3}
+              placeholder="Dlaczego pozycja ma byc przeniesiona..."
+            />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setShowTransferModal(null)}>Anuluj</button>
+            <button
+              className="btn btn-primary"
+              style={{ background: "var(--orange)", borderColor: "var(--orange)" }}
+              disabled={!transferTargetId || transferJustification.trim().length < 5 || workflowBusy}
+              onClick={async () => {
+                if (!showTransferModal || !transferTargetId) return;
+                setWorkflowBusy(true);
+                try {
+                  await api.post(`/api/v1/audit-program-items/${showTransferModal.id}/transfer`, {
+                    target_program_id: transferTargetId,
+                    justification: transferJustification.trim(),
+                  });
+                  setShowTransferModal(null);
+                  if (sel) { loadItems(sel.id); loadPrograms(); }
+                } catch (err) { alert("Blad transferu: " + err); }
+                finally { setWorkflowBusy(false); }
+              }}
+            >
+              {workflowBusy ? "Transferowanie..." : "Transferuj"}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -1558,6 +1919,87 @@ function ItemForm({ users, editingItem, saving, onSubmit, onCancel }: ItemFormPr
         <button className="btn" onClick={onCancel}>Anuluj</button>
         <button className="btn btn-primary" onClick={handleSubmit} disabled={!canSubmit || saving}>
           {saving ? "Zapisywanie..." : editingItem ? "Zapisz zmiany" : "Dodaj pozycje"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════════════
+   CRForm — create change request
+   ═══════════════════════════════════════════════════════════ */
+interface CRFormProps {
+  items: ProgramItem[];
+  saving: boolean;
+  onSubmit: (data: Record<string, unknown>) => void;
+  onCancel: () => void;
+}
+
+function CRForm({ items, saving, onSubmit, onCancel }: CRFormProps) {
+  const [title, setTitle] = useState("");
+  const [changeType, setChangeType] = useState("modify_audit");
+  const [justification, setJustification] = useState("");
+  const [changeDescription, setChangeDescription] = useState("");
+  const [impactAssessment, setImpactAssessment] = useState("");
+  const [affectedItemId, setAffectedItemId] = useState<number | null>(null);
+
+  const canSubmit = title.trim().length >= 3 && justification.trim().length >= 5 && changeDescription.trim().length >= 5;
+
+  const handleSubmit = () => {
+    const data: Record<string, unknown> = {
+      title: title.trim(),
+      change_type: changeType,
+      justification: justification.trim(),
+      change_description: changeDescription.trim(),
+      impact_assessment: impactAssessment.trim() || null,
+      affected_item_id: affectedItemId,
+      proposed_changes: {},
+    };
+    onSubmit(data);
+  };
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <label style={{ fontSize: 13 }}>
+          Tytul wniosku *
+          <input className="form-control" value={title} onChange={e => setTitle(e.target.value)} placeholder="np. Dodanie audytu NIS2" />
+        </label>
+        <label style={{ fontSize: 13 }}>
+          Typ zmiany *
+          <select className="form-control" value={changeType} onChange={e => setChangeType(e.target.value)}>
+            {Object.entries(CR_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 13 }}>
+          Dotyczy pozycji (opcjonalnie)
+          <select className="form-control" value={affectedItemId ?? ""} onChange={e => setAffectedItemId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">-- caly program --</option>
+            {items.map(it => <option key={it.id} value={it.id}>{it.ref_id} — {it.name}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 13 }}>
+          Ocena wplywu
+          <textarea className="form-control" value={impactAssessment} onChange={e => setImpactAssessment(e.target.value)} rows={2} placeholder="Wplyw na budzet, zasoby, harmonogram..." />
+        </label>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <label style={{ fontSize: 13 }}>
+          Uzasadnienie zmiany * (min. 5 znakow)
+          <textarea className="form-control" value={justification} onChange={e => setJustification(e.target.value)} rows={3} placeholder="Dlaczego zmiana jest konieczna..." />
+        </label>
+        <label style={{ fontSize: 13 }}>
+          Szczegolowy opis proponowanych zmian * (min. 5 znakow)
+          <textarea className="form-control" value={changeDescription} onChange={e => setChangeDescription(e.target.value)} rows={4} placeholder="Co dokladnie nalezy zmienic..." />
+        </label>
+      </div>
+
+      <div style={{ gridColumn: "1 / -1", display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+        <button className="btn" onClick={onCancel}>Anuluj</button>
+        <button className="btn btn-primary" onClick={handleSubmit} disabled={!canSubmit || saving}>
+          {saving ? "Zapisywanie..." : "Utworz Change Request"}
         </button>
       </div>
     </div>

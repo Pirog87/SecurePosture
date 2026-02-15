@@ -465,7 +465,7 @@ async def report_ai_management(
 --- RYZYKA ---
 Laczna liczba aktywnych ryzyk: {total_risks}
 Rozklad wg poziomu: wysokie={risk_counts.get('high', 0)}, srednie={risk_counts.get('medium', 0)}, niskie={risk_counts.get('low', 0)}
-Sredni score ryzyka: {float(avg_score):.1f if avg_score else 'brak danych'}
+Sredni score ryzyka: {f"{float(avg_score):.1f}" if avg_score else "brak danych"}
 Ryzyka przeterminowane (brak przegladu): {overdue_count}
 
 Top 10 ryzyk wg score:

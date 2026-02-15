@@ -28,6 +28,7 @@ import CmdbAdminPage from "./pages/CmdbAdminPage";
 import ReportsPage from "./pages/ReportsPage";
 import SmartCatalogPage from "./pages/SmartCatalogPage";
 import AIConfigPage from "./pages/AIConfigPage";
+import DatabaseAdminPage from "./pages/DatabaseAdminPage";
 import ControlEffectivenessPage from "./pages/ControlEffectivenessPage";
 
 // Compliance & Audit module
@@ -93,6 +94,7 @@ export default function App() {
           <Route path="smart-catalog" element={<SmartCatalogPage />} />
           <Route path="control-effectiveness" element={<ControlEffectivenessPage />} />
           <Route path="ai-config" element={<AIConfigPage />} />
+          <Route path="db-admin" element={<DatabaseAdminPage />} />
           <Route path="catalogs" element={<Navigate to="/smart-catalog" replace />} />
           <Route path="dictionaries" element={<DictionariesPage />} />
           <Route path="actions" element={<ActionsPage />} />

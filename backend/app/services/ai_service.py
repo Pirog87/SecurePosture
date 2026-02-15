@@ -961,8 +961,12 @@ class AIService:
         """Generate comprehensive AI management report based on organization data."""
         self._require_feature("management_report")
 
-        from app.services.ai_prompts import get_prompt
-        system_prompt = await get_prompt(self.session, "management_report")
+        # Use get_prompt with fallback to hardcoded default if session is broken
+        try:
+            from app.services.ai_prompts import get_prompt
+            system_prompt = await get_prompt(self.session, "management_report")
+        except Exception:
+            system_prompt = SYSTEM_PROMPT_MANAGEMENT_REPORT
 
         result = await self._call_llm(
             system=system_prompt,

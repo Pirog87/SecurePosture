@@ -266,7 +266,6 @@ async def report_ai_management(
 ):
     """Generate AI-powered management report from current database state."""
     import logging
-    from sqlalchemy import text as sa_text
 
     from app.models.security_area import SecurityDomain
     from app.services.ai_service import (
@@ -293,7 +292,7 @@ async def report_ai_management(
             detail="AI nie jest skonfigurowane. Przejdz do Ustawienia > Integracja AI.",
         )
 
-    # ── Gather all data (each section wrapped so partial failures don't crash) ──
+    # ── Gather all data (each section wrapped; rollback on failure to keep session clean) ──
 
     flt = Risk.org_unit_id == org_unit_id if org_unit_id else True
 
@@ -309,6 +308,7 @@ async def report_ai_management(
         risk_counts: dict[str | None, int] = {r.risk_level: r.cnt for r in level_rows}
         total_risks = sum(risk_counts.values())
     except Exception:
+        await s.rollback()
         risk_counts, total_risks = {}, 0
 
     # Average risk score
@@ -317,6 +317,7 @@ async def report_ai_management(
             select(func.avg(Risk.risk_score)).where(Risk.is_active.is_(True)).where(flt)
         )).scalar()
     except Exception:
+        await s.rollback()
         avg_score = None
 
     # Top 10 risks
@@ -333,6 +334,7 @@ async def report_ai_management(
             for r in top_risks
         )
     except Exception:
+        await s.rollback()
         top_risks_text = "  Brak danych."
 
     # Risks by security domain
@@ -349,6 +351,7 @@ async def report_ai_management(
             f"  - {r.name}: {r.cnt} ryzyk" for r in area_rows if r.cnt
         ) or "  Brak danych."
     except Exception:
+        await s.rollback()
         risks_by_area_text = "  Brak danych."
 
     # Risks by org unit
@@ -364,35 +367,18 @@ async def report_ai_management(
             f"  - {r.name}: {r.cnt} ryzyk" for r in org_rows if r.cnt
         ) or "  Brak danych."
     except Exception:
+        await s.rollback()
         risks_by_org_text = "  Brak danych."
 
-    # Overdue risks (TIMESTAMPDIFF for MySQL, fallback for others)
-    interval = 90
+    # Overdue risks — use the v_overdue_risks view (already exists)
     overdue_count = 0
     try:
-        from app.models.risk import RiskReviewConfig
-        cfg_row = (await s.execute(select(RiskReviewConfig.review_interval_days))).scalar()
-        interval = cfg_row or 90
+        from sqlalchemy import text as sa_text
+        overdue_count = (await s.execute(
+            sa_text("SELECT COUNT(*) FROM v_overdue_risks")
+        )).scalar() or 0
     except Exception:
-        pass
-
-    try:
-        overdue_q = (
-            select(func.count())
-            .select_from(Risk)
-            .where(
-                Risk.is_active.is_(True),
-                flt,
-                func.timestampdiff(
-                    sa_text("DAY"),
-                    func.coalesce(Risk.last_review_at, Risk.identified_at),
-                    func.now(),
-                ) > interval,
-            )
-        )
-        overdue_count = (await s.execute(overdue_q)).scalar() or 0
-    except Exception:
-        overdue_count = 0
+        await s.rollback()
 
     # Asset counts
     try:
@@ -400,6 +386,7 @@ async def report_ai_management(
             select(func.count()).select_from(Asset).where(Asset.is_active.is_(True))
         )).scalar() or 0
     except Exception:
+        await s.rollback()
         total_assets = 0
 
     # Assets by category
@@ -417,6 +404,7 @@ async def report_ai_management(
             f"  - {r.name}: {r.cnt}" for r in asset_cat_rows if r.cnt
         ) or "  Brak danych."
     except Exception:
+        await s.rollback()
         assets_by_cat_text = "  Brak danych."
 
     # Vulnerability and incident counts
@@ -425,6 +413,7 @@ async def report_ai_management(
             select(func.count()).select_from(VulnerabilityRecord).where(VulnerabilityRecord.is_active.is_(True))
         )).scalar() or 0
     except Exception:
+        await s.rollback()
         open_vulns = 0
 
     try:
@@ -432,6 +421,7 @@ async def report_ai_management(
             select(func.count()).select_from(Incident).where(Incident.is_active.is_(True))
         )).scalar() or 0
     except Exception:
+        await s.rollback()
         open_incidents = 0
 
     # Framework assessments
@@ -450,6 +440,7 @@ async def report_ai_management(
             for r in fw_rows if r.overall_score
         ) or "  Brak ocen frameworkow."
     except Exception:
+        await s.rollback()
         fw_text = "  Brak ocen frameworkow."
 
     # Security posture score
@@ -464,6 +455,7 @@ async def report_ai_management(
             )
         )
     except Exception:
+        await s.rollback()
         posture_text = "  Brak danych Security Posture Score."
 
     # ── Build LLM context ──
@@ -474,7 +466,7 @@ async def report_ai_management(
 Laczna liczba aktywnych ryzyk: {total_risks}
 Rozklad wg poziomu: wysokie={risk_counts.get('high', 0)}, srednie={risk_counts.get('medium', 0)}, niskie={risk_counts.get('low', 0)}
 Sredni score ryzyka: {float(avg_score):.1f if avg_score else 'brak danych'}
-Ryzyka przeterminowane (brak przegladu > {interval} dni): {overdue_count}
+Ryzyka przeterminowane (brak przegladu): {overdue_count}
 
 Top 10 ryzyk wg score:
 {top_risks_text}

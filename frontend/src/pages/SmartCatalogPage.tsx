@@ -113,7 +113,7 @@ const BASE_TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "coverage", label: "Analiza Luk i Skutecznosci", icon: "📊" },
 ];
 
-const AI_TAB = { key: "ai" as TabKey, label: "AI Asystent", icon: "🤖" };
+const AI_TAB = { key: "ai" as TabKey, label: "AI Asystent", icon: "✨" };
 
 const THREAT_CATEGORIES = [
   "NATURAL", "ENVIRONMENTAL", "HUMAN_INTENTIONAL", "HUMAN_ACCIDENTAL", "TECHNICAL", "ORGANIZATIONAL",

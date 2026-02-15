@@ -87,6 +87,19 @@ interface VersionDiff {
   generated_at: string | null;
 }
 
+interface HistoryEntry {
+  id: number;
+  entity_type: string;
+  entity_id: number;
+  action: string;
+  description: string | null;
+  justification: string | null;
+  field_changes: Record<string, { old: string; new: string }> | null;
+  performed_by: number;
+  performed_by_name: string | null;
+  performed_at: string | null;
+}
+
 interface UserOption {
   id: number;
   display_name: string;
@@ -176,6 +189,22 @@ const FIELD_LABELS: Record<string, string> = {
   display_order: "Kolejnosc",
 };
 
+const ACTION_LABELS: Record<string, string> = {
+  created: "Utworzono", updated: "Zaktualizowano", deleted: "Usunieto",
+  status_changed: "Zmiana statusu", submitted: "Zlozono", approved: "Zatwierdzono",
+  rejected: "Odrzucono", correction_initiated: "Korekta", version_created: "Nowa wersja",
+  item_added: "Dodano pozycje", item_removed: "Usunieto pozycje", item_modified: "Zmodyfikowano pozycje",
+  item_transferred_out: "Transfer (wyjscie)", item_transferred_in: "Transfer (wejscie)",
+  cr_submitted: "CR zlozono", cr_approved: "CR zatwierdzono", cr_rejected: "CR odrzucono", cr_implemented: "CR wdrozono",
+};
+
+const ACTION_COLORS: Record<string, string> = {
+  created: "var(--green)", updated: "var(--blue)", deleted: "var(--red)",
+  status_changed: "var(--purple)", submitted: "var(--purple)", approved: "var(--green)",
+  rejected: "var(--red)", correction_initiated: "var(--orange)", version_created: "var(--purple)",
+  item_added: "var(--green)", item_removed: "var(--red)", item_modified: "var(--blue)",
+};
+
 function SectionHeader({ number, label }: { number: string; label: string }) {
   return (
     <div style={{
@@ -253,6 +282,13 @@ export default function AuditProgramsPage() {
   const [diffs, setDiffs] = useState<VersionDiff[]>([]);
   const [selectedDiff, setSelectedDiff] = useState<VersionDiff | null>(null);
 
+  // Audit trail
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState("");
+
   // Lookups
   const [users, setUsers] = useState<UserOption[]>([]);
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
@@ -288,6 +324,15 @@ export default function AuditProgramsPage() {
       .catch(() => {});
   }, []);
 
+  const loadHistory = (programId: number, action?: string) => {
+    setHistoryLoading(true);
+    const params = action ? `?action=${action}` : "";
+    api.get<{ total: number; items: HistoryEntry[] }>(`/api/v1/audit-programs/${programId}/history${params}`)
+      .then(d => { setHistory(d.items); setHistoryTotal(d.total); })
+      .catch(() => { setHistory([]); setHistoryTotal(0); })
+      .finally(() => setHistoryLoading(false));
+  };
+
   // Load items + versions + diffs when selection changes
   useEffect(() => {
     if (selected) {
@@ -296,11 +341,16 @@ export default function AuditProgramsPage() {
         .then(setVersions).catch(() => setVersions([]));
       api.get<VersionDiff[]>(`/api/v1/audit-programs/${selected.id}/diffs`)
         .then(setDiffs).catch(() => setDiffs([]));
+      setShowHistory(false);
+      setHistory([]);
+      setHistoryFilter("");
     } else {
       setItems([]);
       setVersions([]);
       setDiffs([]);
       setSelectedDiff(null);
+      setHistory([]);
+      setShowHistory(false);
     }
   }, [selected?.id]);
 
@@ -884,6 +934,116 @@ export default function AuditProgramsPage() {
                 )}
               </div>
             )}
+
+            {/* ── Audit Trail (Krok 5) ── */}
+            <div style={{ marginTop: 12 }}>
+              <div
+                style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  cursor: "pointer", paddingBottom: 4, borderBottom: "1px solid rgba(59,130,246,0.2)",
+                }}
+                onClick={() => {
+                  const next = !showHistory;
+                  setShowHistory(next);
+                  if (next && history.length === 0) loadHistory(sel.id);
+                }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--blue)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                  {"\u2464"} Historia zmian
+                </div>
+                <span style={{ fontSize: 14, color: "var(--text-muted)" }}>{showHistory ? "\u25B2" : "\u25BC"}</span>
+              </div>
+
+              {showHistory && (
+                <div style={{ marginTop: 8 }}>
+                  {/* Filter by action */}
+                  <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                    <select
+                      className="form-control"
+                      style={{ fontSize: 11, padding: "2px 6px", flex: 1 }}
+                      value={historyFilter}
+                      onChange={e => {
+                        setHistoryFilter(e.target.value);
+                        loadHistory(sel.id, e.target.value || undefined);
+                      }}
+                    >
+                      <option value="">Wszystkie akcje</option>
+                      {Object.entries(ACTION_LABELS).map(([k, v]) => (
+                        <option key={k} value={k}>{v}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn btn-xs"
+                      style={{ fontSize: 10 }}
+                      onClick={() => loadHistory(sel.id, historyFilter || undefined)}
+                    >
+                      Odswiez
+                    </button>
+                  </div>
+
+                  {historyLoading ? (
+                    <div style={{ textAlign: "center", padding: 12, color: "var(--text-muted)", fontSize: 12 }}>Ladowanie...</div>
+                  ) : history.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 12, color: "var(--text-muted)", fontSize: 12 }}>Brak wpisow</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {history.map(h => (
+                        <div
+                          key={h.id}
+                          style={{
+                            padding: "6px 8px", borderRadius: 4, fontSize: 11,
+                            background: "var(--bg-inset)",
+                            borderLeft: `3px solid ${ACTION_COLORS[h.action] || "#94a3b8"}`,
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontWeight: 600, color: ACTION_COLORS[h.action] || "var(--text-primary)" }}>
+                              {ACTION_LABELS[h.action] || h.action}
+                            </span>
+                            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                              {h.performed_at?.slice(0, 16).replace("T", " ")}
+                            </span>
+                          </div>
+                          {h.description && (
+                            <div style={{ color: "var(--text-secondary)", marginTop: 2 }}>{h.description}</div>
+                          )}
+                          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
+                            <span style={{ color: "var(--text-muted)" }}>
+                              {h.performed_by_name || `User #${h.performed_by}`}
+                            </span>
+                            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                              {h.entity_type}
+                            </span>
+                          </div>
+                          {h.justification && (
+                            <div style={{ marginTop: 4, padding: "4px 6px", borderRadius: 3, background: "rgba(59,130,246,0.05)", fontSize: 10, fontStyle: "italic", color: "var(--text-secondary)" }}>
+                              {h.justification}
+                            </div>
+                          )}
+                          {h.field_changes && Object.keys(h.field_changes).length > 0 && (
+                            <div style={{ marginTop: 4, padding: "4px 6px", borderRadius: 3, background: "rgba(0,0,0,0.03)", fontSize: 10 }}>
+                              {Object.entries(h.field_changes).map(([field, { old: oldV, new: newV }]) => (
+                                <div key={field}>
+                                  <span style={{ color: "var(--text-muted)" }}>{FIELD_LABELS[field] || field}:</span>{" "}
+                                  <span style={{ textDecoration: "line-through", color: "var(--red)", opacity: 0.7 }}>{oldV ?? "(brak)"}</span>
+                                  {" → "}
+                                  <span style={{ color: "var(--green)" }}>{newV ?? "(brak)"}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {historyTotal > history.length && (
+                        <div style={{ textAlign: "center", fontSize: 10, color: "var(--text-muted)", padding: 4 }}>
+                          Pokazano {history.length} z {historyTotal} wpisow
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -61,7 +61,7 @@ REQUIRED_TABLES = [
     # Alembic-created tables
     "frameworks", "framework_nodes", "assessment_dimensions",
     "dimension_levels", "assessments", "assessment_answers",
-    "assets", "vulnerability_records", "incidents",
+    "assets", "vulnerabilities_registry", "incidents",
     "policies", "policy_exceptions", "audit_findings",
     "vendors", "awareness_campaigns",
     "security_score_config",
@@ -70,7 +70,7 @@ REQUIRED_TABLES = [
     "control_implementations",
     "mapping_sets", "framework_mappings",
     "framework_node_ai_cache",
-    "ai_feature_toggles",
+    "ai_provider_config",
     "document_metrics", "framework_attachments", "ai_prompt_templates",
     "alembic_version",
 ]

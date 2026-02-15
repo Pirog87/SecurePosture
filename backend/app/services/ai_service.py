@@ -34,6 +34,7 @@ from app.services.ai_prompts import (
     SYSTEM_PROMPT_EVIDENCE,
     SYSTEM_PROMPT_GAP_ANALYSIS,
     SYSTEM_PROMPT_INTERPRET,
+    SYSTEM_PROMPT_MANAGEMENT_REPORT,
     SYSTEM_PROMPT_SCENARIO_GEN,
     SYSTEM_PROMPT_SEARCH,
     SYSTEM_PROMPT_SECURITY_AREA_MAP,
@@ -949,7 +950,32 @@ class AIService:
         return result if isinstance(result, dict) else {"executive_summary": str(result)}
 
     # ═══════════════════════════════════════════════════════════════════
-    # USE CASE 12: AI-powered document import
+    # USE CASE 12: AI management report
+    # ═══════════════════════════════════════════════════════════════════
+
+    async def generate_management_report(
+        self,
+        user_id: int,
+        data_context: str,
+    ) -> dict:
+        """Generate comprehensive AI management report based on organization data."""
+        self._require_feature("management_report")
+
+        from app.services.ai_prompts import get_prompt
+        system_prompt = await get_prompt(self.session, "management_report")
+
+        result = await self._call_llm(
+            system=system_prompt,
+            user_message=data_context,
+            action_type="MANAGEMENT_REPORT",
+            user_id=user_id,
+            max_tokens=8000,
+            timeout=180,
+        )
+        return result if isinstance(result, dict) else {"executive_summary": str(result)}
+
+    # ═══════════════════════════════════════════════════════════════════
+    # USE CASE 13: AI-powered document import
     # ═══════════════════════════════════════════════════════════════════
 
     async def analyze_document_structure(

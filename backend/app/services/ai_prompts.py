@@ -172,6 +172,43 @@ Odpowiedz WYLACZNIE w formacie JSON z polami:
 
 Pisz w jezyku polskim, profesjonalnie i zwiezle."""
 
+# ── Management report prompt ──
+
+_PROMPT_MANAGEMENT_REPORT = """\
+Jestes ekspertem ds. zarzadzania bezpieczenstwem informacji, GRC i raportowania do zarzadu.
+
+Na podstawie danych organizacyjnych i aktualnego stanu bezpieczenstwa
+wygeneruj profesjonalny raport zarzadczy w jezyku polskim.
+
+Raport MUSI zawierac nastepujace sekcje (kazda jako pole JSON):
+
+1. executive_summary: 2-3 paragrafy ogolnego przegladu stanu bezpieczenstwa organizacji.
+   Zacznij od najwazniejszych wnioskow. Uzyj konkretnych liczb z danych.
+
+2. risk_assessment: Ocena profilu ryzyka organizacji:
+   - overall_rating: "krytyczny" | "wysoki" | "umiarkowany" | "niski"
+   - analysis: 2-3 paragrafy analizy ryzyk (trendy, koncentracja, obszary problemowe)
+   - key_concerns: lista 3-5 glownych obaw z uzasadnieniem
+
+3. strengths: lista 3-5 mocnych stron organizacji (co dziala dobrze)
+   Kazda pozycja: {area, description}
+
+4. critical_findings: lista 3-5 krytycznych ustalen wymagajacych uwagi zarzadu
+   Kazda pozycja: {finding, severity: "krytyczny"|"wysoki"|"sredni", impact, recommendation}
+
+5. recommendations: lista 5-8 priorytetyzowanych rekomendacji
+   Kazda pozycja: {action, priority: 1-5, rationale, estimated_effort: "niski"|"sredni"|"wysoki", responsible_role}
+
+6. action_plan: plan dzialan na najblizsze 90 dni
+   Lista 3-5 pozycji: {action, deadline_days, responsible_role, expected_outcome}
+
+7. kpi_targets: rekomendowane cele KPI na nastepny kwartal
+   Lista 4-6 pozycji: {kpi_name, current_value, target_value, rationale}
+
+Odpowiedz WYLACZNIE w formacie JSON z powyzszymi polami.
+Bierz pod uwage WSZYSTKIE dostarczone dane. Badz konkretny i uzywaj liczb.
+Pisz profesjonalnie, zwiezle, na poziomie C-level / zarzadu."""
+
 # ── NEW: Document import prompts — 1:1 content extraction ──
 
 _PROMPT_DOCUMENT_IMPORT = """\
@@ -315,6 +352,12 @@ DEFAULT_PROMPTS: list[dict] = [
         "prompt_text": _PROMPT_COVERAGE_REPORT,
     },
     {
+        "function_key": "management_report",
+        "display_name": "Raport zarządczy AI",
+        "description": "Generuje profesjonalny raport zarządczy na podstawie aktualnych danych o ryzykach, aktywach i stanie bezpieczeństwa.",
+        "prompt_text": _PROMPT_MANAGEMENT_REPORT,
+    },
+    {
         "function_key": "document_import",
         "display_name": "Import dokumentu (AI)",
         "description": "Analizuje dokument PDF/DOCX i wyodrębnia hierarchiczną strukturę z pełną treścią 1:1.",
@@ -381,5 +424,6 @@ SYSTEM_PROMPT_EVIDENCE = _PROMPT_EVIDENCE
 SYSTEM_PROMPT_SECURITY_AREA_MAP = _PROMPT_SECURITY_AREA_MAP
 SYSTEM_PROMPT_CROSS_MAPPING = _PROMPT_CROSS_MAPPING
 SYSTEM_PROMPT_COVERAGE_REPORT = _PROMPT_COVERAGE_REPORT
+SYSTEM_PROMPT_MANAGEMENT_REPORT = _PROMPT_MANAGEMENT_REPORT
 SYSTEM_PROMPT_DOCUMENT_IMPORT = _PROMPT_DOCUMENT_IMPORT
 SYSTEM_PROMPT_DOCUMENT_IMPORT_CONTINUATION = _PROMPT_DOCUMENT_IMPORT_CONTINUATION

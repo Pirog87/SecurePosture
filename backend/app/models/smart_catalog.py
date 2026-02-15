@@ -252,6 +252,7 @@ class AIProviderConfig(Base):
     feature_cross_mapping: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
     feature_coverage_report: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
     feature_document_import: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
+    feature_management_report: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1", nullable=False)
 
     # Test metadata
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime)

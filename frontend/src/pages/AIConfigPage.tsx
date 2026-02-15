@@ -705,7 +705,7 @@ function AIPromptsSection() {
   const loadPrompts = useCallback(() => {
     setLoading(true);
     fetch(`${API}/api/v1/admin/ai-prompts`).then(r => r.json())
-      .then(setPrompts)
+      .then(data => setPrompts(Array.isArray(data) ? data : []))
       .catch(() => setPrompts([]))
       .finally(() => setLoading(false));
   }, []);

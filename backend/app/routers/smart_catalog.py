@@ -1728,7 +1728,7 @@ async def list_ai_prompts(s: AsyncSession = Depends(get_session)):
     ]
 
 
-@router.get("/admin/ai-prompts/{function_key}", summary="Pobierz prompt AI")
+@router.get("/api/v1/admin/ai-prompts/{function_key}", summary="Pobierz prompt AI")
 async def get_ai_prompt(function_key: str, s: AsyncSession = Depends(get_session)):
     from app.models.smart_catalog import AIPromptTemplate
     row = (await s.execute(

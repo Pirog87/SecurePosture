@@ -14,7 +14,6 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BACKEND_DIR="$PROJECT_DIR/backend"
 FRONTEND_DIR="$PROJECT_DIR/frontend"
 VENV_DIR="$BACKEND_DIR/venv"
-BACKEND_SERVICE="secureposture-backend"   # nazwa systemd service (jeśli istnieje)
 BACKEND_PORT=8000
 FRONTEND_PORT=5176
 
@@ -48,6 +47,9 @@ for arg in "$@"; do
     esac
 done
 
+BEFORE=""
+AFTER=""
+
 # ── 1. Git pull ──
 if $DO_PULL; then
     step "Git pull"
@@ -56,6 +58,10 @@ if $DO_PULL; then
     log "Branch: $BRANCH"
 
     BEFORE=$(git rev-parse HEAD)
+
+    # Resetuj dist/ — to build output, konflikty nie mają sensu
+    git checkout -- frontend/dist/ 2>/dev/null || true
+
     git pull origin "$BRANCH" 2>&1 | tail -5
     AFTER=$(git rev-parse HEAD)
 
@@ -67,78 +73,7 @@ if $DO_PULL; then
     fi
 fi
 
-# ── 2. Backend ──
-if $DO_BACKEND; then
-    step "Backend"
-
-    # Aktywuj venv
-    if [ -d "$VENV_DIR" ]; then
-        source "$VENV_DIR/bin/activate"
-        log "venv aktywowane"
-    else
-        warn "Brak venv w $VENV_DIR — używam systemowego Pythona"
-    fi
-
-    # Zainstaluj zależności jeśli requirements.txt się zmienił
-    cd "$BACKEND_DIR"
-    if $DO_PULL && git diff "$BEFORE".."$AFTER" --name-only 2>/dev/null | grep -q "requirements.txt"; then
-        log "requirements.txt zmieniony — instaluję zależności..."
-        pip install -q -r requirements.txt
-    fi
-
-    # Restart backendu
-    if systemctl is-active --quiet "$BACKEND_SERVICE" 2>/dev/null; then
-        log "Restartuję systemd service: $BACKEND_SERVICE"
-        sudo systemctl restart "$BACKEND_SERVICE"
-        sleep 2
-        if systemctl is-active --quiet "$BACKEND_SERVICE"; then
-            log "Backend działa (systemd)"
-        else
-            err "Backend nie wystartował! Sprawdź: journalctl -u $BACKEND_SERVICE -n 30"
-            exit 1
-        fi
-    else
-        warn "Brak systemd service '$BACKEND_SERVICE' — restartuję ręcznie"
-
-        # Zabij istniejący proces uvicorn
-        PIDS=$(pgrep -f "uvicorn app.main:app" || true)
-        if [ -n "$PIDS" ]; then
-            log "Zatrzymuję uvicorn (PID: $PIDS)..."
-            kill $PIDS 2>/dev/null || true
-            sleep 2
-            # Force kill jeśli nadal żyje
-            kill -9 $PIDS 2>/dev/null || true
-        fi
-
-        # Uruchom uvicorn w tle
-        cd "$BACKEND_DIR"
-        nohup uvicorn app.main:app \
-            --host 0.0.0.0 \
-            --port "$BACKEND_PORT" \
-            --workers 2 \
-            >> "$BACKEND_DIR/uvicorn.log" 2>&1 &
-
-        # Sprawdź health (retry do 15s)
-        HEALTH_OK=false
-        for i in 1 2 3 4 5; do
-            sleep 3
-            if curl -sf "http://localhost:$BACKEND_PORT/health" > /dev/null 2>&1; then
-                HEALTH_OK=true
-                break
-            fi
-            warn "Health check próba $i/5 — czekam..."
-        done
-
-        if $HEALTH_OK; then
-            log "Backend działa na porcie $BACKEND_PORT (PID: $!)"
-        else
-            err "Backend nie odpowiada na /health! Sprawdź: tail -30 $BACKEND_DIR/uvicorn.log"
-            exit 1
-        fi
-    fi
-fi
-
-# ── 3. Migracje DB ──
+# ── 2. Migracje DB (PRZED restartem backendu!) ──
 if $DO_DB; then
     step "Migracje bazy danych"
     cd "$BACKEND_DIR"
@@ -155,6 +90,64 @@ if $DO_DB; then
     fi
 fi
 
+# ── 3. Backend ──
+if $DO_BACKEND; then
+    step "Backend"
+
+    # Aktywuj venv
+    if [ -d "$VENV_DIR" ]; then
+        source "$VENV_DIR/bin/activate"
+        log "venv aktywowane"
+    else
+        warn "Brak venv w $VENV_DIR — używam systemowego Pythona"
+    fi
+
+    # Zainstaluj zależności jeśli requirements.txt się zmienił
+    cd "$BACKEND_DIR"
+    if $DO_PULL && [ -n "$BEFORE" ] && [ -n "$AFTER" ] && [ "$BEFORE" != "$AFTER" ]; then
+        if git diff "$BEFORE".."$AFTER" --name-only 2>/dev/null | grep -q "requirements.txt"; then
+            log "requirements.txt zmieniony — instaluję zależności..."
+            pip install -q -r requirements.txt
+        fi
+    fi
+
+    # Zabij istniejący proces uvicorn
+    PIDS=$(pgrep -f "uvicorn app.main:app" || true)
+    if [ -n "$PIDS" ]; then
+        log "Zatrzymuję uvicorn (PID: $PIDS)..."
+        kill $PIDS 2>/dev/null || true
+        sleep 2
+        # Force kill jeśli nadal żyje
+        kill -9 $PIDS 2>/dev/null || true
+    fi
+
+    # Uruchom uvicorn w tle
+    cd "$BACKEND_DIR"
+    nohup uvicorn app.main:app \
+        --host 0.0.0.0 \
+        --port "$BACKEND_PORT" \
+        --workers 2 \
+        >> "$BACKEND_DIR/uvicorn.log" 2>&1 &
+
+    # Sprawdź health (retry do 15s)
+    HEALTH_OK=false
+    for i in 1 2 3 4 5; do
+        sleep 3
+        if curl -sf "http://localhost:$BACKEND_PORT/health" > /dev/null 2>&1; then
+            HEALTH_OK=true
+            break
+        fi
+        warn "Health check próba $i/5 — czekam..."
+    done
+
+    if $HEALTH_OK; then
+        log "Backend działa na porcie $BACKEND_PORT (PID: $!)"
+    else
+        err "Backend nie odpowiada na /health! Sprawdź: tail -30 $BACKEND_DIR/uvicorn.log"
+        exit 1
+    fi
+fi
+
 # ── 4. Frontend ──
 if $DO_FRONTEND; then
     step "Frontend"
@@ -164,9 +157,11 @@ if $DO_FRONTEND; then
     if [ ! -d "node_modules" ]; then
         log "Brak node_modules — instaluję..."
         npm install
-    elif $DO_PULL && git diff "$BEFORE".."$AFTER" --name-only 2>/dev/null | grep -q "package.json\|package-lock.json"; then
-        log "package.json zmieniony — npm install..."
-        npm install
+    elif $DO_PULL && [ -n "$BEFORE" ] && [ -n "$AFTER" ] && [ "$BEFORE" != "$AFTER" ]; then
+        if git diff "$BEFORE".."$AFTER" --name-only 2>/dev/null | grep -q "package.json\|package-lock.json"; then
+            log "package.json zmieniony — npm install..."
+            npm install
+        fi
     fi
 
     # Build produkcyjny
@@ -174,17 +169,18 @@ if $DO_FRONTEND; then
     npm run build 2>&1 | tail -5
     log "Frontend zbudowany → $FRONTEND_DIR/dist/"
 
-    # Restart vite dev server jeśli działa
+    # Restart vite dev server (zawsze — serwuje nowy build)
     VITE_PIDS=$(pgrep -f "vite" || true)
     if [ -n "$VITE_PIDS" ]; then
-        log "Restartuję vite dev server..."
+        log "Zatrzymuję vite dev server..."
         kill $VITE_PIDS 2>/dev/null || true
         sleep 1
-        cd "$FRONTEND_DIR"
-        nohup npm run dev >> "$FRONTEND_DIR/vite.log" 2>&1 &
-        sleep 2
-        log "Vite dev server uruchomiony na porcie $FRONTEND_PORT"
     fi
+
+    cd "$FRONTEND_DIR"
+    nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" >> "$FRONTEND_DIR/vite.log" 2>&1 &
+    sleep 2
+    log "Vite dev server uruchomiony na porcie $FRONTEND_PORT"
 
     # Przeładuj nginx jeśli działa (serwuje dist/)
     if systemctl is-active --quiet nginx 2>/dev/null; then

@@ -1591,7 +1591,7 @@ export default function AuditProgramsPage() {
                     justification: transferJustification.trim(),
                   });
                   setShowTransferModal(null);
-                  if (sel) { loadItems(sel.id); loadPrograms(); }
+                  if (sel) { loadItems(sel.id); load(); }
                 } catch (err) { alert("Blad transferu: " + err); }
                 finally { setWorkflowBusy(false); }
               }}

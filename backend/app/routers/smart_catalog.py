@@ -1731,12 +1731,46 @@ async def list_ai_prompts(s: AsyncSession = Depends(get_session)):
 @router.get("/api/v1/admin/ai-prompts/{function_key}", summary="Pobierz prompt AI")
 async def get_ai_prompt(function_key: str, s: AsyncSession = Depends(get_session)):
     from app.models.smart_catalog import AIPromptTemplate
-    row = (await s.execute(
-        select(AIPromptTemplate).where(AIPromptTemplate.function_key == function_key)
-    )).scalar_one_or_none()
+    from app.services.ai_prompts import DEFAULT_PROMPTS, _DEFAULTS_BY_KEY
+
+    row = None
+    try:
+        row = (await s.execute(
+            select(AIPromptTemplate).where(AIPromptTemplate.function_key == function_key)
+        )).scalar_one_or_none()
+    except Exception:
+        pass  # table may not exist yet
+
+    # Auto-seed if row missing but we have a default
     if not row:
-        raise HTTPException(404, f"Prompt '{function_key}' nie istnieje")
-    from app.services.ai_prompts import _DEFAULTS_BY_KEY
+        default_entry = next((p for p in DEFAULT_PROMPTS if p["function_key"] == function_key), None)
+        if not default_entry:
+            raise HTTPException(404, f"Prompt '{function_key}' nie istnieje")
+        try:
+            row = AIPromptTemplate(
+                function_key=default_entry["function_key"],
+                display_name=default_entry["display_name"],
+                description=default_entry.get("description", ""),
+                prompt_text=default_entry["prompt_text"],
+                is_customized=False,
+            )
+            s.add(row)
+            await s.commit()
+            await s.refresh(row)
+        except Exception:
+            # DB not available — return from defaults directly
+            return {
+                "id": 0,
+                "function_key": function_key,
+                "display_name": default_entry["display_name"],
+                "description": default_entry.get("description", ""),
+                "prompt_text": default_entry["prompt_text"],
+                "is_customized": False,
+                "default_text": default_entry["prompt_text"],
+                "updated_by": None,
+                "updated_at": None,
+            }
+
     return {
         "id": row.id,
         "function_key": row.function_key,

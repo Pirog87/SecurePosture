@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import OrgUnitTreeSelect from "../components/OrgUnitTreeSelect";
+import type { OrgUnitTreeNode } from "../types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -14,7 +16,8 @@ interface ReportDef {
   description: string;
   icon: string;
   endpoint: string;
-  params?: { key: string; label: string; type: "number" | "text" }[];
+  /** Extra non-org-unit params (e.g. asset_category_id) */
+  extraParams?: { key: string; label: string; type: "number" | "text" }[];
 }
 
 const REPORTS: ReportDef[] = [
@@ -31,7 +34,6 @@ const REPORTS: ReportDef[] = [
     description: "Pelny rejestr ryzyk z ocenami, statusami, wlascicielami i terminami.",
     icon: "⚠️",
     endpoint: "/api/v1/reports/risks",
-    params: [{ key: "org_unit_id", label: "Jednostka org. (ID, opcjonalnie)", type: "number" }],
   },
   {
     id: "assets",
@@ -39,7 +41,7 @@ const REPORTS: ReportDef[] = [
     description: "Lista aktywow z kategoriami CMDB, wlascicielami, lokalizacjami i ryzykami.",
     icon: "🖥️",
     endpoint: "/api/v1/reports/assets",
-    params: [{ key: "asset_category_id", label: "Kategoria CMDB (ID, opcjonalnie)", type: "number" }],
+    extraParams: [{ key: "asset_category_id", label: "Kategoria CMDB (ID, opcjonalnie)", type: "number" }],
   },
 ];
 
@@ -51,7 +53,18 @@ export default function ReportsPage() {
   const [aiProgress, setAiProgress] = useState<{ percent: number; message: string } | null>(null);
   const [aiHistory, setAiHistory] = useState<AIReportHistoryItem[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [aiOrgUnitId, setAiOrgUnitId] = useState<number | null>(null);
   const aiLoadingRef = useRef(false);
+
+  // Org tree — shared across all report cards
+  const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/v1/org-units/tree`)
+      .then(r => r.ok ? r.json() : [])
+      .then(setOrgTree)
+      .catch(() => {});
+  }, []);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -76,12 +89,13 @@ export default function ReportsPage() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  const handleGenerate = async (report: ReportDef, formData?: Record<string, string>) => {
+  const handleGenerate = async (report: ReportDef, orgUnitId: number | null, extraFormData?: Record<string, string>) => {
     setGenerating(report.id);
     try {
       const params = new URLSearchParams();
-      if (formData) {
-        for (const [k, v] of Object.entries(formData)) {
+      if (orgUnitId) params.set("org_unit_id", String(orgUnitId));
+      if (extraFormData) {
+        for (const [k, v] of Object.entries(extraFormData)) {
           if (v) params.set(k, v);
         }
       }
@@ -138,7 +152,8 @@ export default function ReportsPage() {
     );
 
     try {
-      const res = await fetch(`${API_BASE}/api/v1/reports/ai-management`);
+      const qs = aiOrgUnitId ? `?org_unit_id=${aiOrgUnitId}` : "";
+      const res = await fetch(`${API_BASE}/api/v1/reports/ai-management${qs}`);
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.detail || `HTTP ${res.status}`);
@@ -189,6 +204,7 @@ export default function ReportsPage() {
             report={report}
             generating={generating === report.id}
             onGenerate={handleGenerate}
+            orgTree={orgTree}
           />
         ))}
       </div>
@@ -215,6 +231,21 @@ export default function ReportsPage() {
               </div>
             </div>
           </div>
+
+          {/* Org unit filter for AI report */}
+          <div style={{ marginBottom: 10, padding: 10, background: "var(--bg-inset)", borderRadius: 6, border: "1px solid var(--border)" }}>
+            <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+              Jednostka organizacyjna (opcjonalnie)
+            </label>
+            <OrgUnitTreeSelect
+              tree={orgTree}
+              value={aiOrgUnitId}
+              onChange={setAiOrgUnitId}
+              placeholder="Cala organizacja"
+              allowClear
+            />
+          </div>
+
           <div style={{ marginTop: "auto" }}>
             <button
               className="btn btn-primary"
@@ -300,15 +331,16 @@ export default function ReportsPage() {
   );
 }
 
-/* ═══ XLSX Report Card (existing) ═══ */
+/* ═══ XLSX Report Card ═══ */
 
-function ReportCard({ report, generating, onGenerate }: {
+function ReportCard({ report, generating, onGenerate, orgTree }: {
   report: ReportDef;
   generating: boolean;
-  onGenerate: (report: ReportDef, formData?: Record<string, string>) => void;
+  onGenerate: (report: ReportDef, orgUnitId: number | null, extraFormData?: Record<string, string>) => void;
+  orgTree: OrgUnitTreeNode[];
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [formValues, setFormValues] = useState<Record<string, string>>({});
+  const [orgUnitId, setOrgUnitId] = useState<number | null>(null);
+  const [extraValues, setExtraValues] = useState<Record<string, string>>({});
 
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column" }}>
@@ -324,37 +356,40 @@ function ReportCard({ report, generating, onGenerate }: {
         </div>
       </div>
 
-      {report.params && report.params.length > 0 && (
-        <div>
-          {!expanded ? (
-            <button className="btn btn-sm" style={{ fontSize: 11, marginBottom: 8 }} onClick={() => setExpanded(true)}>
-              Parametry filtrowania...
-            </button>
-          ) : (
-            <div style={{ marginBottom: 10, padding: 10, background: "var(--bg-inset)", borderRadius: 6, border: "1px solid var(--border)" }}>
-              {report.params.map(p => (
-                <div className="form-group" key={p.key} style={{ marginBottom: 8 }}>
-                  <label style={{ fontSize: 11, color: "var(--text-muted)" }}>{p.label}</label>
-                  <input
-                    className="form-control"
-                    type={p.type}
-                    value={formValues[p.key] || ""}
-                    onChange={e => setFormValues(prev => ({ ...prev, [p.key]: e.target.value }))}
-                    style={{ fontSize: 12 }}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Org unit selector — always shown */}
+      <div style={{ marginBottom: 8, padding: 10, background: "var(--bg-inset)", borderRadius: 6, border: "1px solid var(--border)" }}>
+        <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>
+          Jednostka organizacyjna (opcjonalnie)
+        </label>
+        <OrgUnitTreeSelect
+          tree={orgTree}
+          value={orgUnitId}
+          onChange={setOrgUnitId}
+          placeholder="Cala organizacja"
+          allowClear
+        />
+
+        {/* Extra params (e.g. asset_category_id) */}
+        {report.extraParams && report.extraParams.map(p => (
+          <div className="form-group" key={p.key} style={{ marginTop: 8, marginBottom: 0 }}>
+            <label style={{ fontSize: 11, color: "var(--text-muted)" }}>{p.label}</label>
+            <input
+              className="form-control"
+              type={p.type}
+              value={extraValues[p.key] || ""}
+              onChange={e => setExtraValues(prev => ({ ...prev, [p.key]: e.target.value }))}
+              style={{ fontSize: 12 }}
+            />
+          </div>
+        ))}
+      </div>
 
       <div style={{ marginTop: "auto" }}>
         <button
           className="btn btn-primary"
           style={{ width: "100%" }}
           disabled={generating}
-          onClick={() => onGenerate(report, formValues)}
+          onClick={() => onGenerate(report, orgUnitId, extraValues)}
         >
           {generating ? "Generowanie..." : "Pobierz raport (XLSX)"}
         </button>

@@ -20,9 +20,6 @@ from app.models.compliance import (
 )
 from app.models.framework import Framework, FrameworkNode
 from app.schemas.compliance import (
-    AuditProgramCreate,
-    AuditProgramOut,
-    AuditProgramUpdate,
     AuditEngagementCreate,
     AuditEngagementOut,
     AuditEngagementUpdate,
@@ -92,99 +89,9 @@ async def _engagement_out(s: AsyncSession, e: AuditEngagement) -> AuditEngagemen
 
 
 # ═══════════════════════════════════════════════════════════════
-#  AUDIT PROGRAMS
+#  AUDIT PROGRAMS — moved to routers/audit_program.py (V2)
+#  Legacy programs router removed.
 # ═══════════════════════════════════════════════════════════════
-
-programs = APIRouter(prefix="/api/v1/audit-programs", tags=["Audit Programs"])
-
-
-@programs.get("/", response_model=list[AuditProgramOut])
-async def list_programs(
-    year: int | None = None,
-    status: str | None = None,
-    s: AsyncSession = Depends(get_session),
-):
-    q = select(AuditProgram)
-    if year:
-        q = q.where(AuditProgram.year == year)
-    if status:
-        q = q.where(AuditProgram.status == status)
-    q = q.order_by(AuditProgram.year.desc(), AuditProgram.name)
-    rows = (await s.execute(q)).scalars().all()
-    out = []
-    for p in rows:
-        ec = (await s.execute(
-            select(func.count()).where(AuditEngagement.audit_program_id == p.id)
-        )).scalar() or 0
-        out.append(AuditProgramOut(
-            id=p.id, name=p.name, year=p.year, description=p.description,
-            status=p.status, prepared_by=p.prepared_by, approved_by=p.approved_by,
-            approved_at=p.approved_at, org_unit_id=p.org_unit_id,
-            engagement_count=ec, created_at=p.created_at, updated_at=p.updated_at,
-        ))
-    return out
-
-
-@programs.get("/{prog_id}", response_model=AuditProgramOut)
-async def get_program(prog_id: int, s: AsyncSession = Depends(get_session)):
-    p = await s.get(AuditProgram, prog_id)
-    if not p:
-        raise HTTPException(404, "Audit program not found")
-    ec = (await s.execute(
-        select(func.count()).where(AuditEngagement.audit_program_id == p.id)
-    )).scalar() or 0
-    return AuditProgramOut(
-        id=p.id, name=p.name, year=p.year, description=p.description,
-        status=p.status, prepared_by=p.prepared_by, approved_by=p.approved_by,
-        approved_at=p.approved_at, org_unit_id=p.org_unit_id,
-        engagement_count=ec, created_at=p.created_at, updated_at=p.updated_at,
-    )
-
-
-@programs.post("/", response_model=AuditProgramOut, status_code=201)
-async def create_program(body: AuditProgramCreate, s: AsyncSession = Depends(get_session)):
-    p = AuditProgram(**body.model_dump())
-    s.add(p)
-    await s.commit()
-    await s.refresh(p)
-    return AuditProgramOut(
-        id=p.id, name=p.name, year=p.year, description=p.description,
-        status=p.status, prepared_by=p.prepared_by, approved_by=p.approved_by,
-        approved_at=p.approved_at, org_unit_id=p.org_unit_id,
-        engagement_count=0, created_at=p.created_at, updated_at=p.updated_at,
-    )
-
-
-@programs.put("/{prog_id}", response_model=AuditProgramOut)
-async def update_program(prog_id: int, body: AuditProgramUpdate, s: AsyncSession = Depends(get_session)):
-    p = await s.get(AuditProgram, prog_id)
-    if not p:
-        raise HTTPException(404, "Audit program not found")
-    for k, v in body.model_dump(exclude_unset=True).items():
-        setattr(p, k, v)
-    await s.commit()
-    await s.refresh(p)
-    ec = (await s.execute(
-        select(func.count()).where(AuditEngagement.audit_program_id == p.id)
-    )).scalar() or 0
-    return AuditProgramOut(
-        id=p.id, name=p.name, year=p.year, description=p.description,
-        status=p.status, prepared_by=p.prepared_by, approved_by=p.approved_by,
-        approved_at=p.approved_at, org_unit_id=p.org_unit_id,
-        engagement_count=ec, created_at=p.created_at, updated_at=p.updated_at,
-    )
-
-
-@programs.post("/{prog_id}/approve")
-async def approve_program(prog_id: int, approved_by: str = Query(...), s: AsyncSession = Depends(get_session)):
-    p = await s.get(AuditProgram, prog_id)
-    if not p:
-        raise HTTPException(404, "Audit program not found")
-    p.status = "approved"
-    p.approved_by = approved_by
-    p.approved_at = datetime.utcnow()
-    await s.commit()
-    return {"status": "approved"}
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -59,6 +59,15 @@ from .compliance import (
     AuditReport,
     FrameworkMapping,
 )
+from .audit_program import (
+    AuditProgramV2,
+    AuditProgramItem,
+    AuditProgramChangeRequest,
+    AuditProgramHistory,
+    AuditProgramVersionDiff,
+    Supplier,
+    Location,
+)
 from .smart_catalog import (
     ThreatCatalog,
     WeaknessCatalog,
@@ -114,4 +123,7 @@ __all__ = [
     "AuditProgram", "AuditEngagement", "AuditEngagementAuditor", "AuditEngagementScope",
     "TestTemplate", "TestTemplateRequirement", "AuditTest",
     "ComplianceAuditFinding", "AuditReport", "FrameworkMapping",
+    "AuditProgramV2", "AuditProgramItem", "AuditProgramChangeRequest",
+    "AuditProgramHistory", "AuditProgramVersionDiff",
+    "Supplier", "Location",
 ]

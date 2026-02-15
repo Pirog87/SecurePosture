@@ -1677,6 +1677,23 @@ async def list_ai_prompts(s: AsyncSession = Depends(get_session)):
     rows = (await s.execute(
         select(AIPromptTemplate).order_by(AIPromptTemplate.function_key)
     )).scalars().all()
+
+    # Auto-seed defaults if table is empty (migration seed may not have run)
+    if not rows:
+        from app.services.ai_prompts import DEFAULT_PROMPTS
+        for p in DEFAULT_PROMPTS:
+            s.add(AIPromptTemplate(
+                function_key=p["function_key"],
+                display_name=p["display_name"],
+                description=p.get("description", ""),
+                prompt_text=p["prompt_text"],
+                is_customized=False,
+            ))
+        await s.commit()
+        rows = (await s.execute(
+            select(AIPromptTemplate).order_by(AIPromptTemplate.function_key)
+        )).scalars().all()
+
     return [
         {
             "id": r.id,

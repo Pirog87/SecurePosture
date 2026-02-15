@@ -81,21 +81,21 @@ const PROVIDER_OPTIONS = [
   { value: "openai_compatible", label: "OpenAI-compatible (OpenAI, vLLM, Ollama)" },
 ];
 
-const FEATURE_TOGGLES: { key: string; label: string; desc: string; group: string }[] = [
+const FEATURE_TOGGLES: { key: string; label: string; desc: string; group: string; promptKeys?: string[] }[] = [
   // Smart Catalog
-  { key: "feature_scenario_generation", label: "Generowanie scenariuszy ryzyka", desc: "AI tworzy scenariusze zagrożeń dla kategorii aktywów", group: "catalog" },
-  { key: "feature_correlation_enrichment", label: "Wzbogacanie korelacji", desc: "AI sugeruje brakujące powiązania threat-weakness-control", group: "catalog" },
-  { key: "feature_natural_language_search", label: "Wyszukiwanie w języku naturalnym", desc: "Wyszukiwanie w katalogach za pomocą pytań w języku naturalnym", group: "catalog" },
-  { key: "feature_gap_analysis", label: "Analiza luk bezpieczeństwa", desc: "AI analizuje pokrycie i identyfikuje luki", group: "catalog" },
-  { key: "feature_entry_assist", label: "Asystent tworzenia wpisów", desc: "AI podpowiada klasyfikację i powiązania nowych wpisów", group: "catalog" },
+  { key: "feature_scenario_generation", label: "Generowanie scenariuszy ryzyka", desc: "AI tworzy scenariusze zagrożeń dla kategorii aktywów", group: "catalog", promptKeys: ["scenario_gen"] },
+  { key: "feature_correlation_enrichment", label: "Wzbogacanie korelacji", desc: "AI sugeruje brakujące powiązania threat-weakness-control", group: "catalog", promptKeys: ["enrichment"] },
+  { key: "feature_natural_language_search", label: "Wyszukiwanie w języku naturalnym", desc: "Wyszukiwanie w katalogach za pomocą pytań w języku naturalnym", group: "catalog", promptKeys: ["search"] },
+  { key: "feature_gap_analysis", label: "Analiza luk bezpieczeństwa", desc: "AI analizuje pokrycie i identyfikuje luki", group: "catalog", promptKeys: ["gap_analysis"] },
+  { key: "feature_entry_assist", label: "Asystent tworzenia wpisów", desc: "AI podpowiada klasyfikację i powiązania nowych wpisów", group: "catalog", promptKeys: ["assist"] },
   // Framework / Document
-  { key: "feature_interpret", label: "Interpretacja wymagań", desc: "AI wyjaśnia wymagania z frameworków w praktycznym kontekście", group: "framework" },
-  { key: "feature_translate", label: "Tłumaczenie wymagań", desc: "AI tłumaczy wymagania na wybrany język z zachowaniem terminologii", group: "framework" },
-  { key: "feature_evidence", label: "Generowanie dowodów audytowych", desc: "AI generuje listę dowodów jakich może wymagać audytor", group: "framework" },
-  { key: "feature_security_area_map", label: "Mapowanie obszarów bezpieczeństwa", desc: "AI przypisuje wymagania do obszarów bezpieczeństwa", group: "framework" },
-  { key: "feature_cross_mapping", label: "Cross-mapping frameworków", desc: "AI mapuje wymagania między różnymi standardami", group: "framework" },
-  { key: "feature_coverage_report", label: "Raporty pokrycia", desc: "AI generuje raporty zarządcze o pokryciu między frameworkami", group: "framework" },
-  { key: "feature_document_import", label: "Import dokumentów AI", desc: "AI analizuje dokumenty PDF/DOCX i wyodrębnia strukturę frameworka", group: "framework" },
+  { key: "feature_interpret", label: "Interpretacja wymagań", desc: "AI wyjaśnia wymagania z frameworków w praktycznym kontekście", group: "framework", promptKeys: ["interpret"] },
+  { key: "feature_translate", label: "Tłumaczenie wymagań", desc: "AI tłumaczy wymagania na wybrany język z zachowaniem terminologii", group: "framework", promptKeys: ["translate"] },
+  { key: "feature_evidence", label: "Generowanie dowodów audytowych", desc: "AI generuje listę dowodów jakich może wymagać audytor", group: "framework", promptKeys: ["evidence"] },
+  { key: "feature_security_area_map", label: "Mapowanie obszarów bezpieczeństwa", desc: "AI przypisuje wymagania do obszarów bezpieczeństwa", group: "framework", promptKeys: ["security_area_map"] },
+  { key: "feature_cross_mapping", label: "Cross-mapping frameworków", desc: "AI mapuje wymagania między różnymi standardami", group: "framework", promptKeys: ["cross_mapping"] },
+  { key: "feature_coverage_report", label: "Raporty pokrycia", desc: "AI generuje raporty zarządcze o pokryciu między frameworkami", group: "framework", promptKeys: ["coverage_report"] },
+  { key: "feature_document_import", label: "Import dokumentów AI", desc: "AI analizuje dokumenty PDF/DOCX i wyodrębnia strukturę frameworka", group: "framework", promptKeys: ["document_import", "document_import_continuation"] },
 ];
 
 const ACTION_LABELS: Record<string, string> = {
@@ -551,9 +551,6 @@ export default function AIConfigPage() {
         </div>
       </div>
 
-      {/* ── AI Prompt Templates ── */}
-      <AIPromptsSection />
-
       {/* ── Usage Stats ── */}
       <div className="card" style={{ marginTop: 4 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -640,30 +637,149 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function FeatureToggle({ ft, form, setForm }: { ft: { key: string; label: string; desc: string }; form: any; setForm: any }) {
+function FeatureToggle({ ft, form, setForm }: { ft: { key: string; label: string; desc: string; promptKeys?: string[] }; form: any; setForm: any }) {
   const checked = !!form[ft.key];
+  const [expandedPrompt, setExpandedPrompt] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [defaultText, setDefaultText] = useState("");
+  const [promptMeta, setPromptMeta] = useState<{ display_name: string; is_customized: boolean } | null>(null);
+  const [savingPrompt, setSavingPrompt] = useState(false);
+
+  const loadPrompt = async (promptKey: string) => {
+    if (expandedPrompt === promptKey) {
+      setExpandedPrompt(null);
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/api/v1/admin/ai-prompts/${promptKey}`);
+      if (!res.ok) throw new Error("Nie znaleziono promptu");
+      const data = await res.json();
+      setEditText(data.prompt_text);
+      setDefaultText(data.default_text || "");
+      setPromptMeta({ display_name: data.display_name, is_customized: data.is_customized });
+      setExpandedPrompt(promptKey);
+    } catch {
+      alert("Nie udało się załadować promptu");
+    }
+  };
+
+  const savePrompt = async () => {
+    if (!expandedPrompt) return;
+    setSavingPrompt(true);
+    try {
+      await fetch(`${API}/api/v1/admin/ai-prompts/${expandedPrompt}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt_text: editText }),
+      });
+      setPromptMeta(prev => prev ? { ...prev, is_customized: true } : prev);
+      alert("Prompt zapisany!");
+    } catch {
+      alert("Błąd zapisu promptu");
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
+  const resetPrompt = async (promptKey: string) => {
+    if (!confirm("Przywrócić domyślny prompt? Twoje zmiany zostaną utracone.")) return;
+    try {
+      await fetch(`${API}/api/v1/admin/ai-prompts/${promptKey}/reset`, { method: "POST" });
+      // Reload the prompt
+      const res = await fetch(`${API}/api/v1/admin/ai-prompts/${promptKey}`);
+      if (res.ok) {
+        const data = await res.json();
+        setEditText(data.prompt_text);
+        setPromptMeta({ display_name: data.display_name, is_customized: false });
+      }
+    } catch {
+      alert("Błąd resetowania promptu");
+    }
+  };
+
   return (
-    <label
-      style={{
-        display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10,
-        cursor: "pointer", padding: "8px 10px", borderRadius: 6,
-        background: checked ? "var(--blue-dim)" : "var(--bg-subtle)",
-        border: "1px solid",
-        borderColor: checked ? "rgba(59,130,246,0.2)" : "transparent",
-        transition: "all 0.15s",
-      }}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => setForm({ ...form, [ft.key]: e.target.checked })}
-        style={{ width: 16, height: 16, marginTop: 1, accentColor: "var(--blue)", flexShrink: 0 }}
-      />
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 500 }}>{ft.label}</div>
-        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{ft.desc}</div>
-      </div>
-    </label>
+    <div style={{
+      marginBottom: 10, borderRadius: 6,
+      background: checked ? "var(--blue-dim)" : "var(--bg-subtle)",
+      border: "1px solid",
+      borderColor: checked ? "rgba(59,130,246,0.2)" : "transparent",
+      transition: "all 0.15s",
+    }}>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", padding: "8px 10px" }}>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => setForm({ ...form, [ft.key]: e.target.checked })}
+          style={{ width: 16, height: 16, marginTop: 1, accentColor: "var(--blue)", flexShrink: 0 }}
+        />
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 500 }}>{ft.label}</div>
+            {ft.promptKeys && ft.promptKeys.length > 0 && (
+              <div style={{ display: "flex", gap: 4 }}>
+                {ft.promptKeys.map(pk => (
+                  <button
+                    key={pk}
+                    className="btn btn-sm"
+                    style={{ fontSize: 10, padding: "2px 8px", lineHeight: 1.4 }}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); loadPrompt(pk); }}
+                  >
+                    {expandedPrompt === pk ? "Zwiń prompt" : ft.promptKeys!.length > 1 ? `Prompt: ${pk.replace("document_import_continuation", "kontynuacja").replace("document_import", "główny")}` : "Edytuj prompt"}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{ft.desc}</div>
+        </div>
+      </label>
+
+      {/* Inline prompt editor */}
+      {expandedPrompt && (
+        <div style={{ padding: "0 10px 10px 36px" }} onClick={(e) => e.stopPropagation()}>
+          <div style={{
+            background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6,
+            padding: 10, marginTop: 4,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>
+                Prompt systemowy: {promptMeta?.display_name ?? expandedPrompt}
+              </div>
+              {promptMeta?.is_customized && (
+                <span className="score-badge badge-blue" style={{ fontSize: 9 }}>Zmodyfikowany</span>
+              )}
+            </div>
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              style={{
+                width: "100%", minHeight: 180, fontFamily: "'JetBrains Mono',monospace",
+                fontSize: 11, padding: 8, borderRadius: 4, border: "1px solid var(--border)",
+                background: "var(--bg-subtle)", color: "var(--text)", resize: "vertical",
+              }}
+            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 }}>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button className="btn btn-sm" style={{ fontSize: 10 }}
+                  onClick={() => setEditText(defaultText)}>
+                  Wstaw domyślny
+                </button>
+                <button className="btn btn-sm" style={{ fontSize: 10, color: "var(--orange)" }}
+                  onClick={() => resetPrompt(expandedPrompt)}>
+                  Reset do domyślnego
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button className="btn btn-sm" style={{ fontSize: 10 }} onClick={() => setExpandedPrompt(null)}>Anuluj</button>
+                <button className="btn btn-sm btn-primary" style={{ fontSize: 10 }} onClick={savePrompt} disabled={savingPrompt}>
+                  {savingPrompt ? "Zapisuję..." : "Zapisz prompt"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -679,147 +795,4 @@ function StatBox({ label, value, color }: { label: string; value: string; color:
   );
 }
 
-/* ═══════════════════════════════════════════════════
-   AI Prompts Section — editable per function
-   ═══════════════════════════════════════════════════ */
-interface PromptTemplate {
-  id: number;
-  function_key: string;
-  display_name: string;
-  description: string;
-  prompt_text: string;
-  is_customized: boolean;
-  default_text?: string;
-  updated_by: string | null;
-  updated_at: string | null;
-}
-
-function AIPromptsSection() {
-  const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editText, setEditText] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [defaultText, setDefaultText] = useState("");
-
-  const loadPrompts = useCallback(() => {
-    setLoading(true);
-    fetch(`${API}/api/v1/admin/ai-prompts`).then(r => r.json())
-      .then(data => setPrompts(Array.isArray(data) ? data : []))
-      .catch(() => setPrompts([]))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => { loadPrompts(); }, [loadPrompts]);
-
-  const handleEdit = async (key: string) => {
-    // Load full prompt with default text
-    try {
-      const res = await fetch(`${API}/api/v1/admin/ai-prompts/${key}`);
-      const data: PromptTemplate = await res.json();
-      setEditText(data.prompt_text);
-      setDefaultText(data.default_text || "");
-      setEditingKey(key);
-    } catch {
-      alert("Nie udało się załadować promptu");
-    }
-  };
-
-  const handleSave = async () => {
-    if (!editingKey) return;
-    setSaving(true);
-    try {
-      await fetch(`${API}/api/v1/admin/ai-prompts/${editingKey}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt_text: editText }),
-      });
-      setEditingKey(null);
-      loadPrompts();
-    } catch {
-      alert("Błąd zapisu promptu");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleReset = async (key: string) => {
-    if (!confirm("Przywrócić domyślny prompt? Twoje zmiany zostaną utracone.")) return;
-    try {
-      await fetch(`${API}/api/v1/admin/ai-prompts/${key}/reset`, { method: "POST" });
-      if (editingKey === key) setEditingKey(null);
-      loadPrompts();
-    } catch {
-      alert("Błąd resetowania promptu");
-    }
-  };
-
-  return (
-    <div className="card" style={{ marginTop: 4 }}>
-      <div className="card-title">Prompty AI (edytowalne)</div>
-      <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
-        Każda funkcja AI używa konfigurowalnego promptu systemowego. Możesz je edytować bez zmian w kodzie.
-      </div>
-
-      {loading ? (
-        <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)" }}>Ładowanie...</div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {prompts.map(p => (
-            <div key={p.function_key} style={{
-              padding: "10px 14px", borderRadius: 8,
-              background: editingKey === p.function_key ? "var(--blue-dim)" : "var(--bg-subtle)",
-              border: `1px solid ${p.is_customized ? "rgba(59,130,246,0.3)" : "transparent"}`,
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{p.display_name}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{p.description}</div>
-                  {p.is_customized && (
-                    <span className="score-badge badge-blue" style={{ fontSize: 9, marginTop: 4 }}>Zmodyfikowany</span>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 4 }}>
-                  <button className="btn btn-sm" onClick={() => editingKey === p.function_key ? setEditingKey(null) : handleEdit(p.function_key)}>
-                    {editingKey === p.function_key ? "Zwiń" : "Edytuj"}
-                  </button>
-                  {p.is_customized && (
-                    <button className="btn btn-sm" style={{ color: "var(--orange)" }} onClick={() => handleReset(p.function_key)}>
-                      Resetuj
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {editingKey === p.function_key && (
-                <div style={{ marginTop: 10 }}>
-                  <textarea
-                    value={editText}
-                    onChange={e => setEditText(e.target.value)}
-                    style={{
-                      width: "100%", minHeight: 200, fontFamily: "'JetBrains Mono',monospace",
-                      fontSize: 12, padding: 10, borderRadius: 6, border: "1px solid var(--border)",
-                      background: "var(--bg)", color: "var(--text)", resize: "vertical",
-                    }}
-                  />
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-                    <button className="btn btn-sm" style={{ fontSize: 11, color: "var(--text-muted)" }}
-                      onClick={() => setEditText(defaultText)}>
-                      Wstaw domyślny
-                    </button>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button className="btn btn-sm" onClick={() => setEditingKey(null)}>Anuluj</button>
-                      <button className="btn btn-sm btn-primary" onClick={handleSave} disabled={saving}>
-                        {saving ? "Zapisuję..." : "Zapisz prompt"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
+/* AIPromptsSection removed — prompt editing is now inline in each FeatureToggle */

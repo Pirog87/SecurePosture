@@ -54,6 +54,7 @@ class FrameworkNodeOut(BaseModel):
     name_pl: str | None = None
     description: str | None = None
     description_pl: str | None = None
+    content: str | None = None
     depth: int = 1
     order_id: int = 0
     assessable: bool = False

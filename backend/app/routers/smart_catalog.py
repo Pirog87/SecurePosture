@@ -1665,3 +1665,96 @@ async def ai_usage_stats(
         by_action=by_action,
         requests_with_tracking=tracked,
     )
+
+
+# ═══════════════════════════════════════════════════════════════════
+# AI Prompt Templates CRUD
+# ═══════════════════════════════════════════════════════════════════
+
+@router.get("/admin/ai-prompts", summary="Lista edytowalnych promptów AI")
+async def list_ai_prompts(s: AsyncSession = Depends(get_session)):
+    from app.models.smart_catalog import AIPromptTemplate
+    rows = (await s.execute(
+        select(AIPromptTemplate).order_by(AIPromptTemplate.function_key)
+    )).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "function_key": r.function_key,
+            "display_name": r.display_name,
+            "description": r.description,
+            "prompt_text": r.prompt_text,
+            "is_customized": r.is_customized,
+            "updated_by": r.updated_by,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/admin/ai-prompts/{function_key}", summary="Pobierz prompt AI")
+async def get_ai_prompt(function_key: str, s: AsyncSession = Depends(get_session)):
+    from app.models.smart_catalog import AIPromptTemplate
+    row = (await s.execute(
+        select(AIPromptTemplate).where(AIPromptTemplate.function_key == function_key)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, f"Prompt '{function_key}' nie istnieje")
+    from app.services.ai_prompts import _DEFAULTS_BY_KEY
+    return {
+        "id": row.id,
+        "function_key": row.function_key,
+        "display_name": row.display_name,
+        "description": row.description,
+        "prompt_text": row.prompt_text,
+        "is_customized": row.is_customized,
+        "default_text": _DEFAULTS_BY_KEY.get(function_key, ""),
+        "updated_by": row.updated_by,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.put("/admin/ai-prompts/{function_key}", summary="Edytuj prompt AI")
+async def update_ai_prompt(function_key: str, body: dict, s: AsyncSession = Depends(get_session)):
+    from app.models.smart_catalog import AIPromptTemplate
+    from datetime import datetime
+
+    row = (await s.execute(
+        select(AIPromptTemplate).where(AIPromptTemplate.function_key == function_key)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, f"Prompt '{function_key}' nie istnieje")
+
+    prompt_text = body.get("prompt_text", "").strip()
+    if not prompt_text:
+        raise HTTPException(400, "Treść promptu nie może być pusta")
+
+    row.prompt_text = prompt_text
+    row.is_customized = True
+    row.updated_by = body.get("updated_by", "admin")
+    row.updated_at = datetime.utcnow()
+    await s.commit()
+    return {"status": "ok", "function_key": function_key}
+
+
+@router.post("/admin/ai-prompts/{function_key}/reset", summary="Przywróć domyślny prompt")
+async def reset_ai_prompt(function_key: str, s: AsyncSession = Depends(get_session)):
+    from app.models.smart_catalog import AIPromptTemplate
+    from app.services.ai_prompts import _DEFAULTS_BY_KEY
+    from datetime import datetime
+
+    row = (await s.execute(
+        select(AIPromptTemplate).where(AIPromptTemplate.function_key == function_key)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, f"Prompt '{function_key}' nie istnieje")
+
+    default_text = _DEFAULTS_BY_KEY.get(function_key)
+    if not default_text:
+        raise HTTPException(404, f"Brak domyślnego promptu dla '{function_key}'")
+
+    row.prompt_text = default_text
+    row.is_customized = False
+    row.updated_at = datetime.utcnow()
+    await s.commit()
+    return {"status": "ok", "function_key": function_key, "restored": True}

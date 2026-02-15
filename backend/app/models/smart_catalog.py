@@ -263,6 +263,32 @@ class AIProviderConfig(Base):
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
 
 
+class AIPromptTemplate(Base):
+    """Editable AI prompt templates — one per function, overrides hardcoded defaults."""
+    __tablename__ = "ai_prompt_templates"
+    __table_args__ = (
+        UniqueConstraint("function_key", name="uq_prompt_function_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    function_key: Mapped[str] = mapped_column(
+        String(50), nullable=False,
+        comment="Unique key: scenario_gen, enrichment, search, gap_analysis, assist, "
+                "interpret, translate, evidence, security_area_map, cross_mapping, "
+                "coverage_report, document_import, document_import_continuation",
+    )
+    display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, comment="Description of what this prompt does")
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False, comment="The system prompt sent to LLM")
+    is_customized: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False,
+        comment="True if user has edited this prompt (vs default)")
+    updated_by: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False,
+    )
+
+
 class AIAuditLog(Base):
     __tablename__ = "ai_audit_log"
 

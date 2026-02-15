@@ -53,7 +53,7 @@ function DetailRow({ label, value, color }: { label: string; value: React.ReactN
   );
 }
 
-type TabKey = "tree" | "dimensions" | "versions" | "edit" | "org-units" | "reviews";
+type TabKey = "tree" | "dimensions" | "versions" | "edit" | "org-units" | "reviews" | "metrics" | "attachments";
 
 /* ═══════════════════════════════════════════════════
    FrameworkDetailPage
@@ -351,6 +351,8 @@ export default function FrameworkDetailPage() {
           { key: "org-units" as TabKey, label: `Jedn. organizacyjne (${orgUnits.length})` },
           { key: "reviews" as TabKey, label: `Przeglądy (${reviews.length})` },
           { key: "versions" as TabKey, label: `Historia wersji (${versions.length})` },
+          { key: "metrics" as TabKey, label: "Metryka dokumentu" },
+          { key: "attachments" as TabKey, label: "Załączniki" },
           { key: "edit" as TabKey, label: "Edycja metadanych" },
         ]).map(t => (
           <button key={t.key}
@@ -451,6 +453,12 @@ export default function FrameworkDetailPage() {
 
       {/* ═══ Version History Tab ═══ */}
       {tab === "versions" && <VersionHistoryPanel versions={versions} />}
+
+      {/* ═══ Metrics Tab ═══ */}
+      {tab === "metrics" && <DocumentMetricsPanel fwId={fw.id} />}
+
+      {/* ═══ Attachments Tab ═══ */}
+      {tab === "attachments" && <AttachmentsPanel fwId={fw.id} />}
 
       {/* ═══ Edit Metadata Tab ═══ */}
       {tab === "edit" && <EditMetadataPanel fw={fw} onSaved={loadData} />}
@@ -795,6 +803,16 @@ function NodeDetailPanel({ node, pointTypes, onClose, onDelete, onSave, onAddChi
             <div style={{ fontSize: 11, color: "var(--blue)", background: "var(--blue-dim)", borderRadius: 6, padding: 8, marginBottom: 4, lineHeight: 1.5, cursor: "pointer" }}
               onClick={() => setAiPanel("interpret")} title="Kliknij aby rozwinąć">
               <strong>Interpretacja:</strong> {interpretResult.interpretation.slice(0, 150)}{interpretResult.interpretation.length > 150 ? "..." : ""}
+            </div>
+          )}
+
+          {/* Full verbatim content */}
+          {node.content && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>Pełna treść sekcji</div>
+              <div style={{ fontSize: 12, color: "var(--text)", background: "var(--bg-inset)", borderRadius: 6, padding: 10, lineHeight: 1.6, maxHeight: 300, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+                {node.content}
+              </div>
             </div>
           )}
 
@@ -1851,5 +1869,324 @@ function BulkAiModal({ action, tree, frameworkName, aiCache, onClose, onDone }: 
         )}
       </div>
     </Modal>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════
+   DocumentMetricsPanel — Metryka dokumentu
+   ═══════════════════════════════════════════════════ */
+interface MetricsData {
+  exists: boolean;
+  change_history: { version: string; date: string; author: string; description: string }[];
+  responsibilities: { role: string; name: string; title: string; date: string }[];
+  implementation_date: string | null;
+  implementation_method: string | null;
+  verification_date: string | null;
+  effective_date: string | null;
+  distribution_responsible: string | null;
+  distribution_date: string | null;
+  distribution_list: string | null;
+  notification_method: string | null;
+  access_level: string | null;
+  classification: string | null;
+  additional_permissions: string | null;
+  applicable_roles: string | null;
+  management_approved: string | null;
+}
+
+function DocumentMetricsPanel({ fwId }: { fwId: number }) {
+  const [data, setData] = useState<MetricsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Editable state
+  const [changeHistory, setChangeHistory] = useState<MetricsData["change_history"]>([]);
+  const [responsibilities, setResponsibilities] = useState<MetricsData["responsibilities"]>([]);
+  const [fields, setFields] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setLoading(true);
+    api.get<MetricsData>(`/api/v1/frameworks/${fwId}/metrics`)
+      .then(d => {
+        setData(d);
+        setChangeHistory(d.change_history || []);
+        setResponsibilities(d.responsibilities || []);
+        setFields({
+          implementation_date: d.implementation_date || "",
+          implementation_method: d.implementation_method || "",
+          verification_date: d.verification_date || "",
+          effective_date: d.effective_date || "",
+          distribution_responsible: d.distribution_responsible || "",
+          distribution_date: d.distribution_date || "",
+          distribution_list: d.distribution_list || "",
+          notification_method: d.notification_method || "",
+          access_level: d.access_level || "",
+          classification: d.classification || "",
+          additional_permissions: d.additional_permissions || "",
+          applicable_roles: d.applicable_roles || "",
+          management_approved: d.management_approved || "",
+        });
+      })
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [fwId]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/api/v1/frameworks/${fwId}/metrics`, {
+        change_history: changeHistory,
+        responsibilities: responsibilities,
+        ...fields,
+      });
+      setEditing(false);
+      // Reload
+      const d = await api.get<MetricsData>(`/api/v1/frameworks/${fwId}/metrics`);
+      setData(d);
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Błąd zapisu");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="card" style={{ padding: 40, textAlign: "center" }}>Ładowanie metryki...</div>;
+
+  const tblStyle: React.CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 12, marginBottom: 16 };
+  const thStyle: React.CSSProperties = { textAlign: "left", padding: "6px 10px", background: "var(--bg-inset)", borderBottom: "1px solid var(--border)", fontSize: 11, color: "var(--text-muted)", fontWeight: 600 };
+  const tdStyle: React.CSSProperties = { padding: "6px 10px", borderBottom: "1px solid var(--border)" };
+
+  return (
+    <div className="card" style={{ padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div className="card-title" style={{ margin: 0 }}>Metryka dokumentu</div>
+        {!editing
+          ? <button className="btn btn-sm" onClick={() => setEditing(true)}>Edytuj</button>
+          : <div style={{ display: "flex", gap: 6 }}>
+              <button className="btn btn-sm btn-primary" onClick={handleSave} disabled={saving}>{saving ? "..." : "Zapisz"}</button>
+              <button className="btn btn-sm" onClick={() => setEditing(false)}>Anuluj</button>
+            </div>
+        }
+      </div>
+
+      {/* Historia zmian dokumentu */}
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "var(--blue)" }}>Historia zmian dokumentu</div>
+      <table style={tblStyle}>
+        <thead><tr>
+          <th style={thStyle}>Wersja</th><th style={thStyle}>Data</th><th style={thStyle}>Autor</th><th style={thStyle}>Opis zmiany</th>
+          {editing && <th style={thStyle}></th>}
+        </tr></thead>
+        <tbody>
+          {changeHistory.map((row, i) => (
+            <tr key={i}>
+              {editing ? <>
+                <td style={tdStyle}><input style={{ width: 50, fontSize: 12 }} value={row.version} onChange={e => { const copy = [...changeHistory]; copy[i] = { ...row, version: e.target.value }; setChangeHistory(copy); }} /></td>
+                <td style={tdStyle}><input style={{ width: 90, fontSize: 12 }} value={row.date} onChange={e => { const copy = [...changeHistory]; copy[i] = { ...row, date: e.target.value }; setChangeHistory(copy); }} /></td>
+                <td style={tdStyle}><input style={{ width: 120, fontSize: 12 }} value={row.author} onChange={e => { const copy = [...changeHistory]; copy[i] = { ...row, author: e.target.value }; setChangeHistory(copy); }} /></td>
+                <td style={tdStyle}><input style={{ width: "100%", fontSize: 12 }} value={row.description} onChange={e => { const copy = [...changeHistory]; copy[i] = { ...row, description: e.target.value }; setChangeHistory(copy); }} /></td>
+                <td style={tdStyle}><button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => setChangeHistory(changeHistory.filter((_, j) => j !== i))}>X</button></td>
+              </> : <>
+                <td style={tdStyle}>{row.version}</td><td style={tdStyle}>{row.date}</td>
+                <td style={tdStyle}>{row.author}</td><td style={tdStyle}>{row.description}</td>
+              </>}
+            </tr>
+          ))}
+          {changeHistory.length === 0 && <tr><td colSpan={editing ? 5 : 4} style={{ ...tdStyle, color: "var(--text-muted)", textAlign: "center" }}>Brak wpisów</td></tr>}
+        </tbody>
+      </table>
+      {editing && <button className="btn btn-sm" style={{ marginBottom: 16 }} onClick={() => setChangeHistory([...changeHistory, { version: "", date: "", author: "", description: "" }])}>+ Dodaj wiersz</button>}
+
+      {/* Odpowiedzialności i akceptacje */}
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "var(--blue)" }}>Odpowiedzialności i akceptacje</div>
+      <table style={tblStyle}>
+        <thead><tr>
+          <th style={thStyle}>Rola</th><th style={thStyle}>Imię i nazwisko</th><th style={thStyle}>Stanowisko</th><th style={thStyle}>Data</th>
+          {editing && <th style={thStyle}></th>}
+        </tr></thead>
+        <tbody>
+          {responsibilities.map((row, i) => (
+            <tr key={i}>
+              {editing ? <>
+                <td style={tdStyle}><input style={{ width: "100%", fontSize: 12 }} value={row.role} onChange={e => { const copy = [...responsibilities]; copy[i] = { ...row, role: e.target.value }; setResponsibilities(copy); }} /></td>
+                <td style={tdStyle}><input style={{ width: "100%", fontSize: 12 }} value={row.name} onChange={e => { const copy = [...responsibilities]; copy[i] = { ...row, name: e.target.value }; setResponsibilities(copy); }} /></td>
+                <td style={tdStyle}><input style={{ width: "100%", fontSize: 12 }} value={row.title} onChange={e => { const copy = [...responsibilities]; copy[i] = { ...row, title: e.target.value }; setResponsibilities(copy); }} /></td>
+                <td style={tdStyle}><input style={{ width: 90, fontSize: 12 }} value={row.date} onChange={e => { const copy = [...responsibilities]; copy[i] = { ...row, date: e.target.value }; setResponsibilities(copy); }} /></td>
+                <td style={tdStyle}><button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => setResponsibilities(responsibilities.filter((_, j) => j !== i))}>X</button></td>
+              </> : <>
+                <td style={tdStyle}>{row.role}</td><td style={tdStyle}>{row.name}</td>
+                <td style={tdStyle}>{row.title}</td><td style={tdStyle}>{row.date}</td>
+              </>}
+            </tr>
+          ))}
+          {responsibilities.length === 0 && <tr><td colSpan={editing ? 5 : 4} style={{ ...tdStyle, color: "var(--text-muted)", textAlign: "center" }}>Brak wpisów</td></tr>}
+        </tbody>
+      </table>
+      {editing && <button className="btn btn-sm" style={{ marginBottom: 16 }} onClick={() => setResponsibilities([...responsibilities, { role: "", name: "", title: "", date: "" }])}>+ Dodaj wiersz</button>}
+
+      {/* Wdrożenie dokumentu */}
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "var(--blue)" }}>Wdrożenie dokumentu</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+        {[
+          { key: "applicable_roles", label: "Role i obszary obowiązywania" },
+          { key: "implementation_date", label: "Data zakończenia wdrożenia" },
+          { key: "verification_date", label: "Data weryfikacji wdrożenia" },
+          { key: "effective_date", label: "Dokument obowiązuje od" },
+          { key: "distribution_responsible", label: "Odpowiedzialny za dystrybucję" },
+          { key: "distribution_date", label: "Data dystrybucji" },
+          { key: "distribution_list", label: "Dystrybucja do" },
+          { key: "notification_method", label: "Forma poinformowania" },
+          { key: "access_level", label: "Poziom uprawnień dostępu" },
+          { key: "additional_permissions", label: "Uprawnienia dodatkowe" },
+          { key: "management_approved", label: "Zasady zatwierdzane przez Zarząd" },
+        ].map(f => (
+          <div key={f.key}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 2 }}>{f.label}</div>
+            {editing
+              ? <input className="form-input" style={{ width: "100%", fontSize: 12 }}
+                  value={fields[f.key] || ""} onChange={e => setFields({ ...fields, [f.key]: e.target.value })} />
+              : <div style={{ fontSize: 12, padding: "4px 0" }}>{fields[f.key] || "—"}</div>
+            }
+          </div>
+        ))}
+      </div>
+
+      {!data?.exists && !editing && (
+        <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
+          Brak metryki dokumentu. Metryka zostanie wyodrębniona automatycznie podczas importu AI
+          lub możesz ją dodać ręcznie klikając "Edytuj".
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/* ═══════════════════════════════════════════════════
+   AttachmentsPanel — Załączniki dokumentu
+   ═══════════════════════════════════════════════════ */
+interface AttachmentInfo {
+  id: number;
+  filename: string;
+  original_name: string;
+  file_size: number;
+  content_type: string | null;
+  uploaded_by: string | null;
+  description: string | null;
+  created_at: string | null;
+}
+
+function AttachmentsPanel({ fwId }: { fwId: number }) {
+  const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const loadAttachments = () => {
+    setLoading(true);
+    api.get<AttachmentInfo[]>(`/api/v1/frameworks/${fwId}/attachments`)
+      .then(setAttachments)
+      .catch(() => setAttachments([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadAttachments(); }, [fwId]);
+
+  const handleUpload = async (file: File) => {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const API_BASE = import.meta.env.VITE_API_URL ?? "";
+      await fetch(`${API_BASE}/api/v1/frameworks/${fwId}/attachments`, {
+        method: "POST",
+        body: formData,
+      });
+      loadAttachments();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Błąd uploadu");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const handleDownload = (att: AttachmentInfo) => {
+    const API_BASE = import.meta.env.VITE_API_URL ?? "";
+    window.open(`${API_BASE}/api/v1/frameworks/${fwId}/attachments/${att.id}/download`, "_blank");
+  };
+
+  const handleDelete = async (att: AttachmentInfo) => {
+    if (!confirm(`Usunąć załącznik "${att.original_name}"?`)) return;
+    try {
+      await api.delete(`/api/v1/frameworks/${fwId}/attachments/${att.id}`);
+      loadAttachments();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Błąd usuwania");
+    }
+  };
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  };
+
+  if (loading) return <div className="card" style={{ padding: 40, textAlign: "center" }}>Ładowanie załączników...</div>;
+
+  return (
+    <div className="card" style={{ padding: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div className="card-title" style={{ margin: 0 }}>Załączniki dokumentu</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input ref={fileRef} type="file" style={{ display: "none" }}
+            onChange={e => e.target.files?.[0] && handleUpload(e.target.files[0])} />
+          <button className="btn btn-sm btn-primary" onClick={() => fileRef.current?.click()} disabled={uploading}>
+            {uploading ? "Uploading..." : "+ Dodaj załącznik"}
+          </button>
+        </div>
+      </div>
+
+      {attachments.length === 0 ? (
+        <div style={{ padding: 30, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>
+          Brak załączników. Plik źródłowy jest automatycznie dołączany podczas importu AI.
+        </div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "6px 10px", background: "var(--bg-inset)", borderBottom: "1px solid var(--border)", fontSize: 11 }}>Nazwa pliku</th>
+              <th style={{ textAlign: "left", padding: "6px 10px", background: "var(--bg-inset)", borderBottom: "1px solid var(--border)", fontSize: 11 }}>Rozmiar</th>
+              <th style={{ textAlign: "left", padding: "6px 10px", background: "var(--bg-inset)", borderBottom: "1px solid var(--border)", fontSize: 11 }}>Dodano</th>
+              <th style={{ textAlign: "left", padding: "6px 10px", background: "var(--bg-inset)", borderBottom: "1px solid var(--border)", fontSize: 11 }}>Opis</th>
+              <th style={{ textAlign: "right", padding: "6px 10px", background: "var(--bg-inset)", borderBottom: "1px solid var(--border)", fontSize: 11 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {attachments.map(att => (
+              <tr key={att.id}>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ color: "var(--blue)", cursor: "pointer" }} onClick={() => handleDownload(att)}>
+                    {att.original_name}
+                  </span>
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>{formatSize(att.file_size)}</td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                  {att.created_at ? new Date(att.created_at).toLocaleString("pl") : "—"}
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>{att.description || "—"}</td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>
+                  <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                    <button className="btn btn-sm" onClick={() => handleDownload(att)}>Pobierz</button>
+                    <button className="btn btn-sm" style={{ color: "var(--red)" }} onClick={() => handleDelete(att)}>Usuń</button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }

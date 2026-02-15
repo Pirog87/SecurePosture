@@ -38,6 +38,8 @@ from .framework import (
     AssessmentAnswer,
     FrameworkOrgUnit,
     FrameworkReview,
+    DocumentMetrics,
+    FrameworkAttachment,
 )
 from .control_effectiveness import ControlImplementation, ControlEffectivenessTest
 from .compliance import (
@@ -68,6 +70,7 @@ from .smart_catalog import (
     ThreatControlLink,
     WeaknessControlLink,
     AIProviderConfig,
+    AIPromptTemplate,
     AIAuditLog,
 )
 
@@ -99,10 +102,11 @@ __all__ = [
     "AssessmentDimension", "DimensionLevel",
     "Assessment", "AssessmentAnswer",
     "FrameworkOrgUnit", "FrameworkReview",
+    "DocumentMetrics", "FrameworkAttachment",
     "ThreatCatalog", "WeaknessCatalog", "ControlCatalog",
     "ThreatAssetCategory", "WeaknessAssetCategory", "ControlAssetCategory",
     "ThreatWeaknessLink", "ThreatControlLink", "WeaknessControlLink",
-    "AIProviderConfig", "AIAuditLog",
+    "AIProviderConfig", "AIPromptTemplate", "AIAuditLog",
     "ControlImplementation", "ControlEffectivenessTest",
     "ComplianceAssessment", "RequirementAssessment",
     "Evidence", "RequirementAssessmentEvidence", "ComplianceAssessmentHistory",

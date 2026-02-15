@@ -184,6 +184,7 @@ class FrameworkNode(Base):
     name_pl: Mapped[str | None] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(Text)
     description_pl: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str | None] = mapped_column(Text, comment="Full verbatim text of this section from the source document")
 
     depth: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     order_id: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -445,6 +446,72 @@ class FrameworkNodeAiCache(Base):
 
     # relationships
     node: Mapped["FrameworkNode"] = relationship()
+
+
+class DocumentMetrics(Base):
+    """Document metrics / metryka dokumentu — extracted from imported documents."""
+    __tablename__ = "document_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[int] = mapped_column(
+        ForeignKey("frameworks.id", ondelete="CASCADE"), nullable=False, unique=True,
+    )
+
+    # Historia zmian dokumentu — JSON array of {version, date, author, description}
+    change_history: Mapped[list | None] = mapped_column(JSON)
+
+    # Odpowiedzialności i akceptacje — JSON array of {role, name, title, date}
+    responsibilities: Mapped[list | None] = mapped_column(JSON)
+
+    # Wdrożenie dokumentu
+    implementation_date: Mapped[str | None] = mapped_column(String(50))
+    implementation_method: Mapped[str | None] = mapped_column(Text)
+    verification_date: Mapped[str | None] = mapped_column(String(50))
+    effective_date: Mapped[str | None] = mapped_column(String(50))
+    distribution_responsible: Mapped[str | None] = mapped_column(String(300))
+    distribution_date: Mapped[str | None] = mapped_column(String(50))
+    distribution_list: Mapped[str | None] = mapped_column(Text)
+    notification_method: Mapped[str | None] = mapped_column(Text)
+
+    # Klasyfikacja i dostęp
+    access_level: Mapped[str | None] = mapped_column(String(200))
+    classification: Mapped[str | None] = mapped_column(String(200))
+    additional_permissions: Mapped[str | None] = mapped_column(Text)
+
+    # Roles and obligations
+    applicable_roles: Mapped[str | None] = mapped_column(Text)
+    management_approved: Mapped[str | None] = mapped_column(String(10))
+
+    # Extra data (extensible JSON for anything else found)
+    extra: Mapped[dict | None] = mapped_column(JSON)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False,
+    )
+
+    # relationships
+    framework: Mapped["Framework"] = relationship()
+
+
+class FrameworkAttachment(Base):
+    """File attachments for framework/document (e.g. source PDF/DOCX)."""
+    __tablename__ = "framework_attachments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    framework_id: Mapped[int] = mapped_column(
+        ForeignKey("frameworks.id", ondelete="CASCADE"), nullable=False,
+    )
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(200))
+    uploaded_by: Mapped[str | None] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # relationships
+    framework: Mapped["Framework"] = relationship()
 
 
 # Avoid circular import — SecurityArea is referenced by string above.

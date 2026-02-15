@@ -118,10 +118,18 @@ if $DO_BACKEND; then
             --workers 2 \
             >> "$BACKEND_DIR/uvicorn.log" 2>&1 &
 
-        sleep 3
+        # Sprawdź health (retry do 15s)
+        HEALTH_OK=false
+        for i in 1 2 3 4 5; do
+            sleep 3
+            if curl -sf "http://localhost:$BACKEND_PORT/health" > /dev/null 2>&1; then
+                HEALTH_OK=true
+                break
+            fi
+            warn "Health check próba $i/5 — czekam..."
+        done
 
-        # Sprawdź health
-        if curl -sf "http://localhost:$BACKEND_PORT/health" > /dev/null 2>&1; then
+        if $HEALTH_OK; then
             log "Backend działa na porcie $BACKEND_PORT (PID: $!)"
         else
             err "Backend nie odpowiada na /health! Sprawdź: tail -30 $BACKEND_DIR/uvicorn.log"

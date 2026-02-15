@@ -1022,9 +1022,13 @@ async def debug_ai_import(
         raise HTTPException(503, "AI nie jest skonfigurowane.")
 
     try:
+        await file.seek(0)
         chunks, meta = prepare_chunked_document(file.filename, file.file)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+    if not chunks:
+        raise HTTPException(400, "Dokument jest pusty lub nie udało się wyekstrahować tekstu.")
 
     # Call LLM but catch everything and return raw response
     from app.services.ai_adapters import LLMResponse
@@ -1119,6 +1123,8 @@ async def import_from_ai(
         raise HTTPException(503, "AI nie jest skonfigurowane. Włącz AI w panelu administracyjnym.")
 
     try:
+        # Reset file position — FastAPI may have already read the stream
+        await file.seek(0)
         # Extract text in chunks
         chunks, meta = prepare_chunked_document(file.filename, file.file)
     except ValueError as e:

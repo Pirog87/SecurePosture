@@ -407,10 +407,23 @@ CREATE TABLE risk_reviews (
     INDEX idx_risk_reviews_date (review_date)
 ) ENGINE=InnoDB;
 
--- View: overdue risks
+-- View: overdue risks (explicit columns — resilient to ALTER TABLE)
 CREATE OR REPLACE VIEW v_overdue_risks AS
 SELECT
-    r.*,
+    r.id,
+    r.org_unit_id,
+    r.asset_name,
+    r.security_area_id,
+    r.impact_level,
+    r.probability_level,
+    r.safeguard_rating,
+    r.risk_score,
+    r.risk_level,
+    r.status_id,
+    r.strategy_id,
+    r.owner,
+    r.identified_at,
+    r.last_review_at,
     rc.review_interval_days,
     DATEDIFF(NOW(), COALESCE(r.last_review_at, r.identified_at)) AS days_since_review,
     CASE
@@ -419,7 +432,7 @@ SELECT
     END AS is_overdue
 FROM risks r
 CROSS JOIN risk_review_config rc
-WHERE r.risk_level != 'closed';
+WHERE r.risk_level IN ('high', 'medium', 'low');
 
 
 -- ═══════════════════════════════════════════════════════════════
@@ -619,7 +632,7 @@ LEFT JOIN risks r ON r.org_unit_id = ou.id
 WHERE ou.is_active = TRUE
 GROUP BY ou.id, ou.name, ou.symbol;
 
--- Risk summary per security area
+-- Risk summary per security area (explicit columns — resilient to ALTER TABLE)
 CREATE OR REPLACE VIEW v_risk_summary_by_area AS
 SELECT
     sa.id AS area_id,
@@ -631,7 +644,7 @@ SELECT
     ROUND(AVG(r.risk_score), 1) AS avg_risk_score
 FROM security_domains sa
 LEFT JOIN risks r ON r.security_area_id = sa.id
-WHERE sa.is_active = TRUE
+WHERE sa.is_active = 1
 GROUP BY sa.id, sa.name;
 
 -- Latest CIS assessment per org unit

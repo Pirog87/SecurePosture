@@ -40,6 +40,7 @@ interface AuditProgram {
   scope_description: string | null;
   audit_criteria: string | null;
   methods: string | null;
+  rejection_reason: string | null;
   submitted_at: string | null;
   approved_at: string | null;
   created_at: string;
@@ -205,6 +206,18 @@ export default function AuditProgramsPage() {
   const [showItemModal, setShowItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<ProgramItem | null>(null);
 
+  // Workflow dialogs
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showApproveModal, setShowApproveModal] = useState(false);
+  const [showCorrectionModal, setShowCorrectionModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [approveJustification, setApproveJustification] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [workflowBusy, setWorkflowBusy] = useState(false);
+
+  // Version history
+  const [versions, setVersions] = useState<{ id: number; version: number; status: string; is_current_version: boolean; correction_reason: string | null; approved_at: string | null; created_at: string | null }[]>([]);
+
   // Lookups
   const [users, setUsers] = useState<UserOption[]>([]);
   const [orgTree, setOrgTree] = useState<OrgUnitTreeNode[]>([]);
@@ -240,12 +253,15 @@ export default function AuditProgramsPage() {
       .catch(() => {});
   }, []);
 
-  // Load items when selection changes
+  // Load items + versions when selection changes
   useEffect(() => {
     if (selected) {
       loadItems(selected.id);
+      api.get<typeof versions>(`/api/v1/audit-programs/${selected.id}/versions`)
+        .then(setVersions).catch(() => setVersions([]));
     } else {
       setItems([]);
+      setVersions([]);
     }
   }, [selected?.id]);
 
@@ -280,6 +296,42 @@ export default function AuditProgramsPage() {
   const openEditForm = (p: AuditProgram) => {
     setEditingProgram(p);
     setShowModal(true);
+  };
+
+  /* ── Workflow actions ── */
+  const refreshSelected = async (id: number) => {
+    try {
+      const updated = await api.get<AuditProgram>(`/api/v1/audit-programs/${id}`);
+      setSelected(updated);
+      load();
+      loadItems(id);
+    } catch { /* ignore */ }
+  };
+
+  const doWorkflow = async (action: string, body?: Record<string, unknown>) => {
+    if (!selected) return;
+    setWorkflowBusy(true);
+    try {
+      await api.post(`/api/v1/audit-programs/${selected.id}/${action}`, body ?? {});
+      await refreshSelected(selected.id);
+    } catch (err) {
+      alert("Blad: " + err);
+    } finally {
+      setWorkflowBusy(false);
+    }
+  };
+
+  const doItemAction = async (itemId: number, action: string) => {
+    if (!selected) return;
+    setWorkflowBusy(true);
+    try {
+      await api.post(`/api/v1/audit-program-items/${itemId}/${action}`, {});
+      await refreshSelected(selected.id);
+    } catch (err) {
+      alert("Blad: " + err);
+    } finally {
+      setWorkflowBusy(false);
+    }
   };
 
   const sel = selected;
@@ -417,6 +469,17 @@ export default function AuditProgramsPage() {
               <SectionHeader number={"\u2462"} label={`Pozycje programu (${sel.item_count})`} />
             </div>
 
+            {/* Rejection notice */}
+            {sel.rejection_reason && sel.status === "draft" && (
+              <div style={{
+                padding: 8, borderRadius: 6, fontSize: 12, marginBottom: 8,
+                background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
+              }}>
+                <div style={{ fontWeight: 600, color: "var(--red)", marginBottom: 2 }}>Powod odrzucenia:</div>
+                <div style={{ color: "var(--text-secondary)" }}>{sel.rejection_reason}</div>
+              </div>
+            )}
+
             {itemsLoading ? (
               <div style={{ textAlign: "center", padding: 12, color: "var(--text-muted)", fontSize: 12 }}>Ladowanie pozycji...</div>
             ) : items.length === 0 ? (
@@ -445,7 +508,30 @@ export default function AuditProgramsPage() {
                         <span style={{ fontWeight: 600, marginRight: 6 }}>{item.name}</span>
                         {item.ref_id && <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--text-muted)" }}>{item.ref_id}</span>}
                       </div>
-                      <Badge label={ITEM_STATUS_LABELS[item.item_status] || item.item_status} color={ITEM_STATUS_COLORS[item.item_status] || "#94a3b8"} />
+                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        {/* Item lifecycle buttons for approved/in_execution programs */}
+                        {["approved", "in_execution"].includes(sel.status) && item.item_status === "planned" && (
+                          <button
+                            className="btn btn-xs"
+                            style={{ fontSize: 10, padding: "1px 6px" }}
+                            onClick={(e) => { e.stopPropagation(); doItemAction(item.id, "start"); }}
+                            disabled={workflowBusy}
+                          >
+                            Rozpocznij
+                          </button>
+                        )}
+                        {["approved", "in_execution"].includes(sel.status) && item.item_status === "in_progress" && (
+                          <button
+                            className="btn btn-xs"
+                            style={{ fontSize: 10, padding: "1px 6px", color: "var(--green)" }}
+                            onClick={(e) => { e.stopPropagation(); doItemAction(item.id, "complete"); }}
+                            disabled={workflowBusy}
+                          >
+                            Zakoncz
+                          </button>
+                        )}
+                        <Badge label={ITEM_STATUS_LABELS[item.item_status] || item.item_status} color={ITEM_STATUS_COLORS[item.item_status] || "#94a3b8"} />
+                      </div>
                     </div>
                     <div style={{ display: "flex", gap: 8, marginTop: 4, color: "var(--text-muted)", fontSize: 11 }}>
                       <span>{AUDIT_TYPE_LABELS[item.audit_type] || item.audit_type}</span>
@@ -470,30 +556,157 @@ export default function AuditProgramsPage() {
               </button>
             )}
 
-            {/* Actions */}
-            <div style={{ display: "flex", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+            {/* ── Workflow Actions ── */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+              {/* draft → submit / edit / delete */}
               {sel.status === "draft" && (
-                <>
-                  <button className="btn btn-sm" style={{ flex: 1 }} onClick={() => openEditForm(sel)}>Edytuj</button>
+                <div style={{ display: "flex", gap: 8 }}>
                   <button
-                    className="btn btn-sm"
-                    style={{ flex: 1, color: "var(--red)" }}
-                    onClick={async () => {
-                      if (!confirm(`Usunac program ${sel.ref_id}?`)) return;
-                      try {
-                        await api.delete(`/api/v1/audit-programs/${sel.id}`);
-                        setSelected(null);
-                        load();
-                      } catch (err) {
-                        alert("Blad: " + err);
+                    className="btn btn-sm btn-primary"
+                    style={{ flex: 2 }}
+                    onClick={() => doWorkflow("submit")}
+                    disabled={workflowBusy || sel.item_count === 0}
+                    title={sel.item_count === 0 ? "Dodaj co najmniej 1 pozycje" : "Zloz do zatwierdzenia"}
+                  >
+                    Zloz do zatwierdzenia
+                  </button>
+                  <button className="btn btn-sm" style={{ flex: 1 }} onClick={() => openEditForm(sel)}>Edytuj</button>
+                  {sel.version === 1 && (
+                    <button
+                      className="btn btn-sm"
+                      style={{ color: "var(--red)" }}
+                      onClick={async () => {
+                        if (!confirm(`Usunac program ${sel.ref_id}?`)) return;
+                        try {
+                          await api.delete(`/api/v1/audit-programs/${sel.id}`);
+                          setSelected(null);
+                          load();
+                        } catch (err) {
+                          alert("Blad: " + err);
+                        }
+                      }}
+                    >
+                      Usun
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* submitted → approve / reject */}
+              {sel.status === "submitted" && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="btn btn-sm btn-primary"
+                    style={{ flex: 1, background: "var(--green)", borderColor: "var(--green)" }}
+                    onClick={() => {
+                      if (sel.version > 1) {
+                        setApproveJustification("");
+                        setShowApproveModal(true);
+                      } else {
+                        doWorkflow("approve", { approval_justification: null });
                       }
                     }}
+                    disabled={workflowBusy}
                   >
-                    Usun
+                    Zatwierdz
                   </button>
-                </>
+                  <button
+                    className="btn btn-sm"
+                    style={{ flex: 1, color: "var(--red)", borderColor: "var(--red)" }}
+                    onClick={() => { setRejectReason(""); setShowRejectModal(true); }}
+                    disabled={workflowBusy}
+                  >
+                    Odrzuc
+                  </button>
+                </div>
+              )}
+
+              {/* approved/in_execution → initiate correction */}
+              {["approved", "in_execution"].includes(sel.status) && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  {sel.status === "in_execution" && (
+                    <button
+                      className="btn btn-sm btn-primary"
+                      style={{ flex: 1 }}
+                      onClick={() => doWorkflow("complete")}
+                      disabled={workflowBusy}
+                      title="Wszystkie pozycje musza byc zakonczone/anulowane/odroczone"
+                    >
+                      Zakoncz program
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-sm"
+                    style={{ flex: 1, color: "var(--purple)", borderColor: "var(--purple)" }}
+                    onClick={() => { setCorrectionReason(""); setShowCorrectionModal(true); }}
+                    disabled={workflowBusy}
+                  >
+                    Inicjuj korekta
+                  </button>
+                </div>
+              )}
+
+              {/* completed → archive */}
+              {sel.status === "completed" && (
+                <button
+                  className="btn btn-sm"
+                  style={{ width: "100%" }}
+                  onClick={() => doWorkflow("archive")}
+                  disabled={workflowBusy}
+                >
+                  Archiwizuj
+                </button>
+              )}
+
+              {/* Status info for terminal/waiting states */}
+              {sel.status === "submitted" && (
+                <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center" }}>
+                  Oczekuje na zatwierdzenie przez: {sel.approver_name}
+                </div>
+              )}
+              {sel.status === "approved" && (
+                <div style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center" }}>
+                  Zatwierdzony. Rozpocznij audyty aby przejsc do realizacji.
+                </div>
               )}
             </div>
+
+            {/* ── Version history ── */}
+            {versions.length > 1 && (
+              <div style={{ marginTop: 12 }}>
+                <SectionHeader number={"\u2463"} label={`Historia wersji (${versions.length})`} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {versions.map(v => (
+                    <div
+                      key={v.id}
+                      style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                        padding: "6px 8px", borderRadius: 4, fontSize: 11,
+                        background: v.id === sel.id ? "rgba(59,130,246,0.1)" : "var(--bg-inset)",
+                        border: v.is_current_version ? "1px solid var(--blue)" : "1px solid transparent",
+                        cursor: v.id !== sel.id ? "pointer" : "default",
+                      }}
+                      onClick={() => {
+                        if (v.id !== sel.id) {
+                          api.get<AuditProgram>(`/api/v1/audit-programs/${v.id}`)
+                            .then(p => setSelected(p))
+                            .catch(() => {});
+                        }
+                      }}
+                    >
+                      <div>
+                        <span style={{ fontWeight: 600, fontFamily: "'JetBrains Mono',monospace" }}>v{v.version}</span>
+                        {v.is_current_version && <span style={{ fontSize: 9, color: "var(--blue)", marginLeft: 4 }}>aktualna</span>}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <Badge label={STATUS_LABELS[v.status] || v.status} color={STATUS_COLORS[v.status] || "#94a3b8"} />
+                        <span style={{ color: "var(--text-muted)" }}>{v.created_at?.slice(0, 10)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -565,6 +778,130 @@ export default function AuditProgramsPage() {
             onCancel={() => { setShowItemModal(false); setEditingItem(null); }}
           />
         )}
+      </Modal>
+
+      {/* ── Reject Modal ── */}
+      <Modal
+        open={showRejectModal}
+        onClose={() => setShowRejectModal(false)}
+        title="Odrzucenie programu"
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
+            Podaj powod odrzucenia programu. Program wrocido statusu "Szkic" i bedzie mogl byc poprawiony.
+          </p>
+          <label style={{ fontSize: 13 }}>
+            Powod odrzucenia *
+            <textarea
+              className="form-control"
+              value={rejectReason}
+              onChange={e => setRejectReason(e.target.value)}
+              rows={3}
+              placeholder="Opisz powod odrzucenia (min. 3 znaki)..."
+            />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setShowRejectModal(false)}>Anuluj</button>
+            <button
+              className="btn btn-primary"
+              style={{ background: "var(--red)", borderColor: "var(--red)" }}
+              disabled={rejectReason.trim().length < 3 || workflowBusy}
+              onClick={async () => {
+                await doWorkflow("reject", { rejection_reason: rejectReason.trim() });
+                setShowRejectModal(false);
+              }}
+            >
+              {workflowBusy ? "Odrzucanie..." : "Odrzuc program"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Approve Modal (for v2+ requiring justification) ── */}
+      <Modal
+        open={showApproveModal}
+        onClose={() => setShowApproveModal(false)}
+        title="Zatwierdzenie korekty programu"
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
+            To jest wersja {sel?.version} programu. Uzasadnienie zatwierdzenia jest wymagane dla korekt.
+          </p>
+          <label style={{ fontSize: 13 }}>
+            Uzasadnienie zatwierdzenia *
+            <textarea
+              className="form-control"
+              value={approveJustification}
+              onChange={e => setApproveJustification(e.target.value)}
+              rows={3}
+              placeholder="Dlaczego zatwierdzasz te korekta..."
+            />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setShowApproveModal(false)}>Anuluj</button>
+            <button
+              className="btn btn-primary"
+              style={{ background: "var(--green)", borderColor: "var(--green)" }}
+              disabled={!approveJustification.trim() || workflowBusy}
+              onClick={async () => {
+                await doWorkflow("approve", { approval_justification: approveJustification.trim() });
+                setShowApproveModal(false);
+              }}
+            >
+              {workflowBusy ? "Zatwierdzanie..." : "Zatwierdz"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Correction Modal ── */}
+      <Modal
+        open={showCorrectionModal}
+        onClose={() => setShowCorrectionModal(false)}
+        title="Inicjacja korekty programu"
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
+            Korekta utworzy nowa wersje (v{(sel?.version ?? 0) + 1}) programu jako kopie w statusie "Szkic".
+            Obecna wersja zostanie oznaczona jako "Zastapiona".
+          </p>
+          <label style={{ fontSize: 13 }}>
+            Uzasadnienie korekty * (min. 10 znakow)
+            <textarea
+              className="form-control"
+              value={correctionReason}
+              onChange={e => setCorrectionReason(e.target.value)}
+              rows={3}
+              placeholder="Opisz powod korekty, np. zmiana zakresu, dodanie nowych audytow..."
+            />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button className="btn" onClick={() => setShowCorrectionModal(false)}>Anuluj</button>
+            <button
+              className="btn btn-primary"
+              style={{ background: "var(--purple)", borderColor: "var(--purple)" }}
+              disabled={correctionReason.trim().length < 10 || workflowBusy}
+              onClick={async () => {
+                setWorkflowBusy(true);
+                try {
+                  const newProg = await api.post<AuditProgram>(
+                    `/api/v1/audit-programs/${sel!.id}/initiate-correction`,
+                    { correction_reason: correctionReason.trim() },
+                  );
+                  setShowCorrectionModal(false);
+                  setSelected(newProg);
+                  load();
+                } catch (err) {
+                  alert("Blad: " + err);
+                } finally {
+                  setWorkflowBusy(false);
+                }
+              }}
+            >
+              {workflowBusy ? "Tworzenie korekty..." : "Utworz korekta"}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, type NavigateFunction } from "react-router-dom";
 import { api } from "../services/api";
 import type { FrameworkBrief, FrameworkImportResult, DictionaryEntry } from "../types";
 import Modal from "../components/Modal";
@@ -92,14 +92,14 @@ export default function FrameworksPage() {
   const aiImportingRef = useRef(false);
 
   // Safe navigate — blocks navigation during AI import
-  const navigate = useCallback((...args: Parameters<typeof rawNavigate>) => {
+  const navigate: NavigateFunction = useCallback(((to: unknown, options?: unknown) => {
     if (aiImportingRef.current) {
       if (!confirm("Import AI jest w toku. Przejście na inną stronę przerwie proces importu.\n\nCzy na pewno chcesz przerwać?")) {
         return;
       }
     }
-    rawNavigate(...args);
-  }, [rawNavigate]);
+    (rawNavigate as Function)(to, options);
+  }) as NavigateFunction, [rawNavigate]);
 
   // Block browser back/forward during import
   useEffect(() => {

@@ -108,6 +108,56 @@ app.include_router(test_template_router)
 app.include_router(audit_findings_router)
 
 
+# ── Startup: auto-sync AI prompt templates with code defaults ──
+@app.on_event("startup")
+async def _sync_ai_prompts_on_startup():
+    """Seed missing prompts and update non-customized prompts to latest code defaults."""
+    import logging
+    _log = logging.getLogger("startup")
+    try:
+        from app.database import async_session
+        from app.models.smart_catalog import AIPromptTemplate
+        from app.services.ai_prompts import DEFAULT_PROMPTS, _DEFAULTS_BY_KEY
+        from sqlalchemy import select
+
+        async with async_session() as s:
+            try:
+                rows = (await s.execute(
+                    select(AIPromptTemplate)
+                )).scalars().all()
+            except Exception:
+                _log.info("ai_prompt_templates table not ready, skipping sync")
+                return
+
+            existing = {r.function_key: r for r in rows}
+            changed = False
+
+            for p in DEFAULT_PROMPTS:
+                key = p["function_key"]
+                if key not in existing:
+                    s.add(AIPromptTemplate(
+                        function_key=key,
+                        display_name=p["display_name"],
+                        description=p.get("description", ""),
+                        prompt_text=p["prompt_text"],
+                        is_customized=False,
+                    ))
+                    changed = True
+                    _log.info("Seeded AI prompt: %s", key)
+                else:
+                    row = existing[key]
+                    if not row.is_customized and row.prompt_text != p["prompt_text"]:
+                        row.prompt_text = p["prompt_text"]
+                        changed = True
+                        _log.info("Updated AI prompt to new default: %s", key)
+
+            if changed:
+                await s.commit()
+                _log.info("AI prompt sync complete")
+    except Exception as e:
+        _log.warning("AI prompt startup sync skipped: %s", e)
+
+
 @app.get("/health")
 async def health():
     """Health check — verifies API is running and database is reachable."""

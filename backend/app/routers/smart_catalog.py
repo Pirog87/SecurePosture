@@ -1671,17 +1671,25 @@ async def ai_usage_stats(
 # AI Prompt Templates CRUD
 # ═══════════════════════════════════════════════════════════════════
 
-@router.get("/admin/ai-prompts", summary="Lista edytowalnych promptów AI")
+@router.get("/api/v1/admin/ai-prompts", summary="Lista edytowalnych promptów AI")
 async def list_ai_prompts(s: AsyncSession = Depends(get_session)):
     from app.models.smart_catalog import AIPromptTemplate
-    rows = (await s.execute(
-        select(AIPromptTemplate).order_by(AIPromptTemplate.function_key)
-    )).scalars().all()
+    from app.services.ai_prompts import DEFAULT_PROMPTS, _DEFAULTS_BY_KEY
 
-    # Auto-seed defaults if table is empty (migration seed may not have run)
-    if not rows:
-        from app.services.ai_prompts import DEFAULT_PROMPTS
-        for p in DEFAULT_PROMPTS:
+    try:
+        rows = (await s.execute(
+            select(AIPromptTemplate).order_by(AIPromptTemplate.function_key)
+        )).scalars().all()
+    except Exception:
+        # Table may not exist yet
+        return []
+
+    existing_keys = {r.function_key for r in rows}
+    changed = False
+
+    # Auto-seed missing prompts
+    for p in DEFAULT_PROMPTS:
+        if p["function_key"] not in existing_keys:
             s.add(AIPromptTemplate(
                 function_key=p["function_key"],
                 display_name=p["display_name"],
@@ -1689,6 +1697,17 @@ async def list_ai_prompts(s: AsyncSession = Depends(get_session)):
                 prompt_text=p["prompt_text"],
                 is_customized=False,
             ))
+            changed = True
+
+    # Auto-update non-customized prompts if code defaults changed
+    for r in rows:
+        if not r.is_customized and r.function_key in _DEFAULTS_BY_KEY:
+            current_default = _DEFAULTS_BY_KEY[r.function_key]
+            if r.prompt_text != current_default:
+                r.prompt_text = current_default
+                changed = True
+
+    if changed:
         await s.commit()
         rows = (await s.execute(
             select(AIPromptTemplate).order_by(AIPromptTemplate.function_key)
@@ -1731,7 +1750,7 @@ async def get_ai_prompt(function_key: str, s: AsyncSession = Depends(get_session
     }
 
 
-@router.put("/admin/ai-prompts/{function_key}", summary="Edytuj prompt AI")
+@router.put("/api/v1/admin/ai-prompts/{function_key}", summary="Edytuj prompt AI")
 async def update_ai_prompt(function_key: str, body: dict, s: AsyncSession = Depends(get_session)):
     from app.models.smart_catalog import AIPromptTemplate
     from datetime import datetime
@@ -1754,7 +1773,7 @@ async def update_ai_prompt(function_key: str, body: dict, s: AsyncSession = Depe
     return {"status": "ok", "function_key": function_key}
 
 
-@router.post("/admin/ai-prompts/{function_key}/reset", summary="Przywróć domyślny prompt")
+@router.post("/api/v1/admin/ai-prompts/{function_key}/reset", summary="Przywróć domyślny prompt")
 async def reset_ai_prompt(function_key: str, s: AsyncSession = Depends(get_session)):
     from app.models.smart_catalog import AIPromptTemplate
     from app.services.ai_prompts import _DEFAULTS_BY_KEY
@@ -1807,7 +1826,7 @@ def _build_database_url(host: str, port: int, database: str, user: str, password
     return f"{driver}://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
 
 
-@router.get("/admin/db-config", summary="Aktualna konfiguracja bazy danych")
+@router.get("/api/v1/admin/db-config", summary="Aktualna konfiguracja bazy danych")
 async def get_db_config():
     """Return current DB connection info (password masked)."""
     from app.config import settings
@@ -1822,7 +1841,7 @@ async def get_db_config():
     }
 
 
-@router.post("/admin/db-config/test", summary="Testuj połączenie z bazą danych")
+@router.post("/api/v1/admin/db-config/test", summary="Testuj połączenie z bazą danych")
 async def test_db_connection(body: dict):
     """Test connection to a database with given params. Does NOT save anything."""
     from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
@@ -1876,7 +1895,7 @@ async def test_db_connection(body: dict):
         return {"status": "error", "message": msg}
 
 
-@router.post("/admin/db-config/init-schema", summary="Zainicjalizuj schemat bazy danych")
+@router.post("/api/v1/admin/db-config/init-schema", summary="Zainicjalizuj schemat bazy danych")
 async def init_db_schema(body: dict):
     """Run Alembic migrations on target database to create full schema."""
     import subprocess
@@ -1933,7 +1952,7 @@ async def init_db_schema(body: dict):
         return {"status": "error", "message": f"Błąd: {e}"}
 
 
-@router.put("/admin/db-config", summary="Zapisz konfigurację bazy danych")
+@router.put("/api/v1/admin/db-config", summary="Zapisz konfigurację bazy danych")
 async def save_db_config(body: dict):
     """Save new database connection to .env and signal that restart is needed."""
     import os

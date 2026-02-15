@@ -1,8 +1,8 @@
 """
-Audit Program CRUD + lifecycle + items + suppliers + locations + version diffs.
-Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1-4
+Audit Program CRUD + lifecycle + items + suppliers + locations + version diffs + audit trail.
+Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1-5
 """
-from datetime import datetime
+from datetime import datetime, date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -776,6 +776,67 @@ async def list_diffs(program_id: int, s: AsyncSession = Depends(get_session)):
         }
         for d in rows
     ]
+
+
+# ── Audit trail (Krok 5) ──
+@programs_router.get("/{program_id}/history")
+async def list_history(
+    program_id: int,
+    action: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    performed_by: int | None = Query(None),
+    date_from: date_type | None = Query(None, alias="from"),
+    date_to: date_type | None = Query(None, alias="to"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    s: AsyncSession = Depends(get_session),
+):
+    """Return audit trail entries for a program with filtering."""
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+
+    q = (
+        select(AuditProgramHistory)
+        .where(AuditProgramHistory.audit_program_id == program_id)
+    )
+    if action:
+        q = q.where(AuditProgramHistory.action == action)
+    if entity_type:
+        q = q.where(AuditProgramHistory.entity_type == entity_type)
+    if performed_by:
+        q = q.where(AuditProgramHistory.performed_by == performed_by)
+    if date_from:
+        q = q.where(AuditProgramHistory.performed_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        q = q.where(AuditProgramHistory.performed_at <= datetime.combine(date_to, datetime.max.time()))
+
+    # Count for pagination
+    count_q = select(func.count()).select_from(q.subquery())
+    total = (await s.execute(count_q)).scalar() or 0
+
+    q = q.order_by(AuditProgramHistory.performed_at.desc()).offset(offset).limit(limit)
+    rows = (await s.execute(q)).scalars().all()
+
+    items = []
+    for h in rows:
+        performer_name = await _user_name(s, h.performed_by)
+        items.append({
+            "id": h.id,
+            "entity_type": h.entity_type,
+            "entity_id": h.entity_id,
+            "action": h.action,
+            "description": h.description,
+            "justification": h.justification,
+            "field_changes": h.field_changes,
+            "change_request_id": h.change_request_id,
+            "related_program_id": h.related_program_id,
+            "performed_by": h.performed_by,
+            "performed_by_name": performer_name,
+            "performed_at": h.performed_at.isoformat() if h.performed_at else None,
+        })
+
+    return {"total": total, "items": items}
 
 
 # ── T6: approved → in_execution (auto, triggered by item status change) ──

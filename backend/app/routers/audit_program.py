@@ -1,6 +1,6 @@
 """
 Audit Program CRUD + lifecycle + items + suppliers + locations.
-Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1
+Spec: docs/SPECYFIKACJA_AUDIT_PROGRAM_v1.md — Krok 1 + Krok 2 (state machine)
 """
 from datetime import datetime
 
@@ -25,6 +25,9 @@ from app.schemas.audit_program import (
     AuditProgramItemCreate,
     AuditProgramItemUpdate,
     AuditProgramItemOut,
+    RejectPayload,
+    ApprovePayload,
+    CorrectionPayload,
     CancelItemPayload,
     DeferItemPayload,
     SupplierCreate,
@@ -292,6 +295,226 @@ async def delete_program(program_id: int, s: AsyncSession = Depends(get_session)
     await s.delete(p)
     await s.commit()
     return {"status": "deleted"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# State Machine — lifecycle transitions (Krok 2)
+# ═══════════════════════════════════════════════════════════════
+
+VALID_TRANSITIONS: dict[str, list[str]] = {
+    "draft":        ["submitted", "deleted"],
+    "submitted":    ["approved", "rejected"],
+    "rejected":     ["draft"],          # auto
+    "approved":     ["in_execution", "superseded"],
+    "in_execution": ["completed", "superseded"],
+    "completed":    ["archived"],
+    "superseded":   [],                 # terminal
+    "deleted":      [],                 # terminal
+    "archived":     [],                 # terminal
+}
+
+
+async def _item_count(s: AsyncSession, pid: int) -> int:
+    q = select(func.count()).select_from(AuditProgramItem).where(
+        AuditProgramItem.audit_program_id == pid,
+    )
+    return (await s.execute(q)).scalar() or 0
+
+
+async def _all_items_terminal(s: AsyncSession, pid: int) -> bool:
+    """True when every item is completed, cancelled or deferred."""
+    q = select(func.count()).select_from(AuditProgramItem).where(
+        AuditProgramItem.audit_program_id == pid,
+        AuditProgramItem.item_status.notin_(["completed", "cancelled", "deferred"]),
+    )
+    non_terminal = (await s.execute(q)).scalar() or 0
+    total = await _item_count(s, pid)
+    return total > 0 and non_terminal == 0
+
+
+def _set_status(p: AuditProgramV2, new_status: str):
+    """Update status + timestamp."""
+    p.status = new_status
+    p.status_changed_at = datetime.utcnow()
+
+
+# ── T1: draft → submitted ───────────────────────────────────
+@programs_router.post("/{program_id}/submit", response_model=AuditProgramOut)
+async def submit_program(program_id: int, s: AsyncSession = Depends(get_session)):
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+    if p.status != "draft":
+        raise HTTPException(400, f"Nie mozna zlozyc programu w statusie '{p.status}' — wymagany 'draft'")
+
+    cnt = await _item_count(s, p.id)
+    if cnt == 0:
+        raise HTTPException(400, "Program musi zawierac co najmniej 1 pozycje audytowa")
+
+    _set_status(p, "submitted")
+    p.submitted_at = datetime.utcnow()
+    await _log(s, p.id, "program", p.id, "submitted",
+               f"Zlozono program '{p.name}' do zatwierdzenia ({cnt} pozycji)",
+               user_id=p.owner_id)
+    await s.commit()
+    await s.refresh(p)
+    return await _enrich_program(s, p)
+
+
+# ── T3: submitted → approved ────────────────────────────────
+@programs_router.post("/{program_id}/approve", response_model=AuditProgramOut)
+async def approve_program(
+    program_id: int,
+    body: ApprovePayload,
+    s: AsyncSession = Depends(get_session),
+):
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+    if p.status != "submitted":
+        raise HTTPException(400, f"Zatwierdzanie mozliwe tylko w statusie 'submitted', aktualny: '{p.status}'")
+
+    # For version > 1, justification is required
+    if p.version > 1 and not (body.approval_justification or "").strip():
+        raise HTTPException(400, "Uzasadnienie zatwierdzenia wymagane dla wersji > 1")
+
+    _set_status(p, "approved")
+    p.approved_at = datetime.utcnow()
+    p.approved_by = p.approver_id
+    p.approval_justification = body.approval_justification
+    # Clear any prior rejection data
+    p.rejection_reason = None
+    p.rejected_at = None
+
+    await _log(s, p.id, "program", p.id, "approved",
+               f"Zatwierdzono program '{p.name}' v{p.version}",
+               user_id=p.approver_id,
+               justification=body.approval_justification)
+    await s.commit()
+    await s.refresh(p)
+    return await _enrich_program(s, p)
+
+
+# ── T4+T5: submitted → rejected → auto draft ────────────────
+@programs_router.post("/{program_id}/reject", response_model=AuditProgramOut)
+async def reject_program(
+    program_id: int,
+    body: RejectPayload,
+    s: AsyncSession = Depends(get_session),
+):
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+    if p.status != "submitted":
+        raise HTTPException(400, f"Odrzucanie mozliwe tylko w statusie 'submitted', aktualny: '{p.status}'")
+
+    # T4: submitted → rejected
+    p.rejection_reason = body.rejection_reason
+    p.rejected_at = datetime.utcnow()
+    await _log(s, p.id, "program", p.id, "rejected",
+               f"Odrzucono program '{p.name}': {body.rejection_reason}",
+               user_id=p.approver_id,
+               justification=body.rejection_reason)
+
+    # T5: auto-reset to draft
+    _set_status(p, "draft")
+    p.submitted_at = None
+    await _log(s, p.id, "program", p.id, "status_changed",
+               f"Program '{p.name}' automatycznie przywrocony do statusu draft po odrzuceniu",
+               user_id=p.approver_id)
+
+    await s.commit()
+    await s.refresh(p)
+    return await _enrich_program(s, p)
+
+
+# ── T9: in_execution → completed ─────────────────────────────
+@programs_router.post("/{program_id}/complete", response_model=AuditProgramOut)
+async def complete_program(program_id: int, s: AsyncSession = Depends(get_session)):
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+    if p.status != "in_execution":
+        raise HTTPException(400, f"Zakonczenie mozliwe tylko w statusie 'in_execution', aktualny: '{p.status}'")
+
+    if not await _all_items_terminal(s, p.id):
+        raise HTTPException(400, "Wszystkie pozycje musza miec status 'completed', 'cancelled' lub 'deferred'")
+
+    _set_status(p, "completed")
+    await _log(s, p.id, "program", p.id, "status_changed",
+               f"Zakonczono program '{p.name}'",
+               user_id=p.owner_id)
+    await s.commit()
+    await s.refresh(p)
+    return await _enrich_program(s, p)
+
+
+# ── T10: completed → archived ────────────────────────────────
+@programs_router.post("/{program_id}/archive", response_model=AuditProgramOut)
+async def archive_program(program_id: int, s: AsyncSession = Depends(get_session)):
+    p = await s.get(AuditProgramV2, program_id)
+    if not p:
+        raise HTTPException(404, "Program nie znaleziony")
+    if p.status != "completed":
+        raise HTTPException(400, f"Archiwizacja mozliwa tylko w statusie 'completed', aktualny: '{p.status}'")
+
+    _set_status(p, "archived")
+    await _log(s, p.id, "program", p.id, "status_changed",
+               f"Zarchiwizowano program '{p.name}'",
+               user_id=p.owner_id)
+    await s.commit()
+    await s.refresh(p)
+    return await _enrich_program(s, p)
+
+
+# ── T6: approved → in_execution (auto, triggered by item status change) ──
+@items_router.post("/{item_id}/start")
+async def start_item(item_id: int, s: AsyncSession = Depends(get_session)):
+    """Mark item as in_progress. Auto-transitions program from approved → in_execution."""
+    item = await s.get(AuditProgramItem, item_id)
+    if not item:
+        raise HTTPException(404, "Pozycja nie znaleziona")
+    if item.item_status != "planned":
+        raise HTTPException(400, f"Rozpoczecie mozliwe tylko dla pozycji 'planned', aktualny: '{item.item_status}'")
+
+    p = await s.get(AuditProgramV2, item.audit_program_id)
+    if not p or p.status not in ("approved", "in_execution"):
+        raise HTTPException(400, "Rozpoczecie pozycji mozliwe tylko w programie 'approved' lub 'in_execution'")
+
+    item.item_status = "in_progress"
+    await _log(s, p.id, "program_item", item.id, "item_modified",
+               f"Rozpoczeto pozycje '{item.name}'", user_id=p.owner_id)
+
+    # T6: auto-transition program to in_execution
+    if p.status == "approved":
+        _set_status(p, "in_execution")
+        await _log(s, p.id, "program", p.id, "status_changed",
+                   f"Program '{p.name}' automatycznie przeszedl do statusu 'in_execution'",
+                   user_id=p.owner_id)
+
+    await s.commit()
+    return {"status": "in_progress"}
+
+
+# ── Mark item as completed ──
+@items_router.post("/{item_id}/complete")
+async def complete_item(item_id: int, s: AsyncSession = Depends(get_session)):
+    """Mark item as completed."""
+    item = await s.get(AuditProgramItem, item_id)
+    if not item:
+        raise HTTPException(404, "Pozycja nie znaleziona")
+    if item.item_status != "in_progress":
+        raise HTTPException(400, f"Zakonczenie mozliwe tylko dla pozycji 'in_progress', aktualny: '{item.item_status}'")
+
+    p = await s.get(AuditProgramV2, item.audit_program_id)
+    if not p or p.status not in ("approved", "in_execution"):
+        raise HTTPException(400, "Zakonczenie pozycji mozliwe tylko w programie 'approved' lub 'in_execution'")
+
+    item.item_status = "completed"
+    await _log(s, p.id, "program_item", item.id, "item_modified",
+               f"Zakonczono pozycje '{item.name}'", user_id=p.owner_id)
+    await s.commit()
+    return {"status": "completed"}
 
 
 # ═══════════════════════════════════════════════════════════════

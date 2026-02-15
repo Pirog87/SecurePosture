@@ -265,6 +265,9 @@ async def report_ai_management(
     s: AsyncSession = Depends(get_session),
 ):
     """Generate AI-powered management report from current database state."""
+    import logging
+    from sqlalchemy import text as sa_text
+
     from app.models.security_area import SecurityDomain
     from app.services.ai_service import (
         AIFeatureDisabledException,
@@ -274,128 +277,180 @@ async def report_ai_management(
         get_ai_service,
     )
 
-    ai = await get_ai_service(s)
+    log = logging.getLogger(__name__)
+
+    try:
+        ai = await get_ai_service(s)
+    except Exception as exc:
+        log.warning("get_ai_service failed: %s", exc)
+        raise HTTPException(
+            status_code=422,
+            detail="AI nie jest skonfigurowane. Przejdz do Ustawienia > Integracja AI.",
+        )
     if not ai.is_available:
         raise HTTPException(
             status_code=422,
             detail="AI nie jest skonfigurowane. Przejdz do Ustawienia > Integracja AI.",
         )
 
-    # ── Gather all data ──
+    # ── Gather all data (each section wrapped so partial failures don't crash) ──
 
     flt = Risk.org_unit_id == org_unit_id if org_unit_id else True
 
     # Risk counts by level
-    level_q = (
-        select(Risk.risk_level, func.count().label("cnt"))
-        .where(Risk.is_active.is_(True))
-        .where(flt)
-        .group_by(Risk.risk_level)
-    )
-    level_rows = (await s.execute(level_q)).all()
-    risk_counts = {r.risk_level: r.cnt for r in level_rows}
-    total_risks = sum(risk_counts.values())
+    try:
+        level_q = (
+            select(Risk.risk_level, func.count().label("cnt"))
+            .where(Risk.is_active.is_(True))
+            .where(flt)
+            .group_by(Risk.risk_level)
+        )
+        level_rows = (await s.execute(level_q)).all()
+        risk_counts: dict[str | None, int] = {r.risk_level: r.cnt for r in level_rows}
+        total_risks = sum(risk_counts.values())
+    except Exception:
+        risk_counts, total_risks = {}, 0
 
     # Average risk score
-    avg_score = (await s.execute(
-        select(func.avg(Risk.risk_score)).where(Risk.is_active.is_(True)).where(flt)
-    )).scalar()
+    try:
+        avg_score = (await s.execute(
+            select(func.avg(Risk.risk_score)).where(Risk.is_active.is_(True)).where(flt)
+        )).scalar()
+    except Exception:
+        avg_score = None
 
     # Top 10 risks
-    top_q = (
-        select(Risk.id, Risk.asset_name, Risk.risk_score, Risk.risk_level, Risk.owner)
-        .where(Risk.is_active.is_(True)).where(flt)
-        .order_by(Risk.risk_score.desc()).limit(10)
-    )
-    top_risks = (await s.execute(top_q)).all()
-    top_risks_text = "\n".join(
-        f"  - R-{r.id}: {r.asset_name}, score={float(r.risk_score):.1f}, "
-        f"poziom={r.risk_level}, wlasciciel={r.owner or 'brak'}"
-        for r in top_risks
-    )
+    try:
+        top_q = (
+            select(Risk.id, Risk.asset_name, Risk.risk_score, Risk.risk_level, Risk.owner)
+            .where(Risk.is_active.is_(True)).where(flt)
+            .order_by(Risk.risk_score.desc()).limit(10)
+        )
+        top_risks = (await s.execute(top_q)).all()
+        top_risks_text = "\n".join(
+            f"  - R-{r.id}: {r.asset_name}, score={float(r.risk_score):.1f}, "
+            f"poziom={r.risk_level}, wlasciciel={r.owner or 'brak'}"
+            for r in top_risks
+        )
+    except Exception:
+        top_risks_text = "  Brak danych."
 
     # Risks by security domain
-    area_q = (
-        select(SecurityDomain.name, func.count(Risk.id).label("cnt"))
-        .join(Risk, Risk.security_area_id == SecurityDomain.id, isouter=True)
-        .where(SecurityDomain.is_active.is_(True))
-        .group_by(SecurityDomain.name)
-        .order_by(func.count(Risk.id).desc())
-    )
-    area_rows = (await s.execute(area_q)).all()
-    risks_by_area_text = "\n".join(
-        f"  - {r.name}: {r.cnt} ryzyk" for r in area_rows if r.cnt
-    )
+    try:
+        area_q = (
+            select(SecurityDomain.name, func.count(Risk.id).label("cnt"))
+            .join(Risk, Risk.security_area_id == SecurityDomain.id, isouter=True)
+            .where(SecurityDomain.is_active.is_(True))
+            .group_by(SecurityDomain.name)
+            .order_by(func.count(Risk.id).desc())
+        )
+        area_rows = (await s.execute(area_q)).all()
+        risks_by_area_text = "\n".join(
+            f"  - {r.name}: {r.cnt} ryzyk" for r in area_rows if r.cnt
+        ) or "  Brak danych."
+    except Exception:
+        risks_by_area_text = "  Brak danych."
 
     # Risks by org unit
-    org_q = (
-        select(OrgUnit.name, func.count(Risk.id).label("cnt"))
-        .join(Risk, Risk.org_unit_id == OrgUnit.id, isouter=True)
-        .where(OrgUnit.is_active.is_(True))
-        .group_by(OrgUnit.name)
-    )
-    org_rows = (await s.execute(org_q)).all()
-    risks_by_org_text = "\n".join(
-        f"  - {r.name}: {r.cnt} ryzyk" for r in org_rows if r.cnt
-    )
-
-    # Overdue risks (not reviewed > configured interval)
-    from app.models.risk import RiskReviewConfig
-    cfg_row = (await s.execute(select(RiskReviewConfig.review_interval_days))).scalar()
-    interval = cfg_row or 90
-    overdue_q = (
-        select(func.count())
-        .select_from(Risk)
-        .where(
-            Risk.is_active.is_(True),
-            flt,
-            func.datediff(func.now(), func.coalesce(Risk.last_review_at, Risk.identified_at)) > interval,
+    try:
+        org_q = (
+            select(OrgUnit.name, func.count(Risk.id).label("cnt"))
+            .join(Risk, Risk.org_unit_id == OrgUnit.id, isouter=True)
+            .where(OrgUnit.is_active.is_(True))
+            .group_by(OrgUnit.name)
         )
-    )
-    overdue_count = (await s.execute(overdue_q)).scalar() or 0
+        org_rows = (await s.execute(org_q)).all()
+        risks_by_org_text = "\n".join(
+            f"  - {r.name}: {r.cnt} ryzyk" for r in org_rows if r.cnt
+        ) or "  Brak danych."
+    except Exception:
+        risks_by_org_text = "  Brak danych."
+
+    # Overdue risks (TIMESTAMPDIFF for MySQL, fallback for others)
+    interval = 90
+    overdue_count = 0
+    try:
+        from app.models.risk import RiskReviewConfig
+        cfg_row = (await s.execute(select(RiskReviewConfig.review_interval_days))).scalar()
+        interval = cfg_row or 90
+    except Exception:
+        pass
+
+    try:
+        overdue_q = (
+            select(func.count())
+            .select_from(Risk)
+            .where(
+                Risk.is_active.is_(True),
+                flt,
+                func.timestampdiff(
+                    sa_text("DAY"),
+                    func.coalesce(Risk.last_review_at, Risk.identified_at),
+                    func.now(),
+                ) > interval,
+            )
+        )
+        overdue_count = (await s.execute(overdue_q)).scalar() or 0
+    except Exception:
+        overdue_count = 0
 
     # Asset counts
-    total_assets = (await s.execute(
-        select(func.count()).select_from(Asset).where(Asset.is_active.is_(True))
-    )).scalar() or 0
+    try:
+        total_assets = (await s.execute(
+            select(func.count()).select_from(Asset).where(Asset.is_active.is_(True))
+        )).scalar() or 0
+    except Exception:
+        total_assets = 0
 
     # Assets by category
-    asset_cat_q = (
-        select(AssetCategory.name, func.count(Asset.id).label("cnt"))
-        .join(Asset, Asset.asset_category_id == AssetCategory.id, isouter=True)
-        .where(AssetCategory.is_active.is_(True))
-        .group_by(AssetCategory.name)
-        .order_by(func.count(Asset.id).desc())
-        .limit(15)
-    )
-    asset_cat_rows = (await s.execute(asset_cat_q)).all()
-    assets_by_cat_text = "\n".join(
-        f"  - {r.name}: {r.cnt}" for r in asset_cat_rows if r.cnt
-    )
+    try:
+        asset_cat_q = (
+            select(AssetCategory.name, func.count(Asset.id).label("cnt"))
+            .join(Asset, Asset.asset_category_id == AssetCategory.id, isouter=True)
+            .where(AssetCategory.is_active.is_(True))
+            .group_by(AssetCategory.name)
+            .order_by(func.count(Asset.id).desc())
+            .limit(15)
+        )
+        asset_cat_rows = (await s.execute(asset_cat_q)).all()
+        assets_by_cat_text = "\n".join(
+            f"  - {r.name}: {r.cnt}" for r in asset_cat_rows if r.cnt
+        ) or "  Brak danych."
+    except Exception:
+        assets_by_cat_text = "  Brak danych."
 
     # Vulnerability and incident counts
-    open_vulns = (await s.execute(
-        select(func.count()).select_from(VulnerabilityRecord).where(VulnerabilityRecord.is_active.is_(True))
-    )).scalar() or 0
+    try:
+        open_vulns = (await s.execute(
+            select(func.count()).select_from(VulnerabilityRecord).where(VulnerabilityRecord.is_active.is_(True))
+        )).scalar() or 0
+    except Exception:
+        open_vulns = 0
 
-    open_incidents = (await s.execute(
-        select(func.count()).select_from(Incident).where(Incident.is_active.is_(True))
-    )).scalar() or 0
+    try:
+        open_incidents = (await s.execute(
+            select(func.count()).select_from(Incident).where(Incident.is_active.is_(True))
+        )).scalar() or 0
+    except Exception:
+        open_incidents = 0
 
     # Framework assessments
-    fw_q = (
-        select(Framework.name, Assessment.overall_score, Assessment.completion_pct, Assessment.status)
-        .join(Assessment, Assessment.framework_id == Framework.id)
-        .where(Assessment.is_active.is_(True))
-        .order_by(Assessment.created_at.desc())
-        .limit(5)
-    )
-    fw_rows = (await s.execute(fw_q)).all()
-    fw_text = "\n".join(
-        f"  - {r.name}: score={float(r.overall_score):.1f}/100, "
-        f"kompletnosc={float(r.completion_pct):.0f}%, status={r.status}"
-        for r in fw_rows if r.overall_score
-    ) or "  Brak ocen frameworkow."
+    try:
+        fw_q = (
+            select(Framework.name, Assessment.overall_score, Assessment.completion_pct, Assessment.status)
+            .join(Assessment, Assessment.framework_id == Framework.id)
+            .where(Assessment.is_active.is_(True))
+            .order_by(Assessment.created_at.desc())
+            .limit(5)
+        )
+        fw_rows = (await s.execute(fw_q)).all()
+        fw_text = "\n".join(
+            f"  - {r.name}: score={float(r.overall_score):.1f}/100, "
+            f"kompletnosc={float(r.completion_pct):.0f}%, status={r.status}"
+            for r in fw_rows if r.overall_score
+        ) or "  Brak ocen frameworkow."
+    except Exception:
+        fw_text = "  Brak ocen frameworkow."
 
     # Security posture score
     try:
@@ -459,6 +514,7 @@ Wygeneruj profesjonalny raport zarzadczy na podstawie powyzszych danych."""
     except AIParsingError as e:
         raise HTTPException(status_code=502, detail=f"AI zwrocilo nieprawidlowa odpowiedz: {e}")
     except Exception as e:
+        log.exception("AI management report generation failed")
         raise HTTPException(status_code=502, detail=f"Blad komunikacji z AI: {e}")
 
     return JSONResponse(content={

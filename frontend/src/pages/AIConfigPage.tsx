@@ -30,6 +30,7 @@ interface AIConfig {
   feature_cross_mapping: boolean;
   feature_coverage_report: boolean;
   feature_document_import: boolean;
+  feature_management_report: boolean;
   last_test_at: string | null;
   last_test_ok: boolean | null;
   last_test_error: string | null;
@@ -70,6 +71,7 @@ const EMPTY_CONFIG: AIConfig = {
   feature_cross_mapping: true,
   feature_coverage_report: true,
   feature_document_import: true,
+  feature_management_report: true,
   last_test_at: null,
   last_test_ok: null,
   last_test_error: null,
@@ -96,6 +98,8 @@ const FEATURE_TOGGLES: { key: string; label: string; desc: string; group: string
   { key: "feature_cross_mapping", label: "Cross-mapping frameworków", desc: "AI mapuje wymagania między różnymi standardami", group: "framework", promptKeys: ["cross_mapping"] },
   { key: "feature_coverage_report", label: "Raporty pokrycia", desc: "AI generuje raporty zarządcze o pokryciu między frameworkami", group: "framework", promptKeys: ["coverage_report"] },
   { key: "feature_document_import", label: "Import dokumentów AI", desc: "AI analizuje dokumenty PDF/DOCX i wyodrębnia strukturę frameworka", group: "framework", promptKeys: ["document_import", "document_import_continuation"] },
+  // Raporty
+  { key: "feature_management_report", label: "Raport zarządczy AI", desc: "AI generuje kompleksowy raport zarządczy na podstawie danych o ryzykach, aktywach i stanie bezpieczeństwa", group: "reports", promptKeys: ["management_report"] },
 ];
 
 const ACTION_LABELS: Record<string, string> = {
@@ -111,6 +115,7 @@ const ACTION_LABELS: Record<string, string> = {
   CROSS_MAPPING: "Cross-mapping",
   COVERAGE_REPORT: "Raporty pokrycia",
   DOCUMENT_IMPORT: "Import dokumentów",
+  MANAGEMENT_REPORT: "Raport zarządczy",
 };
 
 /* ══════════════════════════════════════════════════════════
@@ -151,6 +156,7 @@ export default function AIConfigPage() {
     feature_cross_mapping: true,
     feature_coverage_report: true,
     feature_document_import: true,
+    feature_management_report: true,
   });
 
   const fetchConfig = useCallback(async () => {
@@ -181,6 +187,7 @@ export default function AIConfigPage() {
           feature_cross_mapping: data.feature_cross_mapping,
           feature_coverage_report: data.feature_coverage_report,
           feature_document_import: data.feature_document_import,
+          feature_management_report: data.feature_management_report,
         });
       }
     } catch {
@@ -515,6 +522,14 @@ export default function AIConfigPage() {
               Frameworki / Dokumenty
             </div>
             {FEATURE_TOGGLES.filter((ft) => ft.group === "framework").map((ft) => (
+              <FeatureToggle key={ft.key} ft={ft} form={form} setForm={setForm} />
+            ))}
+
+            {/* Raporty group */}
+            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 8, marginTop: 16 }}>
+              Raporty
+            </div>
+            {FEATURE_TOGGLES.filter((ft) => ft.group === "reports").map((ft) => (
               <FeatureToggle key={ft.key} ft={ft} form={form} setForm={setForm} />
             ))}
 

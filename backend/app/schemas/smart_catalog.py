@@ -266,6 +266,7 @@ class AIConfigOut(BaseModel):
     feature_cross_mapping: bool = True
     feature_coverage_report: bool = True
     feature_document_import: bool = True
+    feature_management_report: bool = True
     last_test_at: datetime | None = None
     last_test_ok: bool | None = None
     last_test_error: str | None = None
@@ -294,6 +295,7 @@ class AIConfigUpdate(BaseModel):
     feature_cross_mapping: bool | None = None
     feature_coverage_report: bool | None = None
     feature_document_import: bool | None = None
+    feature_management_report: bool | None = None
 
 
 class AITestResult(BaseModel):

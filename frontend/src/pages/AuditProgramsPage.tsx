@@ -1800,10 +1800,10 @@ export default function AuditProgramsPage() {
                     </div>
                     <div style={{ color: "var(--text-muted)", marginTop: 2 }}>
                       {AUDIT_TYPE_LABELS[String(sug.audit_type)] || String(sug.audit_type ?? "")}
-                      {sug.estimated_days && <> | ~{String(sug.estimated_days)} dni</>}
-                      {sug.scope_name && <> | {String(sug.scope_name)}</>}
+                      {!!sug.estimated_days && <> | ~{String(sug.estimated_days)} dni</>}
+                      {!!sug.scope_name && <> | {String(sug.scope_name)}</>}
                     </div>
-                    {sug.rationale && (
+                    {!!sug.rationale && (
                       <div style={{ color: "var(--text-secondary)", marginTop: 4, fontStyle: "italic" }}>
                         {String(sug.rationale)}
                       </div>
@@ -1888,7 +1888,7 @@ export default function AuditProgramsPage() {
                           </span>{" "}
                           {String(obs.title)}
                         </span>
-                        {obs.suggested_item && selected?.status === "draft" && (
+                        {!!obs.suggested_item && selected?.status === "draft" && (
                           <button
                             className="btn btn-xs"
                             style={{ fontSize: 10, color: "var(--green)" }}
@@ -1922,7 +1922,7 @@ export default function AuditProgramsPage() {
                         )}
                       </div>
                       <div style={{ color: "var(--text-secondary)", marginTop: 4 }}>{String(obs.details)}</div>
-                      {obs.recommendation && (
+                      {!!obs.recommendation && (
                         <div style={{ color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>Rekomendacja: {String(obs.recommendation)}</div>
                       )}
                     </div>
@@ -1943,7 +1943,7 @@ export default function AuditProgramsPage() {
                         {String(obs.title)}
                       </div>
                       <div style={{ color: "var(--text-secondary)", marginTop: 4 }}>{String(obs.details)}</div>
-                      {obs.recommendation && (
+                      {!!obs.recommendation && (
                         <div style={{ color: "var(--text-muted)", marginTop: 2, fontStyle: "italic" }}>Rekomendacja: {String(obs.recommendation)}</div>
                       )}
                     </div>

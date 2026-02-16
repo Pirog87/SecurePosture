@@ -359,8 +359,16 @@ async def create_program(
     body: AuditProgramCreate,
     s: AsyncSession = Depends(get_session),
 ):
+    owner = await s.get(User, body.owner_id)
+    if not owner:
+        raise HTTPException(400, f"Uzytkownik owner_id={body.owner_id} nie istnieje")
+    approver = await s.get(User, body.approver_id)
+    if not approver:
+        raise HTTPException(400, f"Uzytkownik approver_id={body.approver_id} nie istnieje")
     if body.owner_id == body.approver_id:
-        raise HTTPException(400, "Owner i Approver nie moga byc ta sama osoba")
+        user_count = (await s.execute(select(func.count()).select_from(User))).scalar() or 0
+        if user_count > 1:
+            raise HTTPException(400, "Owner i Approver nie moga byc ta sama osoba")
 
     ref_id = await _next_ref(s, "AP")
     p = AuditProgramV2(

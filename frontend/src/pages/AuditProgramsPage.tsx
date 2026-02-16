@@ -2007,7 +2007,7 @@ function ProgramForm({ users, orgTree, editingProgram, saving, onSubmit, onCance
   const [periodEnd, setPeriodEnd] = useState(editingProgram?.period_end ?? `${yr}-12-31`);
   const [year, setYear] = useState(editingProgram?.year ?? yr);
   const [ownerId, setOwnerId] = useState(editingProgram?.owner_id ?? (users[0]?.id ?? 1));
-  const [approverId, setApproverId] = useState(editingProgram?.approver_id ?? (users[1]?.id ?? 2));
+  const [approverId, setApproverId] = useState(editingProgram?.approver_id ?? (users[1]?.id ?? users[0]?.id ?? 1));
   const [orgUnitId, setOrgUnitId] = useState<number | null>(editingProgram?.org_unit_id ?? null);
   const [budgetDays, setBudgetDays] = useState(editingProgram?.budget_planned_days != null ? String(editingProgram.budget_planned_days) : "");
   const [budgetCost, setBudgetCost] = useState(editingProgram?.budget_planned_cost != null ? String(editingProgram.budget_planned_cost) : "");
@@ -2016,7 +2016,7 @@ function ProgramForm({ users, orgTree, editingProgram, saving, onSubmit, onCance
   const [criteria, setCriteria] = useState(editingProgram?.audit_criteria ?? "");
   const [methods, setMethods] = useState(editingProgram?.methods ?? "");
 
-  const canSubmit = name.trim().length > 0 && ownerId !== approverId;
+  const canSubmit = name.trim().length > 0 && (users.length <= 1 || ownerId !== approverId);
 
   const handleSubmit = () => {
     const data: Record<string, unknown> = {
